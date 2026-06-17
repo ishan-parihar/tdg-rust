@@ -11,9 +11,11 @@
 //! - DataLoader: filesystem + DB state loading
 //! - MindInjector: full prompt assembly for LLM context
 
+pub mod consolidation_engine;
 pub mod diagnostic;
 pub mod feeling;
 pub mod metrics;
 pub mod project_tracker;
 pub mod pulse;
+pub mod reflect_engine;
 
