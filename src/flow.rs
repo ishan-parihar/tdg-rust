@@ -13,7 +13,7 @@ use std::f64;
 use rusqlite::{params, Connection};
 use serde::{Serialize, Deserialize};
 
-use crate::db::crud::{get_edge, get_edges, get_node, get_node_including_deleted, now_iso};
+use crate::db::crud::{get_edges, get_node, now_iso};
 use crate::error::TdgResult;
 use crate::models::Node;
 

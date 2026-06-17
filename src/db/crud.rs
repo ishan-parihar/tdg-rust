@@ -472,7 +472,6 @@ pub fn add_nodes_batch(conn: &Connection, nodes: &[NewNode]) -> TdgResult<Vec<No
 
     for id in &ids {
         if let Some(node) = get_node_including_deleted(conn, id)? {
-            let agent_path = compute_agent_path(conn, &node.parent_ids.join("\",\""))?;
             let parent_ids_json = serde_json::to_string(&node.parent_ids)
                 .unwrap_or_else(|_| "[]".to_string());
             let computed_path = compute_agent_path(conn, &parent_ids_json)?;
