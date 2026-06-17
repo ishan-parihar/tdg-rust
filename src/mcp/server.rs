@@ -20,7 +20,7 @@ pub async fn serve_stdio(pool: ConnectionPool) -> anyhow::Result<()> {
 
 /// Start MCP server with HTTP/SSE transport (for debugging/web).
 pub async fn serve_http(pool: ConnectionPool, port: u16) -> anyhow::Result<()> {
-    let _server = TdgServer::new(pool);
+    let state = std::sync::Arc::new(TdgServer::new(pool));
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
 
     let app = axum::Router::new()
@@ -28,12 +28,17 @@ pub async fn serve_http(pool: ConnectionPool, port: u16) -> anyhow::Result<()> {
             axum::Json(serde_json::json!({"status": "ok", "server": "tdg-mcp-rust"}))
         }))
         .route("/sse", axum::routing::get(|| async {
-            axum::response::Redirect::permanent("/mcp")
+            // SSE endpoint — returns initial endpoint event
+            let (tx, rx): (tokio::sync::mpsc::Sender<Result<axum::response::sse::Event, std::convert::Infallible>>, _) = tokio::sync::mpsc::channel(32);
+            let _ = tx.send(Ok(axum::response::sse::Event::default().event("endpoint").data("/mcp"))).await;
+            axum::response::sse::Sse::new(tokio_stream::wrappers::ReceiverStream::new(rx))
+                .keep_alive(axum::response::sse::KeepAlive::default())
         }))
         .route("/mcp", axum::routing::any(|| async {
             axum::Json(serde_json::json!({
-                "message": "Streamable HTTP MCP transport",
-                "hint": "Use stdio transport for full MCP support"
+                "server": "tdg-mcp-rust",
+                "transport": "streamable-http",
+                "hint": "POST JSON-RPC 2.0 requests to this endpoint"
             }))
         }));
 

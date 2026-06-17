@@ -543,7 +543,7 @@ impl TdgServer {
     #[tool(description = "Check Ollama status or trigger LLM reflection (requires Ollama)")]
     async fn tdg_reflect(&self, Parameters(_params): Parameters<ReflectParams>) -> Result<String, McpError> {
         let ollama_url = std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().map_err(mcp_err)?;
         let status = client.get(format!("{}/api/tags", ollama_url)).send().await;
         match status {
             Ok(resp) if resp.status().is_success() => Ok(serde_json::to_string(&json!({"status": "ollama_available", "url": ollama_url})).unwrap_or_default()),
