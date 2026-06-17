@@ -15,6 +15,7 @@ pub mod models;
 pub mod mind;
 pub mod ops;
 pub mod plugins;
+pub mod scripts;
 pub mod validation;
 
 // Re-export key types for plugin/library use

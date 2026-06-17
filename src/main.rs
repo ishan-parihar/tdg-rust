@@ -9,6 +9,7 @@ mod models;
 mod mind;
 mod ops;
 mod plugins;
+mod scripts;
 mod validation;
 
 use clap::{Parser, Subcommand};
@@ -31,7 +32,7 @@ struct Cli {
 enum Commands {
     /// Start the MCP server
     Serve {
-        /// Port to listen on
+        /// Port to listen on (default=3000 for stdio, other ports for HTTP)
         #[arg(short, long, default_value = "3000")]
         port: u16,
     },
@@ -47,6 +48,52 @@ enum Commands {
     Stats,
     /// Initialize the database schema
     Init,
+    // ── Phase 12: Scripts & Utilities ─────────────────────────────────
+    /// Audit graph integration (orphan detection, health scores, archival)
+    Audit,
+    /// Check constraint vitality and ghost nodes
+    Check,
+    /// Unify persistence across data sources
+    Unify,
+    /// Reconcile constraints (dedup, link repair)
+    ReconcileConstraints,
+    /// Sync skills directory to graph
+    SyncSkills {
+        /// Skills directory path
+        #[arg(short, long)]
+        dir: Option<String>,
+    },
+    /// Auto-capture observation from description
+    AutoCapture {
+        /// Observation description
+        #[arg(short, long)]
+        description: String,
+        /// Quadrant (LR, UL, LL, UR)
+        #[arg(short, long, default_value = "LR")]
+        quadrant: String,
+        /// Trust level (0.0-1.0)
+        #[arg(short = 't', long, default_value = "0.5")]
+        trust: f64,
+        /// Comma-separated entities
+        #[arg(short, long)]
+        entities: Option<String>,
+    },
+    /// Create a node from CLI
+    Create {
+        /// Node type
+        #[arg(short, long)]
+        node_type: String,
+        /// Node name
+        #[arg(short, long)]
+        name: String,
+        /// Description
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+    /// Maintenance check (orphan + stale node detection)
+    MaintenanceCheck,
+    /// Repair orphan nodes (link or archive)
+    RepairOrphans,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -155,6 +202,86 @@ fn main() -> anyhow::Result<()> {
                 }
                 Ok(())
             })?;
+            pool.close();
+        }
+        // ── Phase 12: Scripts & Utilities ─────────────────────────────
+        Commands::Audit => {
+            let pool = ConnectionPool::new(
+                config.db_path.to_str().unwrap(), 5, 30000,
+            )?;
+            let result = pool.with_connection(|conn| scripts::audit(conn))?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            pool.close();
+        }
+        Commands::Check => {
+            let pool = ConnectionPool::new(
+                config.db_path.to_str().unwrap(), 5, 30000,
+            )?;
+            let result = pool.with_connection(|conn| scripts::check(conn))?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            pool.close();
+        }
+        Commands::Unify => {
+            let pool = ConnectionPool::new(
+                config.db_path.to_str().unwrap(), 5, 30000,
+            )?;
+            let result = pool.with_connection(|conn| scripts::unify(conn))?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            pool.close();
+        }
+        Commands::ReconcileConstraints => {
+            let pool = ConnectionPool::new(
+                config.db_path.to_str().unwrap(), 5, 30000,
+            )?;
+            let result = pool.with_connection(|conn| scripts::reconcile_constraints(conn))?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            pool.close();
+        }
+        Commands::SyncSkills { dir } => {
+            let pool = ConnectionPool::new(
+                config.db_path.to_str().unwrap(), 5, 30000,
+            )?;
+            let skills_dir = dir.unwrap_or_else(|| {
+                config.skills_dir.to_str().unwrap_or("./skills").to_string()
+            });
+            let result = pool.with_connection(|conn| scripts::sync_skills(conn, &skills_dir))?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            pool.close();
+        }
+        Commands::AutoCapture { description, quadrant, trust, entities } => {
+            let pool = ConnectionPool::new(
+                config.db_path.to_str().unwrap(), 5, 30000,
+            )?;
+            let result = pool.with_connection(|conn| {
+                scripts::auto_capture(conn, &description, &quadrant, trust, entities.as_deref())
+            })?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            pool.close();
+        }
+        Commands::Create { node_type, name, description } => {
+            let pool = ConnectionPool::new(
+                config.db_path.to_str().unwrap(), 5, 30000,
+            )?;
+            let result = pool.with_connection(|conn| {
+                scripts::create_node(conn, &node_type, &name, description.as_deref())
+            })?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            pool.close();
+        }
+        Commands::MaintenanceCheck => {
+            let pool = ConnectionPool::new(
+                config.db_path.to_str().unwrap(), 5, 30000,
+            )?;
+            let result = pool.with_connection(|conn| scripts::maintenance_check(conn))?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            pool.close();
+        }
+        Commands::RepairOrphans => {
+            let pool = ConnectionPool::new(
+                config.db_path.to_str().unwrap(), 5, 30000,
+            )?;
+            let result = pool.with_connection(|conn| scripts::repair_orphans(conn))?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
             pool.close();
         }
         Commands::Serve { port } => {
