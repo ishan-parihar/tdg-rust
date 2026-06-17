@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Library crate — public API items may not be used by the binary
+
 //! TDG-Rust: Teleological Developmental Graph
 //!
 //! A complete Rust port of the Python TDG memory infrastructure.

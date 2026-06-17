@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Binary uses library public API — dead_code warnings are for library consumers
+
 mod config;
 mod db;
 mod error;

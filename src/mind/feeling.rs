@@ -155,7 +155,7 @@ impl FeelingEngine {
 
     fn detect_energy_level(&self, conn: &Connection) -> String {
         // Approximate energy from graph activity and health
-        let node_count: i64 = conn
+        let _node_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL",
                 [],

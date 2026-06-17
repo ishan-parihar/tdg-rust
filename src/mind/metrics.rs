@@ -6,7 +6,6 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::TdgResult;
 
 /// Per-action performance metrics.
 #[derive(Debug, Clone, Serialize, Deserialize)]

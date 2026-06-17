@@ -36,7 +36,7 @@ pub fn rate_node(
     )?;
 
     // Recompute confidence based on helpful ratio
-    let (helpful_count, retrieval_count, current_confidence): (i32, i32, f64) = conn.query_row(
+    let (helpful_count, _retrieval_count, current_confidence): (i32, i32, f64) = conn.query_row(
         "SELECT helpful_count, retrieval_count, confidence FROM nodes WHERE id = ?1",
         params![node_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),

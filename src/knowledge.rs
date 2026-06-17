@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use rusqlite::{params, Connection};
 use serde::{Serialize, Deserialize};
 
-use crate::db::crud::{get_edge, get_edges, get_node, now_iso, record_event};
+use crate::db::crud::{get_edges, get_node, now_iso, record_event};
 use crate::error::TdgResult;
 use crate::models::Node;
 
@@ -349,7 +349,7 @@ pub fn evaluate_integration_quality(conn: &Connection, node_id: &str) -> TdgResu
     let properties = &node.properties;
 
     // Extract linkage data from properties
-    let link_count = properties
+    let _link_count = properties
         .get("link_count")
         .and_then(|v| v.as_i64())
         .unwrap_or(0) as f64;
@@ -637,7 +637,7 @@ pub fn archive_stale_nodes(conn: &Connection, days_threshold: Option<i64>) -> Td
 
     let now = chrono::Utc::now().naive_utc();
 
-    for (id, name, node_type, properties_json, parent_ids_json, created_at) in &rows {
+    for (id, name, node_type, properties_json, _parent_ids_json, created_at) in &rows {
         let properties: serde_json::Value =
             serde_json::from_str(properties_json).unwrap_or(serde_json::json!({}));
 
@@ -1058,7 +1058,7 @@ mod tests {
         )
         .unwrap();
 
-        let edge = crate::db::crud::add_edge(
+        let _edge = crate::db::crud::add_edge(
             &conn,
             &crate::models::NewEdge {
                 source_id: obs.id.clone(),

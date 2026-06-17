@@ -146,7 +146,7 @@ pub fn create_node(
 
 /// Maintenance check: detect and report orphan and stale nodes.
 pub fn maintenance_check(conn: &Connection) -> TdgResult<Value> {
-    let orphans = crate::knowledge::detect_orphans(conn)?;
+    let _orphans = crate::knowledge::detect_orphans(conn)?;
     let dangling = crate::knowledge::prune_dangling_edges(conn)?;
     let report = crate::knowledge::generate_hygiene_report(conn)?;
 

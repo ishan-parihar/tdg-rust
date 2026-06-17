@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::TdgResult;

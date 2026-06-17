@@ -244,7 +244,7 @@ fn store_drive_state(conn: &Connection, node_id: &str, state: &FlowDriveState) -
 
 /// Load FlowDriveState from a node's drives_json column.
 /// Falls back to intrinsic signature if not set.
-fn load_drive_state(conn: &Connection, node: &Node) -> FlowDriveState {
+fn load_drive_state(_conn: &Connection, node: &Node) -> FlowDriveState {
     let drives_json = &node.drives;
     if drives_json.as_object().map_or(false, |m| m.contains_key("eros")) {
         FlowDriveState::from_json(drives_json)
@@ -479,7 +479,7 @@ pub fn aggregate_upward(
             }
 
             // Compute weighted average of child drives
-            let n = child_states.len() as f64;
+            let _n = child_states.len() as f64;
             let aggregate = FlowDriveState {
                 eros: average_drive(&child_states.iter().map(|s| &s.eros).collect::<Vec<_>>()),
                 agape: average_drive(&child_states.iter().map(|s| &s.agape).collect::<Vec<_>>()),

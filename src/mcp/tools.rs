@@ -9,9 +9,6 @@ use std::sync::Arc;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::schemars::JsonSchema;
 use rmcp::{tool, tool_router, ErrorData as McpError};
-use rmcp::model::ServerInfo;
-use rmcp::service::RequestContext;
-use rmcp::RoleServer;
 use serde::Deserialize;
 use serde_json::{json, Value};
 

@@ -20,7 +20,7 @@ pub async fn serve_stdio(pool: ConnectionPool) -> anyhow::Result<()> {
 
 /// Start MCP server with HTTP/SSE transport (for debugging/web).
 pub async fn serve_http(pool: ConnectionPool, port: u16) -> anyhow::Result<()> {
-    let state = std::sync::Arc::new(TdgServer::new(pool));
+    let _state = std::sync::Arc::new(TdgServer::new(pool));
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
 
     let app = axum::Router::new()

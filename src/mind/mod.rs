@@ -17,8 +17,3 @@ pub mod metrics;
 pub mod project_tracker;
 pub mod pulse;
 
-pub use diagnostic::DiagnosticEngine;
-pub use feeling::FeelingEngine;
-pub use metrics::MetricsEngine;
-pub use project_tracker::ProjectTracker;
-pub use pulse::PulseEngine;

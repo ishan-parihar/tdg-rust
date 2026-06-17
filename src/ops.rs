@@ -11,10 +11,10 @@ use std::collections::HashMap;
 use rusqlite::Connection;
 
 use crate::db::crud::{
-    count_nodes, get_edges, get_node, now_iso, query_nodes, record_event,
+    count_nodes, get_node, now_iso, query_nodes, record_event,
 };
 use crate::error::TdgResult;
-use crate::flow::{self, FlowDriveState, DualPoleDrive};
+use crate::flow::{self, FlowDriveState};
 use crate::knowledge;
 use crate::mind::diagnostic::DiagnosticEngine;
 use crate::mind::pulse::PulseEngine;
@@ -258,7 +258,7 @@ pub fn hygiene(conn: &Connection) -> TdgResult<serde_json::Value> {
 
 /// Strategic-level health view of the graph.
 pub fn macro_slice(conn: &Connection, depth: Option<i64>) -> TdgResult<serde_json::Value> {
-    let depth = depth.unwrap_or(3);
+    let _depth = depth.unwrap_or(3);
 
     // Health metrics
     let total_nodes = count_nodes(conn, None)?;
