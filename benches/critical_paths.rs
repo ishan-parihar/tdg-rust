@@ -1,9 +1,12 @@
+//! Criterion benchmarks for TDG-Rust critical paths.
+//!
+//! Run with: `cargo bench`
+
 use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 use tdg_rust::db::{init_fts, init_schema, run_migrations, ConnectionPool};
-use tdg_rust::models::{NewEdge, NewNode, NodeQuery};
+use tdg_rust::models::{NewEdge, NewNode};
 use tdg_rust::ops;
 use tdg_rust::knowledge;
-use tdg_rust::flow::FlowDriveState;
 use tdg_rust::mind::pulse::PulseEngine;
 use tdg_rust::mind::diagnostic::DiagnosticEngine;
 use tdg_rust::hrr;
@@ -12,9 +15,10 @@ use tdg_rust::hrr;
 fn make_pool() -> ConnectionPool {
     let pool = ConnectionPool::new(":memory:", 5, 30000).expect("pool creation");
     pool.with_connection(|conn| {
-        init_schema(conn).unwrap();
-        init_fts(conn).unwrap();
-        run_migrations(conn).unwrap();
+        init_schema(conn)?;
+        init_fts(conn)?;
+        run_migrations(conn)?;
+        Ok(())
     })
     .unwrap();
     pool
@@ -23,32 +27,27 @@ fn make_pool() -> ConnectionPool {
 /// Populate the pool with N nodes and edges for benchmarks.
 fn populate(pool: &ConnectionPool, n: usize) {
     pool.with_connection(|conn| {
-        let mut telos_ids = Vec::new();
         for i in 0..n {
-            let node = tdg_rust::db::crud::add_node(
+            let node_type = if i % 5 == 0 { "telos" } else if i % 3 == 0 { "observation" } else { "action" };
+            tdg_rust::db::crud::add_node(
                 conn,
                 &NewNode {
-                    node_type: if i % 5 == 0 { "telos" } else if i % 3 == 0 { "observation" } else { "action" }.to_string(),
+                    node_type: node_type.to_string(),
                     name: format!("Node {i}"),
                     description: Some(format!("Description for node {i} with searchable terms")),
                     ..Default::default()
                 },
-            )
-            .unwrap();
-            if node.node_type == "telos" {
-                telos_ids.push(node.id);
-            }
+            )?;
         }
 
         // Connect nodes in a chain
         let nodes: Vec<String> = {
             let mut stmt = conn
-                .prepare("SELECT id FROM nodes WHERE valid_to IS NULL ORDER BY created_at ASC")
-                .unwrap();
-            stmt.query_map([], |r| r.get(0))
-                .unwrap()
+                .prepare("SELECT id FROM nodes WHERE valid_to IS NULL ORDER BY created_at ASC")?;
+            let ids = stmt.query_map([], |r| r.get::<_, String>(0))?
                 .filter_map(|r| r.ok())
-                .collect()
+                .collect::<Vec<_>>();
+            ids
         };
 
         for i in 1..nodes.len() {
@@ -65,6 +64,7 @@ fn populate(pool: &ConnectionPool, n: usize) {
                 },
             );
         }
+        Ok(())
     })
     .unwrap();
 }
@@ -87,9 +87,9 @@ fn bench_add_node(c: &mut Criterion) {
                                 description: Some(format!("Searchable benchmark node {i}")),
                                 ..Default::default()
                             },
-                        )
-                        .unwrap();
+                        )?;
                     }
+                    Ok(())
                 })
                 .unwrap();
             });
@@ -105,12 +105,11 @@ fn bench_get_node(c: &mut Criterion) {
     let node_ids: Vec<String> = pool
         .with_connection(|conn| {
             let mut stmt = conn
-                .prepare("SELECT id FROM nodes WHERE valid_to IS NULL LIMIT 10")
-                .unwrap();
-            stmt.query_map([], |r| r.get(0))
-                .unwrap()
+                .prepare("SELECT id FROM nodes WHERE valid_to IS NULL LIMIT 10")?;
+            let ids = stmt.query_map([], |r| r.get(0))?
                 .filter_map(|r| r.ok())
-                .collect()
+                .collect::<Vec<_>>();
+            Ok(ids)
         })
         .unwrap();
 
@@ -119,7 +118,8 @@ fn bench_get_node(c: &mut Criterion) {
         b.iter(|| {
             let id = &node_ids[idx % node_ids.len()];
             pool.with_connection(|conn| {
-                tdg_rust::db::crud::get_node(conn, id).unwrap();
+                tdg_rust::db::crud::get_node(conn, id)?;
+                Ok(())
             })
             .unwrap();
             idx += 1;
@@ -136,7 +136,8 @@ fn bench_search(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(query), query, |b, query| {
             b.iter(|| {
                 pool.with_connection(|conn| {
-                    tdg_rust::db::crud::search(conn, query, 10).unwrap();
+                    tdg_rust::db::crud::search(conn, query, 10)?;
+                    Ok(())
                 })
                 .unwrap();
             });
@@ -154,20 +155,19 @@ fn bench_pathfind(c: &mut Criterion) {
     let (first, last): (String, String) = pool
         .with_connection(|conn| {
             let ids: Vec<String> = conn
-                .prepare("SELECT id FROM nodes WHERE valid_to IS NULL ORDER BY created_at ASC LIMIT 2")
-                .unwrap()
-                .query_map([], |r| r.get(0))
-                .unwrap()
+                .prepare("SELECT id FROM nodes WHERE valid_to IS NULL ORDER BY created_at ASC LIMIT 2")?
+                .query_map([], |r| r.get(0))?
                 .filter_map(|r| r.ok())
                 .collect();
-            (ids[0].clone(), ids[ids.len() - 1].clone())
+            Ok((ids[0].clone(), ids[ids.len() - 1].clone()))
         })
         .unwrap();
 
     c.bench_function("crud_pathfind", |b| {
         b.iter(|| {
             pool.with_connection(|conn| {
-                tdg_rust::db::crud::pathfind(conn, &first, &last, 5, 100).unwrap();
+                tdg_rust::db::crud::pathfind(conn, &first, &last, 5, 100)?;
+                Ok(())
             })
             .unwrap();
         });
@@ -184,7 +184,8 @@ fn bench_renormalize_graph(c: &mut Criterion) {
             populate(&pool, size);
             b.iter(|| {
                 pool.with_connection(|conn| {
-                    tdg_rust::flow::renormalize_graph(conn, false).unwrap();
+                    tdg_rust::flow::renormalize_graph(conn, false)?;
+                    Ok(())
                 })
                 .unwrap();
             });
@@ -199,12 +200,12 @@ fn bench_aggregate_upward(c: &mut Criterion) {
 
     let action_ids: Vec<String> = pool
         .with_connection(|conn| {
-            conn.prepare("SELECT id FROM nodes WHERE valid_to IS NULL AND node_type = 'action' LIMIT 10")
-                .unwrap()
-                .query_map([], |r| r.get(0))
-                .unwrap()
+            let ids: Vec<String> = conn
+                .prepare("SELECT id FROM nodes WHERE valid_to IS NULL AND node_type = 'action' LIMIT 10")?
+                .query_map([], |r| r.get(0))?
                 .filter_map(|r| r.ok())
-                .collect()
+                .collect();
+            Ok(ids)
         })
         .unwrap();
 
@@ -213,7 +214,8 @@ fn bench_aggregate_upward(c: &mut Criterion) {
         b.iter(|| {
             let id = &action_ids[idx % action_ids.len()];
             pool.with_connection(|conn| {
-                tdg_rust::flow::aggregate_upward(conn, id).unwrap();
+                tdg_rust::flow::aggregate_upward(conn, id)?;
+                Ok(())
             })
             .unwrap();
             idx += 1;
@@ -231,7 +233,8 @@ fn bench_detect_orphans(c: &mut Criterion) {
             populate(&pool, size);
             b.iter(|| {
                 pool.with_connection(|conn| {
-                    knowledge::detect_orphans(conn).unwrap();
+                    knowledge::detect_orphans(conn)?;
+                    Ok(())
                 })
                 .unwrap();
             });
@@ -247,7 +250,8 @@ fn bench_generate_hygiene_report(c: &mut Criterion) {
     c.bench_function("knowledge_hygiene_report", |b| {
         b.iter(|| {
             pool.with_connection(|conn| {
-                knowledge::generate_hygiene_report(conn).unwrap();
+                knowledge::generate_hygiene_report(conn)?;
+                Ok(())
             })
             .unwrap();
         });
@@ -266,16 +270,16 @@ fn bench_classify_catalyst(c: &mut Criterion) {
                     description: Some("Alert detected in system".to_string()),
                     ..Default::default()
                 },
-            )
-            .unwrap();
-            node.id
+            )?;
+            Ok(node.id)
         })
         .unwrap();
 
     c.bench_function("knowledge_classify_catalyst", |b| {
         b.iter(|| {
             pool.with_connection(|conn| {
-                knowledge::classify_catalyst(conn, &obs_id).unwrap();
+                knowledge::classify_catalyst(conn, &obs_id)?;
+                Ok(())
             })
             .unwrap();
         });
@@ -292,8 +296,9 @@ fn bench_pulse(c: &mut Criterion) {
         b.iter(|| {
             pool.with_connection(|conn| {
                 let engine = PulseEngine::new();
-                let pulses = engine.pulse(conn, &[]).unwrap();
+                let pulses = engine.pulse(conn, &[])?;
                 let _ = engine.summarize(&pulses);
+                Ok(())
             })
             .unwrap();
         });
@@ -308,7 +313,8 @@ fn bench_diagnostic(c: &mut Criterion) {
         b.iter(|| {
             pool.with_connection(|conn| {
                 let engine = DiagnosticEngine::new();
-                let _ = engine.analyze(conn, &[], &[]).unwrap();
+                let _ = engine.analyze(conn, &[], &[])?;
+                Ok(())
             })
             .unwrap();
         });
@@ -318,12 +324,13 @@ fn bench_diagnostic(c: &mut Criterion) {
 // ─── HRR Benchmarks ──────────────────────────────────────────────────────────
 
 fn bench_hrr_bind(c: &mut Criterion) {
-    let a = hrr::random_key(hrr::HRR_DIM);
-    let b = hrr::random_key(hrr::HRR_DIM);
+    let dim = hrr::HRR_DIM;
+    let vec_a = hrr::random_key(dim);
+    let vec_b = hrr::random_key(dim);
 
-    c.bench_function("hrr_bind", |b| {
-        b.iter(|| {
-            hrr::bind(&a, &b);
+    c.bench_function("hrr_bind", |bench| {
+        bench.iter(|| {
+            let _ = hrr::bind(&vec_a, &vec_b);
         });
     });
 }
@@ -334,7 +341,7 @@ fn bench_hrr_bundle(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("vectors", count), &count, |b, &count| {
             let vectors: Vec<_> = (0..count).map(|_| hrr::random_key(hrr::HRR_DIM)).collect();
             b.iter(|| {
-                hrr::bundle(&vectors);
+                let _ = hrr::bundle(&vectors);
             });
         });
     }
@@ -353,7 +360,7 @@ fn bench_hrr_probe(c: &mut Criterion) {
 
     c.bench_function("hrr_probe_100_items", |b| {
         b.iter(|| {
-            bank.probe(&query);
+            let _ = bank.probe(&query);
         });
     });
 }
@@ -367,7 +374,8 @@ fn bench_reconcile(c: &mut Criterion) {
     c.bench_function("ops_reconcile", |b| {
         b.iter(|| {
             pool.with_connection(|conn| {
-                ops::reconcile(conn).unwrap();
+                ops::reconcile(conn)?;
+                Ok(())
             })
             .unwrap();
         });
@@ -381,7 +389,8 @@ fn bench_micro_slice(c: &mut Criterion) {
     c.bench_function("ops_micro_slice", |b| {
         b.iter(|| {
             pool.with_connection(|conn| {
-                ops::micro_slice(conn).unwrap();
+                ops::micro_slice(conn)?;
+                Ok(())
             })
             .unwrap();
         });
