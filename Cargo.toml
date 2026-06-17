@@ -50,6 +50,9 @@ reqwest = { version = "0.12", features = ["json"] }
 # Random (for HRR)
 rand = "0.8"
 
+# Regex (for plugins)
+regex = "1"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3"

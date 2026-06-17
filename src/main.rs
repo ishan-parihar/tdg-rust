@@ -7,6 +7,7 @@ mod knowledge;
 mod models;
 mod mind;
 mod ops;
+mod plugins;
 mod validation;
 
 use clap::{Parser, Subcommand};
