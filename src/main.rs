@@ -6,6 +6,7 @@ mod hrr;
 mod knowledge;
 mod models;
 mod mind;
+mod ops;
 mod validation;
 
 use clap::{Parser, Subcommand};
