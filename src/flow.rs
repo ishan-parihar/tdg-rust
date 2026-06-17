@@ -1178,7 +1178,7 @@ mod tests {
     #[test]
     fn lean_mode_skips_renormalization() {
         let conn = setup_db();
-        let telos = add_test_node(&conn, "Lean Telos", "telos");
+        let _telos = add_test_node(&conn, "Lean Telos", "telos");
 
         unsafe { LEAN_MODE = true; }
         let result = renormalize_graph(&conn, false).unwrap();
@@ -1208,7 +1208,7 @@ mod tests {
         emit_downward(&conn, &parent.id, 5).unwrap();
 
         // Check that drive_recomputed events were recorded
-        let events = crate::db::crud::get_edges(&conn, Some(&parent.id), None, None, None, 100).unwrap();
+        let _events = crate::db::crud::get_edges(&conn, Some(&parent.id), None, None, None, 100).unwrap();
         // Events go to the events table, not edges — check via SQL
         let mut stmt = conn.prepare(
             "SELECT COUNT(*) FROM events WHERE event_action = 'drive_recomputed'"

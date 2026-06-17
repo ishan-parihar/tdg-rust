@@ -12,10 +12,14 @@
 //! - MindInjector: full prompt assembly for LLM context
 
 pub mod consolidation_engine;
+pub mod data_loader;
 pub mod diagnostic;
 pub mod feeling;
+pub mod injector;
 pub mod metrics;
 pub mod project_tracker;
 pub mod pulse;
 pub mod reflect_engine;
+pub mod sections;
+pub mod terrain;
 
