@@ -250,7 +250,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Search graph memory using hybrid FTS5 full-text search")]
-    async fn tdg_search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         let limit = params.limit.unwrap_or(10).min(50);
         let node_type = params.node_type.as_deref().filter(|s| !s.is_empty());
@@ -264,7 +264,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Retrieve details for a specific node with optional context")]
-    async fn tdg_get_node(&self, Parameters(params): Parameters<GetNodeParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_get_node(&self, Parameters(params): Parameters<GetNodeParams>) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         let node = crate::db::crud::get_node(&conn, &params.node_id).map_err(mcp_err)?
             .ok_or_else(|| McpError::invalid_params(format!("Node {} not found", params.node_id), None))?;
@@ -283,7 +283,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Query the event log with optional filters")]
-    async fn tdg_query_events(&self, Parameters(params): Parameters<QueryEventsParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_query_events(&self, Parameters(params): Parameters<QueryEventsParams>) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         let limit = params.limit.unwrap_or(50).min(500);
         let offset = params.offset.unwrap_or(0);
@@ -305,7 +305,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Create a new graph node with automatic edge wiring")]
-    async fn tdg_create(&self, Parameters(params): Parameters<CreateParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_create(&self, Parameters(params): Parameters<CreateParams>) -> Result<String, McpError> {
         if params.name.is_empty() { return Err(McpError::invalid_params("name is required", None)); }
         let conn = get_conn(&self.pool)?;
         let parent_ids = params.parent_ids.as_deref().filter(|s| !s.is_empty()).map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
@@ -335,7 +335,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Update a node's details or relationships")]
-    async fn tdg_update(&self, Parameters(params): Parameters<UpdateParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_update(&self, Parameters(params): Parameters<UpdateParams>) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         let mut updates = HashMap::new();
         if let Some(ref n) = params.name { updates.insert("name".to_string(), json!(n)); }
@@ -355,7 +355,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Connect two nodes with an edge")]
-    async fn tdg_connect(&self, Parameters(params): Parameters<ConnectParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_connect(&self, Parameters(params): Parameters<ConnectParams>) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         let force = params.force.unwrap_or(false);
         let edge_type = if let Some(ref et) = params.as_edge {
@@ -373,7 +373,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Batch-import nodes and edges from JSON arrays")]
-    async fn tdg_bulk_create(&self, Parameters(params): Parameters<BulkCreateParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_bulk_create(&self, Parameters(params): Parameters<BulkCreateParams>) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         let nodes: Vec<Value> = serde_json::from_str(&params.nodes_json).map_err(|e| McpError::invalid_params(format!("Invalid nodes_json: {}", e), None))?;
         if nodes.len() > MAX_BULK_NODES { return Err(McpError::invalid_params(format!("Too many nodes: {} (max {})", nodes.len(), MAX_BULK_NODES), None)); }
@@ -399,7 +399,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Record an execution outcome as an observation node")]
-    async fn tdg_record_exec(&self, Parameters(params): Parameters<RecordExecParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_record_exec(&self, Parameters(params): Parameters<RecordExecParams>) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         let truncated: String = params.description.chars().take(80).collect();
         let props = json!({"action_type": &params.action_type, "result": &params.result, "tags": params.tags.as_deref().unwrap_or(""), "metrics": params.metrics_json.as_deref().unwrap_or("{}")});
@@ -414,7 +414,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Adjust a node's confidence rating based on feedback")]
-    async fn tdg_rate_memory(&self, Parameters(params): Parameters<RateMemoryParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_rate_memory(&self, Parameters(params): Parameters<RateMemoryParams>) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         let delta: i32 = if params.helpful { 1 } else { -1 };
         conn.execute("UPDATE nodes SET helpful_count = helpful_count + ?1, updated_at = ?2 WHERE id = ?3 AND valid_to IS NULL",
@@ -424,7 +424,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Get graph health diagnostics, statistics, and mind state")]
-    async fn tdg_mind_state(&self, Parameters(_params): Parameters<MindStateParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_mind_state(&self, Parameters(_params): Parameters<MindStateParams>) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         let node_count = crate::db::crud::count_nodes(&conn, None).map_err(mcp_err)?;
         let edge_count = crate::db::crud::count_edges(&conn, None).map_err(mcp_err)?;
@@ -436,7 +436,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Create an observation node from a description")]
-    async fn tdg_observe(&self, Parameters(params): Parameters<ObserveParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_observe(&self, Parameters(params): Parameters<ObserveParams>) -> Result<String, McpError> {
         if params.description.is_empty() { return Err(McpError::invalid_params("description is required", None)); }
         let conn = get_conn(&self.pool)?;
         let truncated: String = params.description.chars().take(80).collect();
@@ -449,7 +449,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Traverse relationships from a node by edge type and direction")]
-    async fn tdg_get_related(&self, Parameters(params): Parameters<GetRelatedParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_get_related(&self, Parameters(params): Parameters<GetRelatedParams>) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         let limit = params.limit.unwrap_or(20);
         let direction = params.direction.as_deref().unwrap_or("out");
@@ -470,7 +470,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Run graph maintenance (hygiene, archive, or all)")]
-    async fn tdg_maintenance(&self, Parameters(params): Parameters<MaintenanceParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_maintenance(&self, Parameters(params): Parameters<MaintenanceParams>) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         let phase = params.phase.as_deref().unwrap_or("all");
         let mut report = serde_json::Map::new();
@@ -488,7 +488,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Introspect the database schema (tables, columns, row counts)")]
-    async fn tdg_get_schema(&self) -> Result<String, McpError> {
+    pub(crate) async fn tdg_get_schema(&self) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         let mut tables = serde_json::Map::new();
         let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").map_err(mcp_err)?;
@@ -502,7 +502,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Manage multi-agent memory banks")]
-    async fn tdg_bank(&self, Parameters(params): Parameters<BankParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_bank(&self, Parameters(params): Parameters<BankParams>) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         match params.action.as_deref().unwrap_or("list") {
             "list" => {
@@ -517,7 +517,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Resolve entity names and manage aliases")]
-    async fn tdg_entity(&self, Parameters(params): Parameters<EntityParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_entity(&self, Parameters(params): Parameters<EntityParams>) -> Result<String, McpError> {
         let conn = get_conn(&self.pool)?;
         match params.action.as_deref().unwrap_or("resolve") {
             "resolve" => {
@@ -541,7 +541,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Check Ollama status or trigger LLM reflection (requires Ollama)")]
-    async fn tdg_reflect(&self, Parameters(_params): Parameters<ReflectParams>) -> Result<String, McpError> {
+    pub(crate) async fn tdg_reflect(&self, Parameters(_params): Parameters<ReflectParams>) -> Result<String, McpError> {
         let ollama_url = std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
         let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().map_err(mcp_err)?;
         let status = client.get(format!("{}/api/tags", ollama_url)).send().await;

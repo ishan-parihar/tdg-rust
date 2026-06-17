@@ -6,6 +6,9 @@
 pub mod tools;
 pub mod server;
 
+#[cfg(test)]
+mod tests;
+
 // MCP constants (from _shared.py)
 pub const MAX_TEXT_LENGTH: usize = 50_000;
 pub const MAX_NODE_ID_LENGTH: usize = 256;
