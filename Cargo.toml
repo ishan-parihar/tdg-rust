@@ -52,6 +52,8 @@ rand = "0.8"
 
 # Regex (for plugins)
 regex = "1"
+rmcp = { version = "1.7.0", features = ["server", "schemars", "transport-io", "transport-streamable-http-server"] }
+schemars = "1.2.1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

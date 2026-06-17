@@ -1,10 +1,10 @@
-//! MCP Transport — Axum HTTP/SSE server with JSON-RPC 2.0 protocol
+//! MCP Transport — Official rmcp SDK for Model Context Protocol
 //!
-//! Port of `mcp/tdg_mcp_server.py` and `mcp/_shared.py`.
+//! Uses the official `rmcp` crate (v1.7) for spec-compliant MCP server.
+//! Supports stdio transport (for Hermes/Claude integration) and HTTP/SSE.
 
-pub mod protocol;
-pub mod server;
 pub mod tools;
+pub mod server;
 
 // MCP constants (from _shared.py)
 pub const MAX_TEXT_LENGTH: usize = 50_000;

@@ -171,7 +171,13 @@ fn main() -> anyhow::Result<()> {
                 Ok(())
             })?;
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(mcp::server::start_server(pool, port))?;
+            // Use stdio transport by default (for AI integration)
+            // If port is non-default (not 3000), use HTTP transport
+            if port != 3000 {
+                rt.block_on(mcp::server::serve_http(pool, port))?;
+            } else {
+                rt.block_on(mcp::server::serve_stdio(pool))?;
+            }
         }
     }
 
