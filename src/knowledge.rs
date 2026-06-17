@@ -159,6 +159,10 @@ pub struct ArchivalRecord {
     pub archived_at: String,
     pub archival_reason: String,
     pub created_at: String,
+    /// Edge types and targets this node was connected to before archival.
+    pub edge_history: Vec<serde_json::Value>,
+    /// IDs of nodes this catalyst was linked to (hypotheses, constraints, teloi).
+    pub linkage_history: Vec<String>,
 }
 
 /// Hygiene report for the entire graph.
@@ -885,6 +889,48 @@ pub fn generate_hygiene_report(conn: &Connection) -> TdgResult<HygieneReport> {
         lifecycle_distribution,
         recommendations,
     })
+}
+
+/// Combined hygiene pipeline: prune dangling → archive stale → enforce lifecycle → report.
+pub fn run_full_hygiene_cycle(conn: &Connection, lean: bool) -> TdgResult<HygieneReport> {
+    let pruned = prune_dangling_edges(conn)?;
+    let pruned_count = pruned.get("pruned_count").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    let archived = if lean {
+        serde_json::json!({"archived_count": 0, "archived_ids": []})
+    } else {
+        archive_stale_nodes(conn, None)?
+    };
+    let archived_count = archived.get("archived_count").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    let enforced = if lean {
+        serde_json::json!({"enforced_count": 0, "enforced_ids": []})
+    } else {
+        enforce_observation_lifecycle(conn)?
+    };
+    let enforced_count = enforced.get("enforced_count").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    let mut report = generate_hygiene_report(conn)?;
+
+    report.recommendations.insert(0, format!(
+        "Hygiene cycle complete: {pruned_count} dangling edges pruned, {archived_count} stale nodes archived, {enforced_count} critical orphans enforced"
+    ));
+
+    record_event(
+        conn,
+        "hygiene_cycle_complete",
+        None,
+        None,
+        None,
+        Some(&serde_json::json!({
+            "pruned": pruned_count,
+            "archived": archived_count,
+            "enforced": enforced_count,
+            "lean": lean,
+        })),
+    )?;
+
+    Ok(report)
 }
 
 use crate::db::crud::get_node_including_deleted;

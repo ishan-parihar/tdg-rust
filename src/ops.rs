@@ -425,6 +425,168 @@ pub fn drive_matrix_report(
     }
 }
 
+// ─── Meta View ───────────────────────────────────────────────────────────────
+
+/// Strategic landscape view: drive diagnosis, telos hierarchy, constraints,
+/// available actions by quadrant, and next-cycle recommendation.
+pub fn meta_view(conn: &Connection) -> TdgResult<serde_json::Value> {
+    use std::collections::HashMap;
+
+    // ── 1. Drive landscape ──────────────────────────────────────────────────
+    let polarity = flow::diagnose_polarity(conn)?;
+
+    // ── 2. Telos hierarchy ──────────────────────────────────────────────────
+    let telos_q = NodeQuery {
+        node_type: Some("telos".to_string()),
+        lifecycle_state: Some("active".to_string()),
+        limit: Some(100),
+        ..Default::default()
+    };
+    let teloi = query_nodes(conn, &telos_q)?;
+
+    let mut telos_hierarchy: Vec<serde_json::Value> = teloi
+        .iter()
+        .map(|t| {
+            let level = t
+                .teleological_level
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
+            let stage = t
+                .developmental_stage
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "unset".to_string());
+            serde_json::json!({
+                "id": t.id,
+                "name": t.name,
+                "t_level": level,
+                "stage": stage,
+                "confidence": t.confidence,
+            })
+        })
+        .collect();
+    telos_hierarchy.sort_by(|a, b| {
+        let a_level = a["t_level"].as_str().unwrap_or("T99");
+        let b_level = b["t_level"].as_str().unwrap_or("T99");
+        a_level.cmp(b_level)
+    });
+
+    // ── 3. Constraint surface ───────────────────────────────────────────────
+    let constraint_q = NodeQuery {
+        node_type: Some("constraint".to_string()),
+        lifecycle_state: Some("active".to_string()),
+        limit: Some(50),
+        ..Default::default()
+    };
+    let constraints = query_nodes(conn, &constraint_q)?;
+    let constraint_surface: Vec<serde_json::Value> = constraints
+        .iter()
+        .map(|c| serde_json::json!({
+            "id": c.id,
+            "name": c.name,
+            "severity": c.properties.get("severity").and_then(|v| v.as_str()).unwrap_or("unknown"),
+        }))
+        .collect();
+
+    // ── 4. Available actions by quadrant ────────────────────────────────────
+    let action_q = NodeQuery {
+        node_type: Some("action".to_string()),
+        lifecycle_state: Some("active".to_string()),
+        limit: Some(200),
+        ..Default::default()
+    };
+    let actions = query_nodes(conn, &action_q)?;
+
+    let mut available_actions: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+    let mut quadrant_counts: HashMap<String, i64> = HashMap::new();
+
+    for action in &actions {
+        let blocked = action
+            .properties
+            .get("blocked")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let archived = action.lifecycle_state == "archived";
+        if blocked || archived {
+            continue;
+        }
+
+        let quadrant = action
+            .quadrants
+            .get("active_quadrant")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unassigned")
+            .to_string();
+
+        *quadrant_counts.entry(quadrant.clone()).or_insert(0) += 1;
+
+        available_actions
+            .entry(quadrant)
+            .or_default()
+            .push(serde_json::json!({
+                "id": action.id,
+                "name": action.name,
+                "confidence": action.confidence,
+            }));
+    }
+
+    // ── 5. Quadrant coverage ────────────────────────────────────────────────
+    let all_active_q = NodeQuery {
+        lifecycle_state: Some("active".to_string()),
+        limit: Some(1000),
+        ..Default::default()
+    };
+    let all_active = query_nodes(conn, &all_active_q)?;
+    let mut quadrant_coverage: HashMap<String, i64> = HashMap::new();
+    for node in &all_active {
+        let q = node
+            .quadrants
+            .get("active_quadrant")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unassigned")
+            .to_string();
+        *quadrant_coverage.entry(q).or_insert(0) += 1;
+    }
+
+    // ── 6. Next-cycle recommendation ────────────────────────────────────────
+    let all_quadrants = ["UL", "UR", "LL", "LR"];
+    let most_neglected = all_quadrants
+        .iter()
+        .min_by_key(|q| quadrant_coverage.get(**q).unwrap_or(&0))
+        .map(|q| q.to_string())
+        .unwrap_or_else(|| "LR".to_string());
+
+    let addictions = polarity
+        .get("addictions")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let allergies = polarity
+        .get("allergies")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+
+    let recommended_strategy = if addictions > 0 || allergies > 0 {
+        "visit_Q_with_D"
+    } else {
+        "continue_balanced"
+    };
+
+    Ok(serde_json::json!({
+        "drive_landscape": polarity,
+        "telos_hierarchy": telos_hierarchy,
+        "constraint_surface": constraint_surface,
+        "available_actions_4x4": available_actions,
+        "quadrant_coverage": quadrant_coverage,
+        "next_cycle": {
+            "most_neglected_quadrant": most_neglected,
+            "recommended_strategy": recommended_strategy,
+            "addictions": addictions,
+            "allergies": allergies,
+        },
+    }))
+}
+
 // ─── CLI Command Dispatchers ─────────────────────────────────────────────────
 
 /// Graph operations dispatcher.
@@ -655,6 +817,56 @@ mod tests {
         let conn = setup_db();
         let result = cmd_knowledge(&conn, "stats", &HashMap::new()).unwrap();
         assert!(result.get("total_nodes").is_some());
+    }
+
+    #[test]
+    fn meta_view_basic() {
+        let conn = setup_db();
+
+        crate::db::crud::add_node(
+            &conn,
+            &NewNode {
+                node_type: "telos".to_string(),
+                name: "Core Telos".to_string(),
+                teleological_level: Some("T0".to_string()),
+                developmental_stage: Some(3),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        crate::db::crud::add_node(
+            &conn,
+            &NewNode {
+                node_type: "action".to_string(),
+                name: "Do Things".to_string(),
+                quadrants: Some(serde_json::json!({"active_quadrant": "UR"})),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        crate::db::crud::add_node(
+            &conn,
+            &NewNode {
+                node_type: "constraint".to_string(),
+                name: "Budget Limit".to_string(),
+                properties: Some(serde_json::json!({"severity": "strong"})),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let result = meta_view(&conn).unwrap();
+
+        assert!(result.get("drive_landscape").is_some());
+        assert!(result.get("telos_hierarchy").is_some());
+        assert!(result.get("constraint_surface").is_some());
+        assert!(result.get("available_actions_4x4").is_some());
+        assert!(result.get("quadrant_coverage").is_some());
+        assert!(result.get("next_cycle").is_some());
+        assert_eq!(result["telos_hierarchy"][0]["name"], "Core Telos");
+        assert_eq!(result["constraint_surface"][0]["name"], "Budget Limit");
     }
 
     #[test]

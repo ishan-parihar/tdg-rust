@@ -38,6 +38,41 @@ pub struct PatternFlag {
     pub quadrant: Option<String>,
 }
 
+/// Drive label categories.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DriveLabel {
+    Healthy,
+    Pathological,
+    Addicted,
+    Allergic,
+    Blind,
+    Conflicted,
+}
+
+impl DriveLabel {
+    pub fn as_str(&self) -> &str {
+        match self {
+            DriveLabel::Healthy => "healthy",
+            DriveLabel::Pathological => "pathological",
+            DriveLabel::Addicted => "addicted",
+            DriveLabel::Allergic => "allergic",
+            DriveLabel::Blind => "blind",
+            DriveLabel::Conflicted => "conflicted",
+        }
+    }
+}
+
+/// Phantom node detection — drive expressed in wrong quadrant.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhantomNode {
+    pub node_id: String,
+    pub node_name: String,
+    pub drive: String,
+    pub expected_quadrant: String,
+    pub actual_quadrant: String,
+    pub confidence: f64,
+}
+
 /// Diagnostic report output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiagnosticReport {
@@ -46,8 +81,11 @@ pub struct DiagnosticReport {
     pub quadrant_distribution: HashMap<String, f64>,
     pub blind_spots: Vec<String>,
     pub persistence_warnings: Vec<String>,
+    pub drive_labels: HashMap<String, DriveLabel>,
+    pub phantom_nodes: Vec<PhantomNode>,
     pub ghost_nodes: i64,
     pub metrics_staleness: bool,
+    pub escalation_level: Severity,
     pub suggestion: String,
 }
 
@@ -134,7 +172,19 @@ impl DiagnosticEngine {
         // 7. Ghost nodes (unclassified)
         let ghost_nodes = self.count_ghost_nodes(conn)?;
 
-        // 8. Generate suggestion
+        // 8. Drive label categorization
+        let drive_labels = self.categorize_drive_labels(&drive_dist);
+
+        // 9. Phantom node detection (eros in wrong quadrant)
+        let phantom_nodes = self.detect_phantom_nodes(conn)?;
+
+        // 10. Metrics staleness check
+        let metrics_staleness = self.check_metrics_staleness(conn)?;
+
+        // 11. Escalation level
+        let escalation_level = self.compute_escalation_level(&flags, metrics_staleness);
+
+        // 12. Generate suggestion
         let suggestion = self.generate_suggestion(&flags, &blind_spots);
 
         Ok(DiagnosticReport {
@@ -143,8 +193,11 @@ impl DiagnosticEngine {
             quadrant_distribution: quadrant_dist,
             blind_spots,
             persistence_warnings,
+            drive_labels,
+            phantom_nodes,
             ghost_nodes,
-            metrics_staleness: false,
+            metrics_staleness,
+            escalation_level,
             suggestion,
         })
     }
@@ -363,6 +416,151 @@ impl DiagnosticEngine {
         Ok(count)
     }
 
+    fn categorize_drive_labels(&self, drive_dist: &HashMap<String, f64>) -> HashMap<String, DriveLabel> {
+        let mut labels = HashMap::new();
+        for (name, &net) in drive_dist {
+            let label = if net.abs() < 0.5 {
+                DriveLabel::Blind
+            } else if net > 7.0 {
+                DriveLabel::Addicted
+            } else if net < -5.0 {
+                DriveLabel::Allergic
+            } else if net.abs() > 8.0 {
+                DriveLabel::Pathological
+            } else {
+                DriveLabel::Healthy
+            };
+            labels.insert(name.clone(), label);
+        }
+        labels
+    }
+
+    fn detect_phantom_nodes(&self, conn: &Connection) -> TdgResult<Vec<PhantomNode>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, name, drives_json, quadrants_json FROM nodes WHERE valid_to IS NULL AND node_type = 'observation'",
+        )?;
+        let rows: Vec<(String, String, String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut phantoms = Vec::new();
+        let quadrant_map: HashMap<&str, &str> = HashMap::from([
+            ("UL", "agape"),
+            ("UR", "agency"),
+            ("LL", "communion"),
+            ("LR", "eros"),
+        ]);
+
+        for (id, name, drives_json, quadrants_json) in &rows {
+            let drives: serde_json::Value =
+                serde_json::from_str(drives_json).unwrap_or(serde_json::json!({}));
+            let quadrants: serde_json::Value =
+                serde_json::from_str(quadrants_json).unwrap_or(serde_json::json!({}));
+
+            let active_quadrant = quadrants
+                .get("active")
+                .and_then(|v| v.as_str())
+                .unwrap_or("LR");
+
+            let expected_drive = quadrant_map.get(active_quadrant).unwrap_or(&"eros");
+
+            for drive_name in &["eros", "agape", "agency", "communion"] {
+                let drive_val = drives.get(*drive_name).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                if drive_name == expected_drive && drive_val.abs() > 7.0 {
+                    phantoms.push(PhantomNode {
+                        node_id: id.clone(),
+                        node_name: name.clone(),
+                        drive: drive_name.to_string(),
+                        expected_quadrant: active_quadrant.to_string(),
+                        actual_quadrant: active_quadrant.to_string(),
+                        confidence: drive_val.abs() / 10.0,
+                    });
+                }
+            }
+        }
+
+        Ok(phantoms)
+    }
+
+    fn check_metrics_staleness(&self, conn: &Connection) -> TdgResult<bool> {
+        let result: Option<String> = conn
+            .query_row(
+                "SELECT payload FROM events WHERE event_action = 'metrics_updated' ORDER BY timestamp DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        match result {
+            Some(payload) => {
+                let v: serde_json::Value =
+                    serde_json::from_str(&payload).unwrap_or(serde_json::json!({}));
+                let timestamp_str = v
+                    .get("timestamp")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                if let Ok(ts) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%dT%H:%M:%S") {
+                    let now = chrono::Utc::now().naive_utc();
+                    let hours = (now - ts).num_hours();
+                    Ok(hours > 24)
+                } else {
+                    Ok(true)
+                }
+            }
+            None => Ok(true),
+        }
+    }
+
+    fn compute_escalation_level(&self, flags: &[PatternFlag], metrics_staleness: bool) -> Severity {
+        let has_mandatory = flags.iter().any(|f| f.severity == Severity::Mandatory);
+        let has_strong = flags.iter().any(|f| f.severity == Severity::Strong);
+        let pathology_count = flags
+            .iter()
+            .filter(|f| f.category == "drive_pathology")
+            .count();
+
+        if has_mandatory || pathology_count >= 3 {
+            Severity::Mandatory
+        } else if has_strong || metrics_staleness || pathology_count >= 2 {
+            Severity::Strong
+        } else {
+            Severity::Soft
+        }
+    }
+
+    pub fn diagnostic_prompt_section(&self, report: &DiagnosticReport) -> String {
+        let mut section = String::new();
+        section.push_str("## Diagnostic Dashboard\n\n");
+        section.push_str(&format!("**Escalation**: {:?}\n", report.escalation_level));
+        section.push_str(&format!("**Suggestion**: {}\n\n", report.suggestion));
+
+        section.push_str("### Drive Labels\n");
+        for (drive, label) in &report.drive_labels {
+            section.push_str(&format!("- {}: {:?}\n", drive, label));
+        }
+
+        if !report.phantom_nodes.is_empty() {
+            section.push_str("\n### Phantom Nodes\n");
+            for p in &report.phantom_nodes {
+                section.push_str(&format!(
+                    "- {} ({}) in {} — {}\n",
+                    p.node_name, p.drive, p.actual_quadrant, p.expected_quadrant
+                ));
+            }
+        }
+
+        if !report.blind_spots.is_empty() {
+            section.push_str(&format!("\n### Blind Spots: {:?}\n", report.blind_spots));
+        }
+
+        if report.metrics_staleness {
+            section.push_str("\n⚠️ Metrics data is stale (>24h)\n");
+        }
+
+        section
+    }
+
     fn generate_suggestion(&self, flags: &[PatternFlag], blind_spots: &[String]) -> String {
         let mandatory_count = flags
             .iter()
@@ -421,6 +619,7 @@ mod tests {
         let report = engine.analyze(&conn, &[], &quadrant_history).unwrap();
         assert!(report.suggestion.contains("nominal"));
         assert_eq!(report.ghost_nodes, 1);
+        assert!(!report.drive_labels.is_empty());
     }
 
     #[test]
@@ -449,5 +648,101 @@ mod tests {
         let spots = engine.detect_blind_spots(&dist);
         assert!(spots.contains(&"LL".to_string()));
         assert!(spots.contains(&"LR".to_string()));
+    }
+
+    #[test]
+    fn drive_label_categorization() {
+        let engine = DiagnosticEngine::new();
+        let mut dist = HashMap::new();
+        dist.insert("eros".to_string(), 8.0);
+        dist.insert("agape".to_string(), -6.0);
+        dist.insert("agency".to_string(), 3.0);
+        dist.insert("communion".to_string(), 0.3);
+
+        let labels = engine.categorize_drive_labels(&dist);
+        assert_eq!(labels.get("eros").unwrap(), &DriveLabel::Addicted);
+        assert_eq!(labels.get("agape").unwrap(), &DriveLabel::Allergic);
+        assert_eq!(labels.get("agency").unwrap(), &DriveLabel::Healthy);
+        assert_eq!(labels.get("communion").unwrap(), &DriveLabel::Blind);
+    }
+
+    #[test]
+    fn escalation_level_computation() {
+        let engine = DiagnosticEngine::new();
+        let flags = vec![
+            PatternFlag {
+                category: "drive_pathology".to_string(),
+                severity: Severity::Strong,
+                message: "test".to_string(),
+                drive: Some("eros".to_string()),
+                quadrant: None,
+            },
+            PatternFlag {
+                category: "drive_pathology".to_string(),
+                severity: Severity::Strong,
+                message: "test2".to_string(),
+                drive: Some("agape".to_string()),
+                quadrant: None,
+            },
+        ];
+        let level = engine.compute_escalation_level(&flags, false);
+        assert_eq!(level, Severity::Strong);
+
+        let flags3 = vec![
+            PatternFlag {
+                category: "drive_pathology".to_string(),
+                severity: Severity::Strong,
+                message: "test".to_string(),
+                drive: Some("eros".to_string()),
+                quadrant: None,
+            },
+            PatternFlag {
+                category: "drive_pathology".to_string(),
+                severity: Severity::Strong,
+                message: "test2".to_string(),
+                drive: Some("agape".to_string()),
+                quadrant: None,
+            },
+            PatternFlag {
+                category: "drive_pathology".to_string(),
+                severity: Severity::Strong,
+                message: "test3".to_string(),
+                drive: Some("agency".to_string()),
+                quadrant: None,
+            },
+        ];
+        let level3 = engine.compute_escalation_level(&flags3, false);
+        assert_eq!(level3, Severity::Mandatory);
+    }
+
+    #[test]
+    fn diagnostic_prompt_section_output() {
+        let engine = DiagnosticEngine::new();
+        let mut labels = HashMap::new();
+        labels.insert("eros".to_string(), DriveLabel::Healthy);
+        let report = DiagnosticReport {
+            pattern_flags: vec![],
+            drive_distribution: HashMap::new(),
+            quadrant_distribution: HashMap::new(),
+            blind_spots: vec![],
+            persistence_warnings: vec![],
+            drive_labels: labels,
+            phantom_nodes: vec![],
+            ghost_nodes: 0,
+            metrics_staleness: false,
+            escalation_level: Severity::Soft,
+            suggestion: "System nominal".to_string(),
+        };
+        let section = engine.diagnostic_prompt_section(&report);
+        assert!(section.contains("Diagnostic Dashboard"));
+        assert!(section.contains("Drive Labels"));
+    }
+
+    #[test]
+    fn metrics_staleness_check() {
+        let conn = setup_db();
+        let engine = DiagnosticEngine::new();
+        let stale = engine.check_metrics_staleness(&conn).unwrap();
+        assert!(stale);
     }
 }

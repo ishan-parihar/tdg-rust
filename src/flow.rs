@@ -9,13 +9,19 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::f64;
+use std::sync::LazyLock;
 
 use rusqlite::{params, Connection};
 use serde::{Serialize, Deserialize};
 
-use crate::db::crud::{get_edges, get_node, now_iso};
+use crate::db::crud::{get_edges, get_node, now_iso, record_event};
 use crate::error::TdgResult;
 use crate::models::Node;
+
+// ─── Lean Mode ────────────────────────────────────────────────────────────────
+
+/// When true, renormalize_graph returns early (used during rapid ingestion).
+pub static mut LEAN_MODE: bool = false;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -25,6 +31,50 @@ pub const MAX_INFLUENCE_PER_PARENT: f64 = 0.6;
 pub const VARIANCE_FLOOR_RATIO: f64 = 0.3;
 pub const INTRINSIC_BLEND_RATIO: f64 = 0.7; // 70% intrinsic + 30% incoming
 pub const DEFAULT_MAX_DEPTH: i64 = 5;
+
+/// Quadrant-based multipliers for intrinsic drive modulation.
+/// Keys: "UL", "UR", "LL", "LR". Values: drive_name → multiplier.
+pub static QUADRANT_MODULATORS: LazyLock<HashMap<&'static str, HashMap<&'static str, f64>>> =
+    LazyLock::new(|| {
+        let mut m = HashMap::new();
+        m.insert(
+            "UL",
+            HashMap::from([
+                ("eros", 0.3),
+                ("agape", 0.7),
+                ("agency", 0.6),
+                ("communion", 0.2),
+            ]),
+        );
+        m.insert(
+            "UR",
+            HashMap::from([
+                ("eros", 0.4),
+                ("agape", 0.15),
+                ("agency", 0.85),
+                ("communion", 0.1),
+            ]),
+        );
+        m.insert(
+            "LL",
+            HashMap::from([
+                ("eros", 0.4),
+                ("agape", 0.5),
+                ("agency", 0.25),
+                ("communion", 0.7),
+            ]),
+        );
+        m.insert(
+            "LR",
+            HashMap::from([
+                ("eros", 0.65),
+                ("agape", 0.15),
+                ("agency", 0.45),
+                ("communion", 0.3),
+            ]),
+        );
+        m
+    });
 
 // ─── Drive Types ─────────────────────────────────────────────────────────────
 
@@ -191,20 +241,68 @@ fn intrinsic_signatures() -> HashMap<&'static str, IntrinsicSig> {
     m.insert("communication", IntrinsicSig { eros: (4.0, 1.0), agape: (6.0, 2.0), agency: (3.0, 1.0), communion: (7.0, 2.0) });
     m.insert("event",       IntrinsicSig { eros: (4.0, 1.0), agape: (3.0, 1.0), agency: (4.0, 1.0), communion: (4.0, 1.0) });
     m.insert("insight",     IntrinsicSig { eros: (8.0, 2.0), agape: (4.0, 1.0), agency: (5.0, 2.0), communion: (4.0, 2.0) });
+    m.insert("value",       IntrinsicSig { eros: (2.5, 1.0), agape: (3.0, 1.5), agency: (4.0, 1.0), communion: (3.5, 1.5) });
+    m.insert("bond",        IntrinsicSig { eros: (3.0, 1.5), agape: (5.0, 1.0), agency: (3.0, 1.0), communion: (6.0, 1.5) });
+    m.insert("narrative",   IntrinsicSig { eros: (6.0, 2.0), agape: (4.0, 1.5), agency: (5.0, 2.0), communion: (5.0, 1.5) });
     m
+}
+
+/// Compute quadrant-modulated intrinsic signature for a node type.
+///
+/// `quadrant` defaults to "LR" if not found.
+pub fn get_intrinsic_signature(node_type: &str, quadrant: &str) -> FlowDriveState {
+    let sigs = intrinsic_signatures();
+    let base = sigs.get(node_type).unwrap_or_else(|| {
+        sigs.get("observation").unwrap()
+    });
+    let mods = QUADRANT_MODULATORS.get(quadrant).unwrap_or_else(|| {
+        QUADRANT_MODULATORS.get("LR").unwrap()
+    });
+
+    let mod_eros = mods.get("eros").copied().unwrap_or(0.5);
+    let mod_agape = mods.get("agape").copied().unwrap_or(0.5);
+    let mod_agency = mods.get("agency").copied().unwrap_or(0.5);
+    let mod_communion = mods.get("communion").copied().unwrap_or(0.5);
+
+    FlowDriveState {
+        eros: DualPoleDrive {
+            positive_pole: (base.eros.0 * mod_eros * 2.0).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
+            negative_pole: (base.eros.1 * mod_eros).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
+            availability: (mod_eros * 2.0).min(1.0),
+            blind_spot: false,
+        },
+        agape: DualPoleDrive {
+            positive_pole: (base.agape.0 * mod_agape * 2.0).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
+            negative_pole: (base.agape.1 * mod_agape).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
+            availability: (mod_agape * 2.0).min(1.0),
+            blind_spot: false,
+        },
+        agency: DualPoleDrive {
+            positive_pole: (base.agency.0 * mod_agency * 2.0).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
+            negative_pole: (base.agency.1 * mod_agency).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
+            availability: (mod_agency * 2.0).min(1.0),
+            blind_spot: false,
+        },
+        communion: DualPoleDrive {
+            positive_pole: (base.communion.0 * mod_communion * 2.0).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
+            negative_pole: (base.communion.1 * mod_communion).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
+            availability: (mod_communion * 2.0).min(1.0),
+            blind_spot: false,
+        },
+    }
 }
 
 // ─── Edge Contracts ──────────────────────────────────────────────────────────
 
-/// Edge type → flow rate (0.0 to 1.0).
-fn edge_flow_rate(edge_type: &str) -> f64 {
+/// Edge type → (flow_rate, aggregation_weight).
+fn edge_flow_rate(edge_type: &str) -> (f64, f64) {
     match edge_type {
-        "DECOMPOSES_TO" | "ENABLES" | "REALIZES" | "SUPPORTS" => 0.8,
-        "DEPENDS_ON" | "PRECEDES" | "CONTEXT" => 0.6,
-        "RELATES_TO" | "REFERENCES" | "MENTIONS" => 0.3,
-        "BLOCKS" => -0.5,
-        "CONTRADICTS" => -0.7,
-        _ => 0.4,
+        "DECOMPOSES_TO" | "ENABLES" | "REALIZES" | "SUPPORTS" => (0.8, 0.8),
+        "DEPENDS_ON" | "PRECEDES" | "CONTEXT" => (0.6, 0.6),
+        "RELATES_TO" | "REFERENCES" | "MENTIONS" => (0.3, 0.3),
+        "BLOCKS" => (-0.5, -0.5),
+        "CONTRADICTS" => (-0.7, -0.7),
+        _ => (0.4, 0.4),
     }
 }
 
@@ -266,23 +364,20 @@ fn receive_stabilize(
 ) -> FlowDriveState {
     let clamp_drive = |child: &DualPoleDrive,
                        intrinsic_d: &DualPoleDrive,
-                       contrib: &DualPoleDrive|
+                       contrib: &DualPoleDrive,
+                       influence_weight: f64|
      -> DualPoleDrive {
-        // Max influence cap
-        let capped_pos = contrib.positive_pole.abs().min(MAX_INFLUENCE_PER_PARENT * MAX_DRIVE_VALUE) * contrib.positive_pole.signum();
-        let capped_neg = contrib.negative_pole.abs().min(MAX_INFLUENCE_PER_PARENT * MAX_DRIVE_VALUE) * contrib.negative_pole.signum();
+        let capped_pos = contrib.positive_pole.max(-5.0).min(5.0) * influence_weight.min(0.6);
+        let capped_neg = contrib.negative_pole.max(-5.0).min(5.0) * influence_weight.min(0.6);
 
-        // Blend: INTRINSIC_BLEND_RATIO current + (1 - INTRINSIC_BLEND_RATIO) incoming
         let new_pos = child.positive_pole * INTRINSIC_BLEND_RATIO
             + capped_pos * (1.0 - INTRINSIC_BLEND_RATIO);
         let new_neg = child.negative_pole * INTRINSIC_BLEND_RATIO
             + capped_neg * (1.0 - INTRINSIC_BLEND_RATIO);
 
-        // Variance floor: at least VARIANCE_FLOOR_RATIO of intrinsic variance
         let intr_var = intrinsic_d.variance();
         let mut result = DualPoleDrive::new(new_pos, new_neg);
         if intr_var > 0.1 && result.variance() < intr_var * VARIANCE_FLOOR_RATIO {
-            // Boost the weaker pole to maintain variance
             if result.positive_pole < result.negative_pole {
                 result.positive_pole = result.negative_pole * intr_var * VARIANCE_FLOOR_RATIO;
             } else {
@@ -294,14 +389,17 @@ fn receive_stabilize(
         result
     };
 
+    let influence = contribution.eros.positive_pole.abs() / MAX_DRIVE_VALUE;
+
     FlowDriveState {
-        eros: clamp_drive(&child_state.eros, &intrinsic.eros, &contribution.eros),
-        agape: clamp_drive(&child_state.agape, &intrinsic.agape, &contribution.agape),
-        agency: clamp_drive(&child_state.agency, &intrinsic.agency, &contribution.agency),
+        eros: clamp_drive(&child_state.eros, &intrinsic.eros, &contribution.eros, influence),
+        agape: clamp_drive(&child_state.agape, &intrinsic.agape, &contribution.agape, influence),
+        agency: clamp_drive(&child_state.agency, &intrinsic.agency, &contribution.agency, influence),
         communion: clamp_drive(
             &child_state.communion,
             &intrinsic.communion,
             &contribution.communion,
+            influence,
         ),
     }
 }
@@ -357,20 +455,41 @@ pub fn emit_downward(
             let child_state = load_drive_state(conn, &child);
             let intrinsic = FlowDriveState::intrinsic(&child.node_type);
 
-            // Find the flow rate for the edge between immediate parent and current node
-            let flow_rate = get_flow_rate_for_edge(conn, &immediate_parent_id, &current_id)?;
+            let edge_type_str = get_edge_type_for_edge(conn, &immediate_parent_id, &current_id)?;
+            if !contributes_to_polarity(&edge_type_str) {
+                let grandchildren = get_children_for_emission(conn, &current_id, &downward_types, &reversed_types)?;
+                for gc in grandchildren {
+                    if !visited.contains(&gc) {
+                        visited.insert(gc.clone());
+                        queue.push_back((gc, depth + 1, current_id.clone(), parent_drive_state.clone()));
+                    }
+                }
+                continue;
+            }
 
-            // Build contribution from the immediate parent's state
+            let mut flow_rate = get_flow_rate_for_edge(conn, &immediate_parent_id, &current_id)?;
+            if edge_type_str == "BLOCKS" {
+                flow_rate = -flow_rate.abs();
+            } else if edge_type_str == "CONTRADICTS" {
+                flow_rate = -flow_rate.abs() * 1.5;
+            }
+
             let contribution = build_contribution(&parent_drive_state, flow_rate);
-
-            // Stabilize: blend child state with contribution
             let new_state = receive_stabilize(&child_state, &intrinsic, &contribution);
 
-            // Store updated state
             store_drive_state(conn, &current_id, &new_state)?;
+
+            let _ = record_event(
+                conn,
+                "drive_recomputed",
+                Some(&current_id),
+                None,
+                None,
+                Some(&new_state.to_json()),
+            );
+
             affected += 1;
 
-            // Continue BFS to grandchildren, passing this node's UPDATED state as the parent
             let grandchildren = get_children_for_emission(conn, &current_id, &downward_types, &reversed_types)?;
             for gc in grandchildren {
                 if !visited.contains(&gc) {
@@ -419,16 +538,28 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
     // Check standard direction
     let edges = get_edges(conn, Some(source_id), Some(target_id), None, None, 10)?;
     if let Some(e) = edges.first() {
-        return Ok(edge_flow_rate(&e.edge_type));
+        return Ok(edge_flow_rate(&e.edge_type).0);
     }
 
     // Check reversed direction
     let edges = get_edges(conn, Some(target_id), Some(source_id), None, None, 10)?;
     if let Some(e) = edges.first() {
-        return Ok(edge_flow_rate(&e.edge_type));
+        return Ok(edge_flow_rate(&e.edge_type).0);
     }
 
     Ok(0.4) // default
+}
+
+fn get_edge_type_for_edge(conn: &Connection, source_id: &str, target_id: &str) -> TdgResult<String> {
+    let edges = get_edges(conn, Some(source_id), Some(target_id), None, None, 10)?;
+    if let Some(e) = edges.first() {
+        return Ok(e.edge_type.clone());
+    }
+    let edges = get_edges(conn, Some(target_id), Some(source_id), None, None, 10)?;
+    if let Some(e) = edges.first() {
+        return Ok(e.edge_type.clone());
+    }
+    Ok("MENTIONS".to_string())
 }
 
 /// Phase 3: Aggregate child drive states upward to parent.
@@ -540,6 +671,12 @@ fn blend_drives(a: &DualPoleDrive, b: &DualPoleDrive, a_weight: f64) -> DualPole
 /// 2. Downward flow from telos nodes
 /// 3. Upward aggregation from leaves
 pub fn renormalize_graph(conn: &Connection, force_intrinsic: bool) -> TdgResult<serde_json::Value> {
+    if unsafe { LEAN_MODE } {
+        return Ok(serde_json::json!({
+            "skipped": true,
+            "reason": "lean_mode",
+        }));
+    }
     let mut healed = 0i64;
     let mut emitted = 0i64;
     let mut aggregated = 0i64;
@@ -985,10 +1122,123 @@ mod tests {
 
     #[test]
     fn edge_flow_rates() {
-        assert_eq!(edge_flow_rate("DECOMPOSES_TO"), 0.8);
-        assert_eq!(edge_flow_rate("BLOCKS"), -0.5);
-        assert_eq!(edge_flow_rate("CONTRADICTS"), -0.7);
-        assert_eq!(edge_flow_rate("SUPPORTS"), 0.8);
-        assert_eq!(edge_flow_rate("RELATES_TO"), 0.3);
+        assert_eq!(edge_flow_rate("DECOMPOSES_TO").0, 0.8);
+        assert_eq!(edge_flow_rate("BLOCKS").0, -0.5);
+        assert_eq!(edge_flow_rate("CONTRADICTS").0, -0.7);
+        assert_eq!(edge_flow_rate("SUPPORTS").0, 0.8);
+        assert_eq!(edge_flow_rate("RELATES_TO").0, 0.3);
+        assert_eq!(edge_flow_rate("DECOMPOSES_TO").1, 0.8);
+        assert_eq!(edge_flow_rate("BLOCKS").1, -0.5);
+    }
+
+    #[test]
+    fn quadrant_modulators_present() {
+        assert!(QUADRANT_MODULATORS.contains_key("UL"));
+        assert!(QUADRANT_MODULATORS.contains_key("UR"));
+        assert!(QUADRANT_MODULATORS.contains_key("LL"));
+        assert!(QUADRANT_MODULATORS.contains_key("LR"));
+
+        // Check all four drives present in each quadrant
+        for quadrant in &["UL", "UR", "LL", "LR"] {
+            let mods = QUADRANT_MODULATORS.get(quadrant).unwrap();
+            assert!(mods.contains_key("eros"), "Missing eros in {quadrant}");
+            assert!(mods.contains_key("agape"), "Missing agape in {quadrant}");
+            assert!(mods.contains_key("agency"), "Missing agency in {quadrant}");
+            assert!(mods.contains_key("communion"), "Missing communion in {quadrant}");
+        }
+    }
+
+    #[test]
+    fn get_intrinsic_signature_quadrant_modulation() {
+        // LR quadrant (default) — action node
+        let lr = get_intrinsic_signature("action", "LR");
+        // UL quadrant — should differ from LR
+        let ul = get_intrinsic_signature("action", "UL");
+        // Modulators differ, so drive values should differ
+        assert_ne!(lr.eros.positive_pole, ul.eros.positive_pole);
+
+        // Unknown quadrant falls back to LR
+        let fallback = get_intrinsic_signature("action", "XX");
+        assert_eq!(fallback.eros.positive_pole, lr.eros.positive_pole);
+    }
+
+    #[test]
+    fn missing_intrinsic_signatures_added() {
+        // These 3 were added in Phase 14
+        let value = FlowDriveState::intrinsic("value");
+        assert!(value.eros.positive_pole > 0.0, "value eros should be positive");
+
+        let bond = FlowDriveState::intrinsic("bond");
+        assert!(bond.agape.positive_pole > 0.0, "bond agape should be positive");
+
+        let narrative = FlowDriveState::intrinsic("narrative");
+        assert!(narrative.eros.positive_pole > 0.0, "narrative eros should be positive");
+    }
+
+    #[test]
+    fn lean_mode_skips_renormalization() {
+        let conn = setup_db();
+        let telos = add_test_node(&conn, "Lean Telos", "telos");
+
+        unsafe { LEAN_MODE = true; }
+        let result = renormalize_graph(&conn, false).unwrap();
+        unsafe { LEAN_MODE = false; }
+
+        assert_eq!(result.get("skipped"), Some(&serde_json::json!(true)));
+        assert_eq!(result.get("reason"), Some(&serde_json::json!("lean_mode")));
+    }
+
+    #[test]
+    fn emit_downward_records_drive_recomputed_events() {
+        let conn = setup_db();
+        let parent = add_test_node(&conn, "Event Telos", "telos");
+        let child = add_test_node(&conn, "Event Action", "action");
+
+        crate::db::crud::add_edge(
+            &conn,
+            &crate::models::NewEdge {
+                source_id: parent.id.clone(),
+                target_id: child.id.clone(),
+                edge_type: "DECOMPOSES_TO".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        emit_downward(&conn, &parent.id, 5).unwrap();
+
+        // Check that drive_recomputed events were recorded
+        let events = crate::db::crud::get_edges(&conn, Some(&parent.id), None, None, None, 100).unwrap();
+        // Events go to the events table, not edges — check via SQL
+        let mut stmt = conn.prepare(
+            "SELECT COUNT(*) FROM events WHERE event_action = 'drive_recomputed'"
+        ).unwrap();
+        let count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
+        assert!(count >= 1, "Expected at least 1 drive_recomputed event, got {count}");
+    }
+
+    #[test]
+    fn contributes_to_polarity_filter() {
+        assert!(contributes_to_polarity("DECOMPOSES_TO"));
+        assert!(contributes_to_polarity("SUPPORTS"));
+        assert!(contributes_to_polarity("ENABLES"));
+        assert!(contributes_to_polarity("REALIZES"));
+        assert!(contributes_to_polarity("DEPENDS_ON"));
+        assert!(!contributes_to_polarity("BLOCKS"));
+        assert!(!contributes_to_polarity("CONTRADICTS"));
+        assert!(!contributes_to_polarity("MENTIONS"));
+        assert!(!contributes_to_polarity("REFERENCES"));
+        assert!(!contributes_to_polarity("CONTEXT"));
+    }
+
+    #[test]
+    fn blocks_contradicts_negative_flow() {
+        // BLOCKS and CONTRADICTS should have negative flow rates
+        let (blocks_rate, _) = edge_flow_rate("BLOCKS");
+        let (contradicts_rate, _) = edge_flow_rate("CONTRADICTS");
+        assert!(blocks_rate < 0.0, "BLOCKS rate should be negative");
+        assert!(contradicts_rate < 0.0, "CONTRADICTS rate should be negative");
+        // CONTRADICTS should be 1.5x stronger than BLOCKS
+        assert!(contradicts_rate.abs() > blocks_rate.abs());
     }
 }
