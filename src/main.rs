@@ -4,6 +4,7 @@ mod error;
 mod flow;
 mod hrr;
 mod knowledge;
+mod mcp;
 mod models;
 mod mind;
 mod ops;
@@ -158,9 +159,19 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Serve { port } => {
             tracing::info!("Starting MCP server on port {port}");
-            // Phase 11: Axum server
-            tracing::warn!("MCP server not yet implemented (Phase 11)");
-            println!("MCP server will be available in Phase 11. Current port: {port}");
+            let pool = ConnectionPool::new(
+                config.db_path.to_str().unwrap(),
+                5,
+                30000,
+            )?;
+            pool.with_connection(|conn| {
+                init_schema(conn)?;
+                init_fts(conn)?;
+                run_migrations(conn)?;
+                Ok(())
+            })?;
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(mcp::server::start_server(pool, port))?;
         }
     }
 

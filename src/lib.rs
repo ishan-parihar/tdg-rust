@@ -10,8 +10,11 @@ pub mod error;
 pub mod flow;
 pub mod hrr;
 pub mod knowledge;
+pub mod mcp;
 pub mod models;
 pub mod mind;
+pub mod ops;
+pub mod plugins;
 pub mod validation;
 
 // Re-export key types for plugin/library use
