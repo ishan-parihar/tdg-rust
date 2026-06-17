@@ -1,7 +1,9 @@
 mod config;
 mod db;
 mod error;
+mod flow;
 mod hrr;
+mod knowledge;
 mod models;
 mod validation;
 
