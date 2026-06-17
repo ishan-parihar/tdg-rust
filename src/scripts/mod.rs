@@ -219,11 +219,13 @@ pub fn reconcile_constraints(conn: &Connection) -> TdgResult<Value> {
     }
 
     let mut deduped = 0i64;
+    let mut dup_count = 0i64;
     let now = crate::db::crud::now_iso();
     for (_name, mut entries) in by_name {
         if entries.len() <= 1 {
             continue;
         }
+        dup_count += 1;
         // Keep the oldest (first, since we ordered by created_at ASC), archive the rest
         for (id, _created_at) in entries.drain(1..) {
             conn.execute(
@@ -253,7 +255,7 @@ pub fn reconcile_constraints(conn: &Connection) -> TdgResult<Value> {
     }
 
     Ok(json!({
-        "duplicate_groups_found": deduped,
+        "duplicate_groups_found": dup_count,
         "constraints_deduped": deduped,
         "dangling_blocks_repaired": dangling_blocks,
     }))
