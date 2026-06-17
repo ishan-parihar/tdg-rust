@@ -25,17 +25,34 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 tokio-stream = "0.1"
 futures = "0.3"
 
+# Linear algebra (HRR)
+ndarray = { version = "0.16", features = ["serde"] }
+
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
 
 # UUID
 uuid = { version = "1", features = ["v4", "serde"] }
 
+# CLI
+clap = { version = "4", features = ["derive"] }
+
 # Environment
 dotenvy = "0.15"
+shellexpand = "3"
 
 # Hashing (for vector similarity)
 ahash = "0.8"
+
+# LLM (Ollama)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Random (for HRR)
+rand = "0.8"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3"
 
 [profile.release]
 opt-level = 3
