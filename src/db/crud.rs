@@ -3,8 +3,14 @@ use std::collections::HashMap;
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
-use crate::error::TdgResult;
+use crate::error::{TdgError, TdgResult};
 use crate::models::{Edge, NewEdge, NewNode, Node, NodeQuery};
+
+/// Maximum number of nodes allowed in the graph.
+pub const MAX_NODES: usize = 100_000;
+
+/// Maximum number of edges allowed in the graph.
+pub const MAX_EDGES: usize = 500_000;
 
 /// Generate a node ID: "n" + 12 hex chars from UUID v4.
 fn gen_node_id() -> String {
@@ -29,6 +35,13 @@ pub(crate) fn now_iso() -> String {
 
 /// Create a new node. Returns the created node.
 pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0))?;
+    if count as usize >= MAX_NODES {
+        return Err(TdgError::GraphSizeLimit(format!(
+            "Node limit reached: {} >= {}", count, MAX_NODES
+        )));
+    }
+    
     let id = gen_node_id();
     let now = now_iso();
     let node_type = new.node_type.clone();
@@ -240,6 +253,13 @@ pub fn hard_delete_node(conn: &Connection, node_id: &str) -> TdgResult<bool> {
 
 /// Create a new edge. Returns the created edge.
 pub fn add_edge(conn: &Connection, new: &NewEdge) -> TdgResult<Edge> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM edges WHERE valid_to IS NULL", [], |r| r.get(0))?;
+    if count as usize >= MAX_EDGES {
+        return Err(TdgError::GraphSizeLimit(format!(
+            "Edge limit reached: {} >= {}", count, MAX_EDGES
+        )));
+    }
+    
     let id = gen_edge_id();
     let now = now_iso();
     let weight = new.weight.unwrap_or(1.0);

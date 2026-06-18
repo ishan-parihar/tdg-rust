@@ -1,5 +1,6 @@
 use ndarray::Array1;
 use rand::Rng;
+use rand::SeedableRng;
 use rustfft::{num_complex::Complex, FftPlanner};
 
 /// Dimension of HRR phase vectors.
@@ -31,7 +32,9 @@ pub fn snr_estimate(count: usize, dim: usize) -> f64 {
 
 /// Phase-encode a scalar value into a 1024-dim circular permutation vector.
 pub fn phase_encode(value: f64, dim: usize) -> Array1<f64> {
-    let mut rng = rand::thread_rng();
+    // Use value as seed for deterministic RNG
+    let seed = (value * 1000.0) as u64;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     let base: Array1<f64> = Array1::from_shape_fn(dim, |_| rng.gen_range(-1.0..1.0));
 
     // Circular shift based on value (discretize to dim positions)
@@ -65,7 +68,7 @@ pub fn bind(a: &Array1<f64>, b: &Array1<f64>) -> Array1<f64> {
     Array1::from_vec(a_c.iter().map(|c| c.re / dim as f64).collect())
 }
 
-/// Unbind two vectors via circular correlation: IFFT(FFT(c) * conj(FFT(r))).
+/// Unbind two vectors via pseudo-inverse: IFFT(FFT(c) / FFT(r)).
 pub fn unbind(c: &Array1<f64>, r: &Array1<f64>) -> Array1<f64> {
     let dim = c.len();
     let mut c_c: Vec<Complex<f64>> = c.iter().map(|&v| Complex::new(v, 0.0)).collect();
@@ -77,7 +80,12 @@ pub fn unbind(c: &Array1<f64>, r: &Array1<f64>) -> Array1<f64> {
     fft.process(&mut r_c);
 
     for (c, r) in c_c.iter_mut().zip(r_c.iter()) {
-        *c *= r.conj();
+        let mag_sq = r.re * r.re + r.im * r.im;
+        if mag_sq > 1e-10 {
+            *c = *c / *r;
+        } else {
+            *c = Complex::new(0.0, 0.0);
+        }
     }
 
     let ifft = planner.plan_fft_inverse(dim);
@@ -95,7 +103,7 @@ pub fn bundle(vectors: &[Array1<f64>]) -> Array1<f64> {
     for v in &vectors[1..] {
         result = &result + v;
     }
-    result
+    normalize(&result)
 }
 
 /// Normalize a vector to unit length.

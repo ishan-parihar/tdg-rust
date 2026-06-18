@@ -269,6 +269,56 @@ pub fn query_sqlite_constraints(conn: &Connection) -> Vec<Value> {
     }
 }
 
+pub fn generate_social_terrain_section(conn: &Connection) -> String {
+    let people_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM nodes WHERE node_type = 'people' AND valid_to IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let communication_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM nodes WHERE node_type = 'communication' AND valid_to IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    if people_count == 0 && communication_count == 0 {
+        return String::new();
+    }
+
+    format!(
+        "## Social Terrain\n- People nodes: {}\n- Communications: {}",
+        people_count, communication_count
+    )
+}
+
+pub fn detect_wisdom_signals(conn: &Connection) -> Vec<String> {
+    let mut signals = Vec::new();
+
+    let duplicates: Vec<String> = conn
+        .prepare_cached(
+            "SELECT name, COUNT(*) as cnt FROM nodes 
+             WHERE valid_to IS NULL AND node_type = 'observation'
+             GROUP BY name HAVING cnt > 2",
+        )
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map([], |row| {
+                let name: String = row.get(0)?;
+                let count: i64 = row.get(1)?;
+                Ok(format!("'{}' repeated {} times", name, count))
+            })?;
+            Ok(rows.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
+    signals.extend(duplicates);
+    signals
+}
+
 fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()

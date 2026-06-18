@@ -10,8 +10,11 @@ use std::sync::atomic::AtomicUsize;
 use crate::config::Config;
 use crate::error::TdgResult;
 use crate::mind::data_loader::*;
+use crate::mind::diagnostic::DiagnosticEngine;
+use crate::mind::feeling::{feeling_state_prompt, FeelingEngine};
 use crate::mind::sections::*;
 use crate::mind::terrain::{discover_skills_for_terrain, generate_terrain_context};
+use crate::mind::metrics::MetricsEngine;
 
 static WISDOM_CALL_COUNTER: AtomicUsize = AtomicUsize::new(0);
 const WISDOM_CADENCE: usize = 5;
@@ -112,6 +115,50 @@ pub fn generate_prompt(conn: &Connection, cfg: &Config) -> TdgResult<String> {
     let pulse_section = generate_pulse_section(conn);
     if !pulse_section.is_empty() {
         sections.push(pulse_section);
+    }
+
+    if !lean {
+        let diag_engine = DiagnosticEngine::new();
+        if let Ok(report) = diag_engine.analyze(conn, &[], &[]) {
+            let diag_section = diag_engine.diagnostic_prompt_section(&report);
+            if !diag_section.is_empty() {
+                sections.push(diag_section);
+            }
+        }
+
+        let feeling_engine = FeelingEngine::new();
+        if let Ok(report) = feeling_engine.generate(conn, &[]) {
+            let feeling_section = feeling_state_prompt(&report);
+            if !feeling_section.is_empty() {
+                sections.push(feeling_section);
+            }
+        }
+
+        let social_section = generate_social_terrain_section(conn);
+        if !social_section.is_empty() {
+            sections.push(social_section);
+        }
+
+        let wisdom_signals = detect_wisdom_signals(conn);
+        if !wisdom_signals.is_empty() {
+            sections.push("## Wisdom Signals".to_string());
+            sections.push("".to_string());
+            for signal in &wisdom_signals {
+                sections.push(format!("- {}", signal));
+            }
+            sections.push("".to_string());
+        }
+
+        let mut metrics_engine = MetricsEngine::new();
+        let wisdom_nodes = metrics_engine.detect_wisdom();
+        if !wisdom_nodes.is_empty() {
+            sections.push("## Metrics Wisdom".to_string());
+            sections.push("".to_string());
+            for w in &wisdom_nodes {
+                sections.push(format!("- [{}] {}", w.severity, w.message));
+            }
+            sections.push("".to_string());
+        }
     }
 
     sections.push("## 🧩 Active Skills".to_string());

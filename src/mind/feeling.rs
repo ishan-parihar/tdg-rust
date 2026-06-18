@@ -254,6 +254,38 @@ impl Default for FeelingEngine {
     }
 }
 
+/// Format a FeelingReport into a prompt section.
+pub fn feeling_state_prompt(report: &FeelingReport) -> String {
+    let mut lines = Vec::new();
+    lines.push("## Feeling State".to_string());
+    lines.push(format!("Energy: {}", report.energy_level));
+    lines.push(format!("Dominant drive: {}", report.dominant_drive));
+    lines.push(format!("Dominant quadrant: {}", report.dominant_quadrant));
+    lines.push("".to_string());
+
+    for feeling in &report.feelings {
+        lines.push(format!("- {}", feeling));
+    }
+
+    if !report.blind_drives.is_empty() {
+        lines.push(format!("\nBlind drives: {}", report.blind_drives.join(", ")));
+    }
+
+    if !report.pathological_drives.is_empty() {
+        lines.push(format!(
+            "Pathological drives: {}",
+            report.pathological_drives.join(", ")
+        ));
+    }
+
+    if let Some(ref warning) = report.stuck_warning {
+        lines.push(format!("\n⚠️ {}", warning));
+    }
+
+    lines.push(format!("\nSummary: {}", report.summary));
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
