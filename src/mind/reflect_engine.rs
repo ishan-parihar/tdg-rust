@@ -68,6 +68,7 @@ impl<'a> ReflectEngine<'a> {
                 "SELECT id, name, description FROM nodes
                  WHERE node_type = 'observation'
                    AND lifecycle_state = 'active'
+                   AND valid_to IS NULL
                  AND created_at >= ?1
                  ORDER BY created_at DESC
                  LIMIT 100",
@@ -98,7 +99,7 @@ impl<'a> ReflectEngine<'a> {
             let entities: Vec<String> = {
                 let mut stmt = self.conn.prepare(
                     "SELECT DISTINCT target_id FROM edges
-                     WHERE source_id = ?1 AND edge_type = 'MENTIONS'",
+                     WHERE source_id = ?1 AND edge_type = 'MENTIONS' AND valid_to IS NULL",
                 )?;
                 let rows = stmt.query_map(rusqlite::params![oid], |row| row.get(0))?;
                 rows.filter_map(|r| r.ok()).collect()
@@ -164,9 +165,10 @@ impl<'a> ReflectEngine<'a> {
             "UPDATE nodes SET lifecycle_state = 'archived', updated_at = ?1
              WHERE node_type = 'observation'
                AND lifecycle_state = 'active'
+               AND valid_to IS NULL
                AND created_at < ?2
                AND id NOT IN (
-                   SELECT DISTINCT source_id FROM edges WHERE edge_type = 'MENTIONS'
+                   SELECT DISTINCT source_id FROM edges WHERE edge_type = 'MENTIONS' AND valid_to IS NULL
                )",
             rusqlite::params![now, cutoff_ts],
         )?;
@@ -189,7 +191,7 @@ impl<'a> ReflectEngine<'a> {
             let node: Option<(String, String, String)> = self
                 .conn
                 .query_row(
-                    "SELECT name, description, properties_json FROM nodes WHERE id = ?1",
+                    "SELECT name, description, properties_json FROM nodes WHERE id = ?1 AND valid_to IS NULL",
                     rusqlite::params![oid],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
@@ -201,7 +203,7 @@ impl<'a> ReflectEngine<'a> {
 
             let entities: Vec<String> = {
                 let mut stmt = self.conn.prepare(
-                    "SELECT DISTINCT target_id FROM edges WHERE source_id = ?1 AND edge_type = 'MENTIONS'"
+                    "SELECT DISTINCT target_id FROM edges WHERE source_id = ?1 AND edge_type = 'MENTIONS' AND valid_to IS NULL"
                 )?;
                 let rows = stmt.query_map(rusqlite::params![oid], |row| row.get(0))?;
                 rows.filter_map(|r| r.ok()).collect()
@@ -229,7 +231,7 @@ impl<'a> ReflectEngine<'a> {
         let exists: bool = self
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM nodes WHERE id = ?1",
+                "SELECT COUNT(*) FROM nodes WHERE id = ?1 AND valid_to IS NULL",
                 rusqlite::params![skill_id],
                 |row| row.get::<_, i64>(0),
             )

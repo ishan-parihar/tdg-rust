@@ -29,6 +29,7 @@ futures = "0.3"
 
 # Linear algebra (HRR)
 ndarray = { version = "0.16", features = ["serde"] }
+rustfft = "6.1"
 
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
@@ -63,6 +64,9 @@ regex = "1"
 # SHA-256 (for reflect engine fingerprints)
 sha2 = "0.10"
 
+# File locking (inter-process write guard)
+fs4 = "1"
+
 # Temp file support (used by test_utils which is pub mod)
 tempfile = "3"
 
@@ -70,6 +74,11 @@ tempfile = "3"
 petgraph = { version = "0.8", features = ["serde-1"] }
 rustworkx-core = "0.17"
 leiden-rs = "0.8"
+
+# Clustering (observation pattern extraction)
+linfa = "0.8.1"
+linfa-clustering = "0.8.1"
+linfa-preprocessing = "0.8.1"
 
 # MCP protocol
 rmcp = { version = "1.7.0", features = ["server", "schemars", "transport-io", "transport-streamable-http-server"] }

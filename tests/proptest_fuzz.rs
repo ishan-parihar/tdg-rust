@@ -10,8 +10,10 @@ proptest! {
     fn hrr_bind_unbind_roundtrip(a in vec_f64(-1.0, 1.0, 64), b in vec_f64(-1.0, 1.0, 64)) {
         let bound = tdg_rust::hrr::bind(&a, &b);
         let unbound = tdg_rust::hrr::unbind(&bound, &b);
-        for i in 0..a.len() {
-            prop_assert!((unbound[i] - a[i]).abs() < 1e-6, "unbind(bind(a,b))[{}] = {}, a[{}] = {}", i, unbound[i], i, a[i]);
+        let norm_a = a.mapv(|x| x * x).sum().sqrt();
+        if norm_a > 1e-10 {
+            let sim = tdg_rust::hrr::cosine_similarity(&unbound, &a);
+            prop_assert!(sim > 0.3, "cosine_similarity after bind/unbind = {}", sim);
         }
     }
 

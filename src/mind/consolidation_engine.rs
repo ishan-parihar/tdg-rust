@@ -192,7 +192,7 @@ impl<'a> ConsolidationEngine<'a> {
     fn count_by_type(&self) -> TdgResult<std::collections::HashMap<String, i64>> {
         let mut stmt = self.conn.prepare(
             "SELECT node_type, COUNT(*) as cnt FROM nodes
-             WHERE lifecycle_state = 'active'
+             WHERE lifecycle_state = 'active' AND valid_to IS NULL
              GROUP BY node_type
              ORDER BY cnt DESC",
         )?;
@@ -211,9 +211,11 @@ impl<'a> ConsolidationEngine<'a> {
             .conn
             .query_row(
                 "SELECT COUNT(*) FROM nodes n
-             WHERE NOT EXISTS (
+             WHERE n.valid_to IS NULL
+               AND NOT EXISTS (
                  SELECT 1 FROM edges e
-                 WHERE (e.source_id = n.id OR e.target_id = n.id)
+                 WHERE e.valid_to IS NULL
+                   AND (e.source_id = n.id OR e.target_id = n.id)
              )",
                 [],
                 |row| row.get(0),
@@ -263,7 +265,7 @@ impl<'a> ConsolidationEngine<'a> {
         let total: i64 = self
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM nodes WHERE node_type = 'constraint'",
+                "SELECT COUNT(*) FROM nodes WHERE node_type = 'constraint' AND valid_to IS NULL",
                 [],
                 |row| row.get(0),
             )
@@ -272,7 +274,7 @@ impl<'a> ConsolidationEngine<'a> {
         let active: i64 = self
             .conn
             .query_row(
-                "SELECT COUNT(DISTINCT source_id) FROM edges WHERE edge_type = 'BLOCKS'",
+                "SELECT COUNT(DISTINCT source_id) FROM edges WHERE edge_type = 'BLOCKS' AND valid_to IS NULL",
                 [],
                 |row| row.get(0),
             )
@@ -295,6 +297,7 @@ impl<'a> ConsolidationEngine<'a> {
             .query_row(
                 "SELECT COUNT(*) FROM nodes
              WHERE node_type = 'observation'
+               AND valid_to IS NULL
                AND created_at >= ?1",
                 rusqlite::params![since_24h],
                 |row| row.get(0),

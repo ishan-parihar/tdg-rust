@@ -13,6 +13,7 @@
 //!   incremental migrations.
 //! - [`events`] — Event tracking: trust score computation, node rating,
 //!   retrieval recording, and helper/unhelpful feedback.
+//! - [`write_guard`] — Inter-process file locking for safe concurrent writes.
 //!
 //! ## Quick Start
 //!
@@ -39,6 +40,7 @@ pub mod crud;
 pub mod events;
 pub mod pool;
 pub mod schema;
+pub mod write_guard;
 
 pub use pool::ConnectionPool;
 pub use schema::{init_fts, init_schema, run_migrations};

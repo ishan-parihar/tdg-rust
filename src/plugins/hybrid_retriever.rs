@@ -94,11 +94,18 @@ impl HybridRetriever {
         let limit = limit.min(50);
 
         let fts_query = self.prepare_fts_query(query);
-        let mut results = self.fts_search(conn, &fts_query, limit * 2)?;
+        let fts_results = self.fts_search(conn, &fts_query, limit * 2)?;
 
-        if results.is_empty() {
+        let mut results: Vec<Node>;
+        let rank_map: std::collections::HashMap<String, f64>;
+
+        if fts_results.is_empty() {
             results = self.like_search(conn, query, limit * 2)?;
-        }
+            rank_map = std::collections::HashMap::new();
+        } else {
+            rank_map = fts_results.iter().map(|(n, r)| (n.id.clone(), *r)).collect();
+            results = fts_results.into_iter().map(|(n, _)| n).collect();
+        };
 
         if results.is_empty() {
             results = self.type_search(conn, node_type, limit)?;
@@ -110,7 +117,11 @@ impl HybridRetriever {
         let mut scored: Vec<SearchResult> = results
             .into_iter()
             .map(|node| {
-                let fts_score = node.confidence;
+                // FTS5 rank: lower = better match; normalize to (0,1] via 1/(1+|rank|)
+                let fts_score = rank_map
+                    .get(&node.id)
+                    .map(|r| 1.0 / (1.0 + r.abs()))
+                    .unwrap_or(node.confidence);
                 let trust_score = node.confidence;
                 let recency = self.recency_score(&node.created_at);
 
@@ -218,12 +229,13 @@ impl HybridRetriever {
         None
     }
 
-    fn fts_search(&self, conn: &Connection, query: &str, limit: i64) -> TdgResult<Vec<Node>> {
+    fn fts_search(&self, conn: &Connection, query: &str, limit: i64) -> TdgResult<Vec<(Node, f64)>> {
         let sql = "
             SELECT n.id, n.node_type, n.name, n.description, n.properties_json, n.quadrants_json,
                    n.drives_json, n.lifecycle_state, n.teleological_level, n.developmental_stage,
                    n.confidence, n.source, n.parent_ids, n.agent_path, n.created_at, n.updated_at,
-                   n.valid_from, n.valid_to, n.helpful_count, n.retrieval_count, n.agent_id
+                   n.valid_from, n.valid_to, n.helpful_count, n.retrieval_count, n.agent_id,
+                   fts.rank
             FROM nodes_fts fts
             JOIN nodes n ON fts.rowid = n.rowid
             WHERE nodes_fts MATCH ?1 AND n.valid_to IS NULL
@@ -236,9 +248,13 @@ impl HybridRetriever {
             Err(_) => return Ok(Vec::new()),
         };
 
-        let rows = stmt.query_map(params![query, limit], crate::db::crud::row_to_node)?;
-        let nodes: Vec<Node> = rows.flatten().collect();
-        Ok(nodes)
+        let rows = stmt.query_map(params![query, limit], |row| {
+            let node = crate::db::crud::row_to_node(row)?;
+            let rank: f64 = row.get(21)?;
+            Ok((node, rank))
+        })?;
+        let results: Vec<(Node, f64)> = rows.flatten().collect();
+        Ok(results)
     }
 
     fn like_search(&self, conn: &Connection, query: &str, limit: i64) -> TdgResult<Vec<Node>> {

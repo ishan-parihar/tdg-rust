@@ -108,6 +108,7 @@
 
 pub mod audit;
 pub mod circuit_breaker;
+pub mod clustering;
 pub mod config;
 pub mod db;
 pub mod digestion;

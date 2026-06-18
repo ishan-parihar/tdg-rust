@@ -4,6 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::error::TdgResult;
 use crate::models::NewNode;
@@ -23,6 +25,15 @@ const DEDUP_WINDOW_SECS: i64 = 300;
 const RATE_LIMIT_WPS: u64 = 10;
 
 const CONTRADICTION_THRESHOLD: f64 = 0.4;
+
+pub struct WriteRequest {
+    pub text: String,
+    pub agent_id: Option<String>,
+    pub observation_id: String,
+    pub entities: Vec<String>,
+    pub quadrant: String,
+    pub timestamp: String,
+}
 
 static QUADRANT_KEYWORDS: LazyLock<Vec<(&'static str, Vec<&'static str>)>> = LazyLock::new(|| {
     vec![
@@ -60,6 +71,7 @@ static QUADRANT_KEYWORDS: LazyLock<Vec<(&'static str, Vec<&'static str>)>> = Laz
 pub struct TurnCapture {
     last_write_ts: std::cell::Cell<u64>,
     write_count: std::cell::Cell<u64>,
+    write_tx: Option<mpsc::Sender<WriteRequest>>,
 }
 
 impl TurnCapture {
@@ -67,6 +79,15 @@ impl TurnCapture {
         Self {
             last_write_ts: std::cell::Cell::new(0),
             write_count: std::cell::Cell::new(0),
+            write_tx: None,
+        }
+    }
+
+    pub fn with_writer(tx: mpsc::Sender<WriteRequest>) -> Self {
+        Self {
+            last_write_ts: std::cell::Cell::new(0),
+            write_count: std::cell::Cell::new(0),
+            write_tx: Some(tx),
         }
     }
 
@@ -101,8 +122,28 @@ impl TurnCapture {
         let extractor = crate::plugins::EntityExtractor::new();
         let entities = extractor.extract(text, Some(conn));
         let entity_names: Vec<String> = entities.iter().map(|e| e.name.clone()).collect();
-
         let quadrant = infer_quadrant_from_content(text);
+
+        if let Some(ref tx) = self.write_tx {
+            let observation_id = format!("obs:{}", uuid::Uuid::new_v4());
+            let timestamp = crate::db::crud::now_iso();
+            let _ = tx.try_send(WriteRequest {
+                text: text.to_string(),
+                agent_id: agent_id.map(|s| s.to_string()),
+                observation_id: observation_id.clone(),
+                entities: entity_names.clone(),
+                quadrant: quadrant.clone(),
+                timestamp: timestamp.clone(),
+            });
+            return Ok(CapturedTurn {
+                observation_id,
+                text: text.to_string(),
+                timestamp,
+                entities: entity_names,
+                quadrant,
+                contradictions: Vec::new(),
+            });
+        }
 
         let node = crate::db::crud::add_node(
             conn,
@@ -267,6 +308,90 @@ impl TurnCapture {
 impl Default for TurnCapture {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub struct TurnCaptureWriter<'a> {
+    conn: &'a Connection,
+    batch_size: usize,
+}
+
+impl<'a> TurnCaptureWriter<'a> {
+    pub fn new(conn: &'a Connection) -> Self {
+        Self {
+            conn,
+            batch_size: 10,
+        }
+    }
+
+    pub async fn run(&self, rx: &mut mpsc::Receiver<WriteRequest>, cancel: &CancellationToken) {
+        let mut buffer = Vec::with_capacity(self.batch_size);
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    self.flush(&mut buffer);
+                    break;
+                }
+                msg = rx.recv() => {
+                    match msg {
+                        Some(req) => {
+                            buffer.push(req);
+                            if buffer.len() >= self.batch_size {
+                                self.flush(&mut buffer);
+                            }
+                        }
+                        None => {
+                            self.flush(&mut buffer);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn flush(&self, buffer: &mut Vec<WriteRequest>) {
+        if buffer.is_empty() {
+            return;
+        }
+        for req in buffer.drain(..) {
+            let _ = self.write_request(&req);
+        }
+    }
+
+    fn write_request(&self, req: &WriteRequest) -> TdgResult<()> {
+        let node = crate::db::crud::add_node(
+            self.conn,
+            &NewNode {
+                node_type: "observation".to_string(),
+                name: format!("Turn: {}", req.text.chars().take(80).collect::<String>()),
+                description: Some(req.text.clone()),
+                source: Some("turn_capture".to_string()),
+                agent_id: req.agent_id.clone(),
+                properties: Some(serde_json::json!({
+                    "entities": req.entities,
+                    "turn_length": req.text.len(),
+                    "quadrant": req.quadrant,
+                })),
+                ..Default::default()
+            },
+        )?;
+
+        if let Some(ref aid) = req.agent_id {
+            let agent_node_id = find_or_create_agent_self(self.conn, aid)?;
+            let _ = crate::db::crud::add_edge(
+                self.conn,
+                &crate::models::NewEdge {
+                    source_id: node.id.clone(),
+                    target_id: agent_node_id,
+                    edge_type: "EXPERIENCES".to_string(),
+                    ..Default::default()
+                },
+            );
+        }
+
+        Ok(())
     }
 }
 
