@@ -364,4 +364,107 @@ mod tests {
         assert!(calculate_overlap("the quick brown fox", "the quick brown fox") > 0.9);
         assert!(calculate_overlap("hello world", "completely different") < 0.1);
     }
+
+    #[test]
+    fn check_rate_limit_allows_normal_volume() {
+        let tc = TurnCapture::new();
+        for _ in 0..RATE_LIMIT_WPS {
+            assert!(tc.check_rate_limit());
+        }
+    }
+
+    #[test]
+    fn check_rate_limit_rejects_over_limit() {
+        let tc = TurnCapture::new();
+        for _ in 0..RATE_LIMIT_WPS {
+            tc.check_rate_limit();
+        }
+        assert!(!tc.check_rate_limit());
+    }
+
+    #[test]
+    fn check_rate_limit_resets_on_new_second() {
+        let tc = TurnCapture::new();
+        for _ in 0..RATE_LIMIT_WPS {
+            tc.check_rate_limit();
+        }
+        assert!(!tc.check_rate_limit());
+        // Simulate time advancing by setting internal state
+        tc.last_write_ts.set(tc.last_write_ts.get() + 1);
+        tc.write_count.set(0);
+        assert!(tc.check_rate_limit());
+    }
+
+    #[test]
+    fn detect_contradictions_consistent_returns_empty() {
+        let conn = setup_db();
+        let tc = TurnCapture::new();
+        let contradictions = tc
+            .detect_contradictions(&conn, "I love using Rust", &["rust".to_string()])
+            .unwrap();
+        assert!(contradictions.is_empty());
+    }
+
+    #[test]
+    fn infer_quadrant_deploy() {
+        let result = infer_quadrant_from_content("deploy the server to production");
+        assert_eq!(result, "lr");
+    }
+
+    #[test]
+    fn infer_quadrant_feel() {
+        let result = infer_quadrant_from_content("I feel comfortable with this approach");
+        assert_eq!(result, "ul");
+    }
+
+    #[test]
+    fn infer_quadrant_identity() {
+        let result = infer_quadrant_from_content("our brand identity is evolving");
+        assert_eq!(result, "ll");
+    }
+
+    #[test]
+    fn infer_quadrant_default() {
+        let result = infer_quadrant_from_content("something unrelated");
+        assert_eq!(result, "ur");
+    }
+
+    #[test]
+    fn overlap_identical_strings() {
+        assert!(calculate_overlap("foo bar baz", "foo bar baz") > 0.99);
+    }
+
+    #[test]
+    fn overlap_disjoint_sets() {
+        assert_eq!(calculate_overlap("abc def", "xyz uvw"), 0.0);
+    }
+
+    #[test]
+    fn overlap_partial_intersection() {
+        let score = calculate_overlap("a b c d", "c d e f");
+        assert!(score > 0.2 && score < 0.5, "score = {}", score);
+    }
+
+    #[test]
+    fn overlap_empty_strings() {
+        assert_eq!(calculate_overlap("", ""), 0.0);
+    }
+
+    #[test]
+    fn capture_with_agent_id() {
+        let conn = setup_db();
+        let tc = TurnCapture::new();
+        let result = tc
+            .capture(&conn, "Testing agent capture with ID", Some("test-agent"))
+            .unwrap();
+        assert!(!result.observation_id.is_empty());
+        let agent_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM nodes WHERE node_type = 'agent' AND valid_to IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(agent_exists);
+    }
 }

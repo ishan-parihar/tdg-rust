@@ -1,6 +1,6 @@
 [package]
 name = "tdg-rust"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Rust implementation of the Teleological Developmental Graph (TDG) memory infrastructure"
 license = "MIT"
@@ -15,6 +15,7 @@ anyhow = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
@@ -23,6 +24,7 @@ rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 axum = { version = "0.8", features = ["json"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 
 # Linear algebra (HRR)
@@ -40,6 +42,11 @@ clap = { version = "4", features = ["derive"] }
 # Environment
 dotenvy = "0.15"
 shellexpand = "3"
+dirs = "5"
+
+# Configuration (YAML + JSON + env vars)
+figment = { version = "0.10", features = ["yaml", "toml", "json", "env"] }
+serde_yaml = "0.9"
 
 # Hashing (for vector similarity)
 ahash = "0.8"
@@ -55,7 +62,15 @@ regex = "1"
 
 # SHA-256 (for reflect engine fingerprints)
 sha2 = "0.10"
-petgraph = "0.6"
+
+# Temp file support (used by test_utils which is pub mod)
+tempfile = "3"
+
+# Graph algorithms
+petgraph = { version = "0.8", features = ["serde-1"] }
+rustworkx-core = "0.17"
+
+# MCP protocol
 rmcp = { version = "1.7.0", features = ["server", "schemars", "transport-io", "transport-streamable-http-server"] }
 schemars = "1.2.1"
 
@@ -68,10 +83,12 @@ async-trait = "0.1.89"
 onnx = ["dep:ort", "dep:tokenizers"]
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tempfile = "3"
 tokio-test = "0.4.5"
 proptest = "1"
+mockall = "0.14"
+fake = { version = "3", features = ["derive", "chrono", "uuid"] }
 
 [[bench]]
 name = "critical_paths"
@@ -79,6 +96,7 @@ harness = false
 
 [profile.release]
 opt-level = 3
-lto = true
+lto = "fat"
 codegen-units = 1
-strip = true
+strip = "symbols"
+panic = "abort"

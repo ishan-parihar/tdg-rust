@@ -18,10 +18,26 @@ pub async fn serve_stdio(pool: ConnectionPool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Start MCP server with HTTP/SSE transport (for debugging/web).
 pub async fn serve_http(pool: ConnectionPool, port: u16) -> anyhow::Result<()> {
     let _state = std::sync::Arc::new(TdgServer::new(pool));
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    let shutdown_token = cancel_token.clone();
+
+    tokio::spawn(async move {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("received Ctrl-C, shutting down...");
+            }
+            _ = sigterm.recv() => {
+                tracing::info!("received SIGTERM, shutting down...");
+            }
+        }
+        shutdown_token.cancel();
+    });
 
     let app = axum::Router::new()
         .route(
@@ -33,7 +49,6 @@ pub async fn serve_http(pool: ConnectionPool, port: u16) -> anyhow::Result<()> {
         .route(
             "/sse",
             axum::routing::get(|| async {
-                // SSE endpoint — returns initial endpoint event
                 let (tx, rx): (
                     tokio::sync::mpsc::Sender<
                         Result<axum::response::sse::Event, std::convert::Infallible>,
@@ -62,6 +77,11 @@ pub async fn serve_http(pool: ConnectionPool, port: u16) -> anyhow::Result<()> {
 
     tracing::info!("MCP HTTP server listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            cancel_token.cancelled().await;
+            tracing::info!("graceful shutdown complete");
+        })
+        .await?;
     Ok(())
 }

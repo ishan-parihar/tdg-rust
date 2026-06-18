@@ -1,13 +1,28 @@
 use std::path::PathBuf;
 
-/// TDG configuration, loaded from environment variables with sensible defaults.
+use figment::{
+    Figment,
+    providers::{Env, Format, Json, Serialized, Yaml},
+};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("configuration error: {0}")]
+    Figment(#[from] figment::Error),
+    #[error("validation failed: {0}")]
+    Validation(String),
+}
+
+/// TDG configuration, loaded from config files and environment variables with sensible defaults.
 ///
 /// Mirrors the Python `TDGConfig` class from `core/config.py`.
-#[derive(Debug, Clone)]
+/// Supports hierarchical loading: defaults → tdg.yaml → tdg.json → TDG_* env vars.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Base home directory (default: `~/.hermes`). Override with `TDG_HOME`.
     pub home: PathBuf,
-    /// TDG directory (default: `{home}/tdg`).
+    /// TDG directory (default: `{home}/tdg`). Always derived from `home`.
     pub tdg_dir: PathBuf,
     /// Database path (default: `{tdg_dir}/graph.db`). Override with `TDG_DB_PATH`.
     pub db_path: PathBuf,
@@ -21,37 +36,61 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self::from_env()
+        Self::load().unwrap_or_else(|_| Self::defaults())
     }
 }
 
 impl Config {
-    /// Build configuration from environment variables with defaults.
-    pub fn from_env() -> Self {
-        let home = expand_env_or_default("TDG_HOME", "~/.hermes");
+    fn defaults() -> Self {
+        let home = PathBuf::from("~/.hermes");
         let tdg_dir = home.join("tdg");
-        let db_path = PathBuf::from(
-            std::env::var("TDG_DB_PATH")
-                .unwrap_or_else(|_| tdg_dir.join("graph.db").to_string_lossy().into_owned()),
-        );
-        let state_dir = PathBuf::from(
-            std::env::var("TDG_STATE_DIR")
-                .unwrap_or_else(|_| home.join("state").to_string_lossy().into_owned()),
-        );
-        let skills_dir = PathBuf::from(
-            std::env::var("TDG_SKILLS_DIR")
-                .unwrap_or_else(|_| home.join("skills").to_string_lossy().into_owned()),
-        );
-        let lean = env_bool("TDG_LEAN");
-
         Self {
-            home,
+            home: home.clone(),
             tdg_dir,
-            db_path,
-            state_dir,
-            skills_dir,
-            lean,
+            db_path: home.join("tdg").join("graph.db"),
+            state_dir: home.join("state"),
+            skills_dir: home.join("skills"),
+            lean: false,
         }
+    }
+
+    /// Figment provider chain: defaults → tdg.yaml → tdg.json → env vars.
+    fn figment() -> Figment {
+        Figment::from(Serialized::defaults(Self::defaults()))
+            .merge(Yaml::file("tdg.yaml"))
+            .merge(Json::file("tdg.json"))
+            .merge(Env::prefixed("TDG_").split("__"))
+    }
+
+    pub fn load() -> Result<Self, ConfigError> {
+        let mut config: Config = Self::figment().extract()?;
+
+        // Expand `~` in home path (Env provider won't expand shell tildes).
+        let home_lossy = config.home.to_string_lossy();
+        let expanded = shellexpand::tilde(&home_lossy);
+        config.home = PathBuf::from(expanded.into_owned());
+
+        // tdg_dir is always derived from home — no env var override.
+        config.tdg_dir = config.home.join("tdg");
+
+        // Recompute derived paths when their override env var is absent,
+        // so changing TDG_HOME cascades to children like the original code.
+        if std::env::var("TDG_DB_PATH").is_err() {
+            config.db_path = config.tdg_dir.join("graph.db");
+        }
+        if std::env::var("TDG_STATE_DIR").is_err() {
+            config.state_dir = config.home.join("state");
+        }
+        if std::env::var("TDG_SKILLS_DIR").is_err() {
+            config.skills_dir = config.home.join("skills");
+        }
+
+        Ok(config)
+    }
+
+    /// Build configuration from environment variables (backward-compatible alias).
+    pub fn from_env() -> Self {
+        Self::load().unwrap_or_else(|_| Self::defaults())
     }
 
     /// Build config with explicit paths (useful for testing).
@@ -152,20 +191,6 @@ impl Config {
     }
 }
 
-/// Expand `~` and env vars, falling back to default.
-fn expand_env_or_default(env_key: &str, default: &str) -> PathBuf {
-    let val = std::env::var(env_key).unwrap_or_else(|_| default.to_string());
-    let expanded = shellexpand::tilde(&val);
-    PathBuf::from(expanded.as_ref())
-}
-
-/// Parse a boolean env var (true for "1", "true", "yes").
-fn env_bool(key: &str) -> bool {
-    std::env::var(key)
-        .map(|v| matches!(v.as_str(), "1" | "true" | "yes" | "TRUE" | "YES"))
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,5 +208,48 @@ mod tests {
         let cfg = Config::from_env();
         // lean depends on env, just check it's a bool
         let _ = cfg.lean;
+    }
+
+    #[test]
+    fn figment_loads_defaults() {
+        let cfg = Config::load().expect("load should succeed");
+        assert!(cfg.home.to_string_lossy().contains(".hermes"));
+        assert!(cfg.tdg_dir == cfg.home.join("tdg"));
+        assert!(cfg.db_path == cfg.tdg_dir.join("graph.db"));
+        assert!(cfg.state_dir == cfg.home.join("state"));
+        assert!(cfg.skills_dir == cfg.home.join("skills"));
+        assert!(!cfg.lean);
+    }
+
+    #[test]
+    fn derived_paths_computed_from_home() {
+        let cfg = Config::defaults();
+        assert_eq!(cfg.archive_db_path(), cfg.tdg_dir.join("graph").join("tdg_archive.db"));
+        assert_eq!(cfg.graph_dir(), cfg.tdg_dir.join("graph"));
+        assert_eq!(cfg.config_dir(), cfg.tdg_dir.join("config"));
+        assert_eq!(cfg.snapshots_dir(), cfg.tdg_dir.join("snapshots"));
+        assert_eq!(cfg.working_memory_path(), cfg.state_dir.join("hermes-working-memory.json"));
+        assert_eq!(cfg.loop_state_path(), cfg.state_dir.join("hermes-loop-state.json"));
+        assert_eq!(cfg.meta_view_cache_path(), cfg.state_dir.join("hermes-meta-view-cache.json"));
+        assert_eq!(cfg.constraints_path(), cfg.state_dir.join("hermes-constraints.json"));
+        assert_eq!(cfg.diagnostic_thresholds_path(), cfg.config_dir().join("diagnostic_thresholds.yaml"));
+        assert!(cfg.onnx_model_path().to_string_lossy().contains("model_quantized.onnx"));
+    }
+
+    #[test]
+    fn config_is_serializable() {
+        let cfg = Config::defaults();
+        let json = serde_json::to_string(&cfg).expect("serialize to JSON");
+        let deserialized: Config = serde_json::from_str(&json).expect("deserialize from JSON");
+        assert_eq!(cfg.home, deserialized.home);
+        assert_eq!(cfg.tdg_dir, deserialized.tdg_dir);
+        assert_eq!(cfg.db_path, deserialized.db_path);
+        assert_eq!(cfg.lean, deserialized.lean);
+    }
+
+    #[test]
+    fn repo_root_is_not_empty() {
+        let root = Config::repo_root();
+        assert!(!root.as_os_str().is_empty());
     }
 }

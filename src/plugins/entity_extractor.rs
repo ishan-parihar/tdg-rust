@@ -719,4 +719,229 @@ mod tests {
         assert_eq!(cache.get_node_id("rust backend"), Some("n2"));
         assert_eq!(cache.get_node_type("n1"), Some("people"));
     }
+
+    fn setup_person_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE nodes (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, node_type TEXT NOT NULL,
+                description TEXT DEFAULT '', properties TEXT DEFAULT NULL,
+                quadrants TEXT DEFAULT NULL, drives TEXT DEFAULT NULL,
+                lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
+                developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
+                source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,
+                agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')), valid_from TEXT DEFAULT NULL,
+                valid_to TEXT DEFAULT NULL, helpful_count INTEGER DEFAULT 0,
+                retrieval_count INTEGER DEFAULT 0, agent_id TEXT DEFAULT NULL
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO nodes (id, node_type, name, properties, created_at, updated_at) \
+             VALUES ('p1', 'people', 'Alice Smith', '{\"aliases\":[\"ali\",\"asmith\"]}', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO nodes (id, node_type, name, properties, created_at, updated_at) \
+             VALUES ('p2', 'people', 'Bob Jones', '{\"aliases\":[\"bj\",\"bobby\"]}', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn resolve_alias_known() {
+        let ext = EntityExtractor::new();
+        let conn = setup_person_db();
+        let resolved = ext.resolve_alias("ali", &conn).unwrap();
+        assert_eq!(resolved.as_deref(), Some("Alice Smith"));
+    }
+
+    #[test]
+    fn resolve_alias_case_insensitive() {
+        let ext = EntityExtractor::new();
+        let conn = setup_person_db();
+        let resolved = ext.resolve_alias("ALI", &conn).unwrap();
+        assert_eq!(resolved.as_deref(), Some("Alice Smith"));
+    }
+
+    #[test]
+    fn resolve_alias_unknown_returns_none() {
+        let ext = EntityExtractor::new();
+        let conn = setup_person_db();
+        let resolved = ext.resolve_alias("nonexistent", &conn).unwrap();
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn expand_aliases_maps_multiple_people() {
+        let ext = EntityExtractor::new();
+        let conn = setup_person_db();
+        let map = ext.expand_aliases(&conn).unwrap();
+        assert_eq!(map.get("ali").map(|s| s.as_str()), Some("Alice Smith"));
+        assert_eq!(map.get("asmith").map(|s| s.as_str()), Some("Alice Smith"));
+        assert_eq!(map.get("alice smith").map(|s| s.as_str()), Some("Alice Smith"));
+        assert_eq!(map.get("bj").map(|s| s.as_str()), Some("Bob Jones"));
+        assert_eq!(map.get("bobby").map(|s| s.as_str()), Some("Bob Jones"));
+    }
+
+    #[test]
+    fn add_alias_and_resolve() {
+        let ext = EntityExtractor::new();
+        let conn = setup_person_db();
+        ext.add_alias("p1", "alicia", &conn).unwrap();
+        let resolved = ext.resolve_alias("alicia", &conn).unwrap();
+        assert_eq!(resolved.as_deref(), Some("Alice Smith"));
+    }
+
+    #[test]
+    fn set_aliases_replaces_existing() {
+        let ext = EntityExtractor::new();
+        let conn = setup_person_db();
+        ext.set_aliases("p1", &["new_alias".to_string()], &conn).unwrap();
+        let aliases = ext.get_aliases("p1", &conn).unwrap();
+        assert_eq!(aliases, vec!["new_alias"]);
+    }
+
+    #[test]
+    fn get_aliases_returns_stored() {
+        let ext = EntityExtractor::new();
+        let conn = setup_person_db();
+        let aliases = ext.get_aliases("p1", &conn).unwrap();
+        assert_eq!(aliases.len(), 2);
+        assert!(aliases.contains(&"ali".to_string()));
+        assert!(aliases.contains(&"asmith".to_string()));
+    }
+
+    #[test]
+    fn get_aliases_empty_for_missing_node() {
+        let ext = EntityExtractor::new();
+        let conn = setup_person_db();
+        let aliases = ext.get_aliases("nonexistent", &conn).unwrap();
+        assert!(aliases.is_empty());
+    }
+
+    #[test]
+    fn extract_natural_language_various_inputs() {
+        let ext = EntityExtractor::new();
+        let cases = vec![
+            ("I deployed to AWS yesterday", "aws", true),
+            ("The docker container crashed", "docker", true),
+            ("I love using sqlite for local storage", "sqlite", true),
+            ("Please check my GitHub repo", "github", true),
+            ("The weather is nice today", "weather", false),
+        ];
+        for (input, expected_name, should_exist) in cases {
+            let entities = ext.extract(input, None);
+            let found = entities.iter().any(|e| e.name == expected_name);
+            assert_eq!(
+                found, should_exist,
+                "Expected '{}' in '{}': {}",
+                expected_name, input, should_exist
+            );
+        }
+    }
+
+    #[test]
+    fn extract_entity_types_are_correct() {
+        let ext = EntityExtractor::new();
+        let entities = ext.extract("I use rust and deploy with docker", None);
+        for e in &entities {
+            if e.name == "rust" {
+                assert_eq!(e.entity_type, "tool");
+                assert_eq!(e.match_type, "known_pattern");
+            }
+            if e.name == "docker" {
+                assert_eq!(e.entity_type, "tool");
+            }
+            if e.name == "deploy" {
+                assert_eq!(e.entity_type, "tool");
+                assert_eq!(e.match_type, "tool_action");
+            }
+        }
+    }
+
+    #[test]
+    fn extract_confidence_values_bounded() {
+        let ext = EntityExtractor::new();
+        let entities = ext.extract("rust docker deploy test build", None);
+        for e in &entities {
+            assert!(e.confidence >= 0.0 && e.confidence <= 1.0,
+                "confidence {} out of range for {}", e.confidence, e.name);
+        }
+    }
+
+    #[test]
+    fn extract_empty_text_returns_empty() {
+        let ext = EntityExtractor::new();
+        let entities = ext.extract("", None);
+        assert!(entities.is_empty());
+    }
+
+    #[test]
+    fn extract_stopwords_not_returned() {
+        let ext = EntityExtractor::new();
+        let entities = ext.extract("the is are was were have has had", None);
+        assert!(entities.is_empty());
+    }
+
+    #[test]
+    fn entity_name_cache_resolve_token() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE nodes (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, node_type TEXT NOT NULL,
+                description TEXT DEFAULT '', properties TEXT DEFAULT NULL,
+                quadrants TEXT DEFAULT NULL, drives TEXT DEFAULT NULL,
+                lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
+                developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
+                source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,
+                agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')), valid_from TEXT DEFAULT NULL,
+                valid_to TEXT DEFAULT NULL, helpful_count INTEGER DEFAULT 0,
+                retrieval_count INTEGER DEFAULT 0, agent_id TEXT DEFAULT NULL
+            );",
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO nodes (id, name, node_type) VALUES ('n1', 'My Cool Project', 'project')",
+            [],
+        ).unwrap();
+
+        let cache = EntityNameCache::build(&conn).unwrap();
+        let resolved = cache.resolve_token("cool");
+        assert!(resolved.is_some());
+        let (id, name) = resolved.unwrap();
+        assert_eq!(id, "n1");
+        assert_eq!(name, "My Cool Project");
+    }
+
+    #[test]
+    fn entity_name_cache_resolve_token_stopword() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE nodes (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, node_type TEXT NOT NULL,
+                description TEXT DEFAULT '', properties TEXT DEFAULT NULL,
+                quadrants TEXT DEFAULT NULL, drives TEXT DEFAULT NULL,
+                lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
+                developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
+                source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,
+                agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')), valid_from TEXT DEFAULT NULL,
+                valid_to TEXT DEFAULT NULL, helpful_count INTEGER DEFAULT 0,
+                retrieval_count INTEGER DEFAULT 0, agent_id TEXT DEFAULT NULL
+            );",
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO nodes (id, name, node_type) VALUES ('n1', 'this is a test', 'animal')",
+            [],
+        ).unwrap();
+
+        let cache = EntityNameCache::build(&conn).unwrap();
+        assert!(cache.resolve_token("this").is_none());
+        assert!(cache.resolve_token("test").is_some());
+    }
 }

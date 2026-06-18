@@ -15,6 +15,7 @@ pub mod error;
 pub mod eventsourcing;
 pub mod flow;
 pub mod grammar;
+pub mod graph_algorithms;
 pub mod graph_projection;
 pub mod hrr;
 pub mod knowledge;
@@ -28,7 +29,10 @@ pub mod schema;
 pub mod score;
 pub mod scripts;
 pub mod telearchy;
+#[cfg(test)]
+pub mod test_utils;
 pub mod validation;
+pub mod visualization;
 
 pub use audit::{Anomaly, AnomalyRegistry, AuditBundle, AuditEngine, AuditReport, HealthStatus};
 pub use circuit_breaker::{CircuitBreaker, CircuitState, PreWriteSnapshot, TransactionSnapshot};

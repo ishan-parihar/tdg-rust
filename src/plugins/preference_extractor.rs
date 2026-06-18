@@ -141,7 +141,7 @@ impl PreferenceExtractor {
         for (pattern, confidence) in CORRECTION_PATTERNS.iter() {
             if let Ok(re) = regex::Regex::new(pattern) {
                 if let Some(caps) = re.captures(text) {
-                    if let Some(content) = caps.get(2) {
+                    if let Some(content) = caps.get(2).or_else(|| caps.get(1)) {
                         let constraint_text = content.as_str().trim().to_string();
                         let quadrant = self.infer_quadrant(&constraint_text);
                         let constraint_id = build_constraint_id("correction", &constraint_text);
@@ -478,5 +478,195 @@ mod tests {
         let id1 = build_constraint_id("preference", "Use Rust");
         let id2 = build_constraint_id("preference", "use rust");
         assert_eq!(id1, id2);
+    }
+
+    fn setup_obs_db() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::init_schema(&conn).unwrap();
+        crate::db::init_fts(&conn).unwrap();
+        crate::db::run_migrations(&conn).unwrap();
+        conn
+    }
+
+    fn insert_observation(conn: &rusqlite::Connection, name: &str, description: &str) {
+        let props = serde_json::json!({ "description": description });
+        crate::db::crud::add_node(
+            conn,
+            &crate::models::NewNode {
+                node_type: "observation".to_string(),
+                name: name.to_string(),
+                description: Some(description.to_string()),
+                properties: Some(props),
+                source: Some("turn_capture".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn detect_recurring_patterns_finds_repeated_keywords() {
+        let conn = setup_obs_db();
+        for i in 0..5 {
+            insert_observation(&conn, &format!("obs{i}"), "deploy the server to AWS");
+        }
+
+        let ext = PreferenceExtractor::new();
+        let results = ext.detect_recurring_patterns(&conn, 100);
+        let deploy_patterns: Vec<_> = results
+            .iter()
+            .filter(|r| r.constraint_text.contains("deploy"))
+            .collect();
+        assert!(!deploy_patterns.is_empty());
+    }
+
+    #[test]
+    fn detect_recurring_patterns_empty_when_few_observations() {
+        let conn = setup_obs_db();
+        insert_observation(&conn, "obs1", "deploy the server");
+
+        let ext = PreferenceExtractor::new();
+        let results = ext.detect_recurring_patterns(&conn, 100);
+        let deploy_patterns: Vec<_> = results
+            .iter()
+            .filter(|r| r.constraint_text.contains("deploy"))
+            .collect();
+        assert!(deploy_patterns.is_empty());
+    }
+
+    #[test]
+    fn detect_cross_cycle_patterns_finds_action_verbs() {
+        let conn = setup_obs_db();
+        insert_observation(&conn, "obs1", "I need to deploy the new version");
+        insert_observation(&conn, "obs2", "Let me create a new module for this");
+
+        let ext = PreferenceExtractor::new();
+        let results = ext.detect_cross_cycle_patterns(&conn, 100);
+        let labels: Vec<_> = results.iter().map(|r| r.constraint_text.as_str()).collect();
+        assert!(labels.iter().any(|l| l.contains("deploy")));
+        assert!(labels.iter().any(|l| l.contains("create")));
+    }
+
+    #[test]
+    fn detect_cross_cycle_patterns_empty_when_no_actions() {
+        let conn = setup_obs_db();
+        insert_observation(&conn, "obs1", "The weather is nice today");
+
+        let ext = PreferenceExtractor::new();
+        let results = ext.detect_cross_cycle_patterns(&conn, 100);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn extract_memory_request_variants() {
+        let ext = PreferenceExtractor::new();
+        let cases = vec![
+            "Remember that the port is 3000",
+            "Don't forget that we use sqlite",
+            "Make a note that the API key is stored in .env",
+        ];
+        for text in cases {
+            let results = ext.extract_from_message(text);
+            assert!(
+                results.iter().any(|r| r.extraction_type == "memory"),
+                "Expected memory extraction for: {}",
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn extract_correction_variants() {
+        let ext = PreferenceExtractor::new();
+        let cases = vec![
+            "Don't use Docker for this",
+            "Stop using PostgreSQL",
+            "Never go with MySQL",
+        ];
+        for text in cases {
+            let results = ext.extract_from_message(text);
+            assert!(
+                results.iter().any(|r| r.extraction_type == "correction"),
+                "Expected correction extraction for: {}",
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn extract_preference_variants() {
+        let ext = PreferenceExtractor::new();
+        let cases = vec![
+            "I prefer Rust for backend",
+            "Always use cargo fmt before commit",
+            "Please use snake_case",
+            "I like when tests run in parallel",
+            "Keep using WAL mode",
+        ];
+        for text in cases {
+            let results = ext.extract_from_message(text);
+            assert!(
+                results.iter().any(|r| r.extraction_type == "preference"),
+                "Expected preference extraction for: {}",
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn extract_recurring_pattern_variants() {
+        let ext = PreferenceExtractor::new();
+        let cases = vec![
+            "Every time I check the logs there's an error",
+            "I notice the server crashes at night",
+        ];
+        for text in cases {
+            let results = ext.extract_from_message(text);
+            assert!(
+                results.iter().any(|r| r.extraction_type == "recurring_pattern"),
+                "Expected recurring_pattern for: {}",
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn extract_autonomous_insight_variants() {
+        let ext = PreferenceExtractor::new();
+        let cases = vec![
+            "Based on my observations, the system slows down at night",
+            "The data suggests we need more memory",
+            "I've inferred that the pattern is weekly",
+        ];
+        for text in cases {
+            let results = ext.extract_from_message(text);
+            assert!(
+                results.iter().any(|r| r.extraction_type == "autonomous_insight"),
+                "Expected autonomous_insight for: {}",
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn infer_quadrant_all_types() {
+        let ext = PreferenceExtractor::new();
+        assert_eq!(ext.infer_quadrant("deploy the server"), "lr");
+        assert_eq!(ext.infer_quadrant("I feel comfortable"), "ul");
+        assert_eq!(ext.infer_quadrant("our brand identity"), "ll");
+        assert_eq!(ext.infer_quadrant("build the workflow"), "ur");
+        assert_eq!(ext.infer_quadrant("something else entirely"), "ur");
+    }
+
+    #[test]
+    fn extract_deduplication_across_messages() {
+        let ext = PreferenceExtractor::new();
+        let messages = vec![
+            "I prefer using Rust".to_string(),
+            "I prefer using Rust".to_string(),
+        ];
+        let results = ext.extract_from_messages(&messages);
+        let pref_count = results.iter().filter(|r| r.extraction_type == "preference").count();
+        assert_eq!(pref_count, 1);
     }
 }

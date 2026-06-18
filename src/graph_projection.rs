@@ -88,6 +88,26 @@ impl GraphProjection {
         (self.graph.node_count(), self.graph.edge_count())
     }
 
+    /// Betweenness centrality via rustworkx-core.
+    pub fn betweenness_centrality(&self) -> HashMap<String, f64> {
+        crate::graph_algorithms::betweenness_centrality(&self.graph)
+    }
+
+    /// Degree centrality via rustworkx-core.
+    pub fn degree_centrality(&self) -> HashMap<String, f64> {
+        crate::graph_algorithms::degree_centrality(&self.graph)
+    }
+
+    /// Weak connectivity check via BFS.
+    pub fn is_connected(&self) -> bool {
+        crate::graph_algorithms::is_connected(&self.graph)
+    }
+
+    /// Edge density (edges / max possible edges).
+    pub fn graph_density(&self) -> f64 {
+        crate::graph_algorithms::graph_density(&self.graph)
+    }
+
     /// Get all neighbors of a node.
     pub fn neighbors(&self, node_id: &str) -> Vec<String> {
         if let Some(&idx) = self.node_map.get(node_id) {
@@ -98,6 +118,18 @@ impl GraphProjection {
         } else {
             vec![]
         }
+    }
+
+    pub fn to_d3_json(&self) -> serde_json::Value {
+        crate::visualization::d3_json::export(&self.graph, &self.node_map)
+    }
+
+    pub fn to_d3_string(&self) -> String {
+        crate::visualization::d3_json::export_string(&self.graph, &self.node_map)
+    }
+
+    pub fn to_dot(&self) -> String {
+        crate::visualization::dot_export::export(&self.graph)
     }
 }
 
