@@ -17,26 +17,26 @@ use crate::validation::node_contracts;
 /// Python `AUTO_WIRE_DIRECTION` equivalent.
 pub fn auto_wire_direction() -> &'static [(&'static str, bool)] {
     &[
-        ("DECOMPOSES_TO", true),  // parent DECOMPOSES_TO child
-        ("ENABLES", false),       // child ENABLES parent (skill enables telos)
-        ("PURSUES", false),       // child PURSUES parent
-        ("CONTEXT", false),       // child provides CONTEXT for parent
-        ("EVIDENCES", false),     // child EVIDENCES parent
-        ("BLOCKS", false),        // child BLOCKS parent
-        ("SENT", false),          // child SENT to parent
-        ("RECEIVED", false),      // child RECEIVED from parent
-        ("TRIGGERED", false),     // child TRIGGERED by parent
-        ("DETECTED", false),      // child DETECTED by parent
-        ("ILLUMINATES", false),   // child ILLUMINATES parent
-        ("OPENS", false),         // child OPENS parent
-        ("CREATES", false),       // child CREATES parent
-        ("ADVANCES", false),      // child ADVANCES parent
-        ("APPEALS_TO", false),    // child APPEALS_TO parent
-        ("REPLIES", false),       // child REPLIES to parent
-        ("CONTINUES", false),     // child CONTINUES parent
+        ("DECOMPOSES_TO", true),   // parent DECOMPOSES_TO child
+        ("ENABLES", false),        // child ENABLES parent (skill enables telos)
+        ("PURSUES", false),        // child PURSUES parent
+        ("CONTEXT", false),        // child provides CONTEXT for parent
+        ("EVIDENCES", false),      // child EVIDENCES parent
+        ("BLOCKS", false),         // child BLOCKS parent
+        ("SENT", false),           // child SENT to parent
+        ("RECEIVED", false),       // child RECEIVED from parent
+        ("TRIGGERED", false),      // child TRIGGERED by parent
+        ("DETECTED", false),       // child DETECTED by parent
+        ("ILLUMINATES", false),    // child ILLUMINATES parent
+        ("OPENS", false),          // child OPENS parent
+        ("CREATES", false),        // child CREATES parent
+        ("ADVANCES", false),       // child ADVANCES parent
+        ("APPEALS_TO", false),     // child APPEALS_TO parent
+        ("REPLIES", false),        // child REPLIES to parent
+        ("CONTINUES", false),      // child CONTINUES parent
         ("HAS_CAPABILITY", false), // child HAS_CAPABILITY (people→skill)
-        ("SYNTHESIZES", true),    // synthesis SYNTHESIZES observation
-        ("SEEKS", false),         // child SEEKS parent
+        ("SYNTHESIZES", true),     // synthesis SYNTHESIZES observation
+        ("SEEKS", false),          // child SEEKS parent
     ]
 }
 
@@ -121,7 +121,12 @@ pub fn auto_wire_edges(
 }
 
 /// Check if an edge already exists between two nodes with a given type.
-fn edge_exists(conn: &Connection, source_id: &str, target_id: &str, edge_type: &str) -> TdgResult<bool> {
+fn edge_exists(
+    conn: &Connection,
+    source_id: &str,
+    target_id: &str,
+    edge_type: &str,
+) -> TdgResult<bool> {
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM edges WHERE source_id = ?1 AND target_id = ?2 AND edge_type = ?3",
         rusqlite::params![source_id, target_id, edge_type],
@@ -133,9 +138,9 @@ fn edge_exists(conn: &Connection, source_id: &str, target_id: &str, edge_type: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
     use crate::db::init_schema;
     use crate::models::NewNode;
+    use rusqlite::Connection;
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -169,19 +174,15 @@ mod tests {
         let obs = create_test_node(&conn, "observation", "Test Observation");
 
         // Auto-wire observation to telos via EVIDENCES
-        let created = auto_wire_edges(
-            &conn,
-            &obs.id,
-            "observation",
-            &[telos.id.clone()],
-        )
-        .unwrap();
+        let created = auto_wire_edges(&conn, &obs.id, "observation", &[telos.id.clone()]).unwrap();
 
         assert_eq!(created, 1);
 
         // Verify edge exists: obs EVIDENCES telos
         let edges = crud::get_edges(&conn, Some(&obs.id), None, None, None, 1000).unwrap();
-        assert!(edges.iter().any(|e| e.edge_type == "EVIDENCES" && e.target_id == telos.id));
+        assert!(edges
+            .iter()
+            .any(|e| e.edge_type == "EVIDENCES" && e.target_id == telos.id));
     }
 
     #[test]
@@ -203,19 +204,15 @@ mod tests {
         let telos = create_test_node(&conn, "telos", "Test Telos");
         let action = create_test_node(&conn, "action", "Test Action");
 
-        let created = auto_wire_edges(
-            &conn,
-            &action.id,
-            "action",
-            &[telos.id.clone()],
-        )
-        .unwrap();
+        let created = auto_wire_edges(&conn, &action.id, "action", &[telos.id.clone()]).unwrap();
 
         assert_eq!(created, 1);
 
         // Verify: telos DECOMPOSES_TO action (parent is source)
         let edges = crud::get_edges(&conn, Some(&telos.id), None, None, None, 1000).unwrap();
-        assert!(edges.iter().any(|e| e.edge_type == "DECOMPOSES_TO" && e.target_id == action.id));
+        assert!(edges
+            .iter()
+            .any(|e| e.edge_type == "DECOMPOSES_TO" && e.target_id == action.id));
     }
 
     #[test]
@@ -232,13 +229,8 @@ mod tests {
         let conn = setup_db();
         let obs = create_test_node(&conn, "observation", "Test Observation");
 
-        let created = auto_wire_edges(
-            &conn,
-            &obs.id,
-            "observation",
-            &["nonexistent".to_string()],
-        )
-        .unwrap();
+        let created =
+            auto_wire_edges(&conn, &obs.id, "observation", &["nonexistent".to_string()]).unwrap();
 
         assert_eq!(created, 0);
     }

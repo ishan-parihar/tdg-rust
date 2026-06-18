@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::error::TdgResult;
-use crate::flow::{DualPoleDrive, DriveDiagnosis, FlowDriveState};
+use crate::flow::{DriveDiagnosis, DualPoleDrive, FlowDriveState};
 
 /// Feeling report output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,7 +72,10 @@ impl FeelingEngine {
                 DriveDiagnosis::Integrated => {
                     let net = state.net();
                     if net > 3.0 {
-                        feelings.push(format!("{}: strong positive expression (net={:.1})", name, net));
+                        feelings.push(format!(
+                            "{}: strong positive expression (net={:.1})",
+                            name, net
+                        ));
                     } else if net < -3.0 {
                         feelings.push(format!("{}: negative pull dominant (net={:.1})", name, net));
                     }
@@ -84,20 +87,30 @@ impl FeelingEngine {
         let stuck_warning = self.detect_stuck_pattern(drive_history);
 
         // Integration feeling
-        let integrated_count = drive_states.values().filter(|d| d.diagnose() == DriveDiagnosis::Integrated).count();
+        let integrated_count = drive_states
+            .values()
+            .filter(|d| d.diagnose() == DriveDiagnosis::Integrated)
+            .count();
         if integrated_count == 4 {
             feelings.insert(0, "All drives integrated — system in harmony".to_string());
         }
 
         // Energy-based feelings
         match energy_level.as_str() {
-            "exhausted" => feelings.push("System resources critically low — exhaustion".to_string()),
+            "exhausted" => {
+                feelings.push("System resources critically low — exhaustion".to_string())
+            }
             "low" => feelings.push("Energy reserves depleted — proceed carefully".to_string()),
             "moderate" => feelings.push("Operating at moderate capacity".to_string()),
             _ => feelings.push("Energy reserves healthy".to_string()),
         }
 
-        let summary = self.generate_summary(&dominant_drive, &energy_level, &feelings, &pathological_drives);
+        let summary = self.generate_summary(
+            &dominant_drive,
+            &energy_level,
+            &feelings,
+            &pathological_drives,
+        );
 
         Ok(FeelingReport {
             feelings,
@@ -111,10 +124,7 @@ impl FeelingEngine {
         })
     }
 
-    fn extract_drive_states(
-        &self,
-        conn: &Connection,
-    ) -> TdgResult<HashMap<String, DualPoleDrive>> {
+    fn extract_drive_states(&self, conn: &Connection) -> TdgResult<HashMap<String, DualPoleDrive>> {
         let mut stmt = conn.prepare(
             "SELECT drives_json FROM nodes WHERE valid_to IS NULL AND drives_json != '{}'",
         )?;
@@ -130,7 +140,8 @@ impl FeelingEngine {
         totals.insert("communion", (0.0, 0.0, 0));
 
         for json_str in &rows {
-            let v: serde_json::Value = serde_json::from_str(json_str).unwrap_or(serde_json::json!({}));
+            let v: serde_json::Value =
+                serde_json::from_str(json_str).unwrap_or(serde_json::json!({}));
             let state = FlowDriveState::from_json(&v);
             for (name, drive) in [
                 ("eros", &state.eros),
@@ -221,14 +232,25 @@ impl FeelingEngine {
         if path_count > 0 {
             format!(
                 "Feeling {} with {} pathological drive(s). Dominant: {}. {} concern(s) detected.",
-                energy, path_count, dominant, feelings.len()
+                energy,
+                path_count,
+                dominant,
+                feelings.len()
             )
         } else {
             format!(
                 "Feeling {} and balanced. Dominant drive: {}. {} insight(s).",
-                energy, dominant, feelings.len()
+                energy,
+                dominant,
+                feelings.len()
             )
         }
+    }
+}
+
+impl Default for FeelingEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

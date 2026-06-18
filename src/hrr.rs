@@ -120,11 +120,7 @@ impl HrrMemoryBank {
     }
 
     /// Reason: combine two probes to find related knowledge.
-    pub fn reason(
-        &self,
-        query_a: &Array1<f64>,
-        query_b: &Array1<f64>,
-    ) -> Vec<(String, f64)> {
+    pub fn reason(&self, query_a: &Array1<f64>, query_b: &Array1<f64>) -> Vec<(String, f64)> {
         let combined = normalize(&(&normalize(query_a) + &normalize(query_b)));
         let mut results: Vec<(String, f64)> = self
             .entries
@@ -148,6 +144,12 @@ impl HrrMemoryBank {
     /// Check if empty.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+}
+
+impl Default for HrrMemoryBank {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

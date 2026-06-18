@@ -35,7 +35,10 @@ pub fn node_contracts() -> HashMap<&'static str, NodeContract> {
             strongly_recommended: vec!["description", "source", "quadrant"],
             contextual_guidance: HashMap::from([
                 ("source", "Observations without a source lose provenance"),
-                ("quadrant", "Quadrant helps classify where the observation lives"),
+                (
+                    "quadrant",
+                    "Quadrant helps classify where the observation lives",
+                ),
             ]),
             auto_wire_on_parent: vec!["EVIDENCES"],
         },
@@ -46,9 +49,10 @@ pub fn node_contracts() -> HashMap<&'static str, NodeContract> {
         NodeContract {
             required: vec!["name", "parent_ids"],
             strongly_recommended: vec!["description", "quadrant"],
-            contextual_guidance: HashMap::from([
-                ("parent_ids", "An action without parent_ids is disconnected from purpose"),
-            ]),
+            contextual_guidance: HashMap::from([(
+                "parent_ids",
+                "An action without parent_ids is disconnected from purpose",
+            )]),
             auto_wire_on_parent: vec!["DECOMPOSES_TO"],
         },
     );
@@ -263,7 +267,7 @@ pub fn validate_node_creation(
         // Check required fields
         let mut missing_required = Vec::new();
         for field in &contract.required {
-            if !fields.contains_key(*field) || fields.get(*field).map_or(false, |v| v.is_null()) {
+            if !fields.contains_key(*field) || fields.get(*field).is_some_and(|v| v.is_null()) {
                 missing_required.push(*field);
             }
         }
@@ -283,7 +287,7 @@ pub fn validate_node_creation(
         // Check strongly recommended fields (warnings)
         let mut missing_recommended = Vec::new();
         for field in &contract.strongly_recommended {
-            if !fields.contains_key(*field) || fields.get(*field).map_or(false, |v| v.is_null()) {
+            if !fields.contains_key(*field) || fields.get(*field).is_some_and(|v| v.is_null()) {
                 missing_recommended.push(*field);
             }
         }
@@ -361,9 +365,7 @@ pub fn validate_limit(limit: i64) -> Result<(), String> {
         return Err("Limit cannot be negative".to_string());
     }
     if limit > MAX_LIMIT {
-        return Err(format!(
-            "Limit {limit} exceeds maximum of {MAX_LIMIT}"
-        ));
+        return Err(format!("Limit {limit} exceeds maximum of {MAX_LIMIT}"));
     }
     Ok(())
 }

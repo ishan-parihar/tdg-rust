@@ -3,8 +3,8 @@
 //! Uses the official `rmcp` crate (v1.7) for spec-compliant MCP server.
 //! Supports stdio transport (for Hermes/Claude integration) and HTTP/SSE.
 
-pub mod tools;
 pub mod server;
+pub mod tools;
 
 #[cfg(test)]
 mod tests;

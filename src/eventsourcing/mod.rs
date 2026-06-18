@@ -51,7 +51,7 @@ impl EventJournal {
         if !path.exists() {
             return Ok(entries);
         }
-        let file = File::open(path).map_err(|e| TdgError::Io(e))?;
+        let file = File::open(path).map_err(TdgError::Io)?;
         let reader = BufReader::new(file);
         for line in reader.lines() {
             let line = line.map_err(TdgError::Io)?;
@@ -81,9 +81,11 @@ impl EventJournal {
         agent_id: Option<&str>,
         payload: Option<&Value>,
     ) -> TdgResult<String> {
-        let event_id = format!("evt:{}", uuid::Uuid::new_v4().to_string()[..12].to_string());
+        let event_id = format!("evt:{}", &uuid::Uuid::new_v4().to_string()[..12]);
         let timestamp = now_iso();
-        let payload = payload.cloned().unwrap_or(Value::Object(serde_json::Map::new()));
+        let payload = payload
+            .cloned()
+            .unwrap_or(Value::Object(serde_json::Map::new()));
 
         let entry = JournalEntry {
             event_id: event_id.clone(),
@@ -119,14 +121,26 @@ impl EventJournal {
 
     /// Get the last event ID.
     pub fn last_event_id(&self) -> Option<String> {
-        self.events.lock().unwrap().last().map(|e| e.event_id.clone())
+        self.events
+            .lock()
+            .unwrap()
+            .last()
+            .map(|e| e.event_id.clone())
     }
 
     /// Stream events after a given event ID.
-    pub fn stream_after(&self, after_event_id: Option<&str>, limit: Option<usize>) -> Vec<JournalEntry> {
+    pub fn stream_after(
+        &self,
+        after_event_id: Option<&str>,
+        limit: Option<usize>,
+    ) -> Vec<JournalEntry> {
         let events = self.events.lock().unwrap();
         let start = if let Some(aid) = after_event_id {
-            events.iter().position(|e| e.event_id == *aid).map(|i| i + 1).unwrap_or(0)
+            events
+                .iter()
+                .position(|e| e.event_id == *aid)
+                .map(|i| i + 1)
+                .unwrap_or(0)
         } else {
             0
         };
@@ -139,7 +153,9 @@ impl EventJournal {
 
     /// Stream events up to a timestamp.
     pub fn stream_up_to(&self, timestamp: &str) -> Vec<JournalEntry> {
-        self.events.lock().unwrap()
+        self.events
+            .lock()
+            .unwrap()
             .iter()
             .filter(|e| e.timestamp.as_str() <= timestamp)
             .cloned()
@@ -160,7 +176,10 @@ impl EventJournal {
     pub fn restore(&self, backup_path: impl AsRef<Path>) -> TdgResult<()> {
         let backup = backup_path.as_ref();
         if !backup.exists() {
-            return Err(TdgError::NotFound(format!("backup not found: {}", backup.display())));
+            return Err(TdgError::NotFound(format!(
+                "backup not found: {}",
+                backup.display()
+            )));
         }
         fs::copy(backup, &self.path)?;
         let events = Self::load_from_disk(&self.path)?;
@@ -207,21 +226,22 @@ impl SnapshotManager {
 
         // Node type distribution
         let mut stmt = conn.prepare(
-            "SELECT node_type, COUNT(*) as cnt FROM nodes GROUP BY node_type ORDER BY cnt DESC"
+            "SELECT node_type, COUNT(*) as cnt FROM nodes GROUP BY node_type ORDER BY cnt DESC",
         )?;
-        let type_map: Value = stmt.query_map([], |row| {
-            let nt: String = row.get(0)?;
-            let cnt: i64 = row.get(1)?;
-            Ok((nt, cnt))
-        })?
-        .filter_map(|r| r.ok())
-        .map(|(k, v)| (k, Value::Number(v.into())))
-        .collect::<serde_json::Map<String, Value>>()
-        .into();
+        let type_map: Value = stmt
+            .query_map([], |row| {
+                let nt: String = row.get(0)?;
+                let cnt: i64 = row.get(1)?;
+                Ok((nt, cnt))
+            })?
+            .filter_map(|r| r.ok())
+            .map(|(k, v)| (k, Value::Number(v.into())))
+            .collect::<serde_json::Map<String, Value>>()
+            .into();
 
-        let event_count: usize = conn.query_row(
-            "SELECT COUNT(*) FROM events", [], |r| r.get(0)
-        ).unwrap_or(0);
+        let event_count: usize = conn
+            .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
+            .unwrap_or(0);
 
         let meta = SnapshotMeta {
             generated_at: now,
@@ -310,7 +330,11 @@ impl ReplayEngine {
     }
 
     /// Replay from a specific event ID (exclusive).
-    pub fn replay_from(&self, conn: &rusqlite::Connection, after_event_id: &str) -> TdgResult<usize> {
+    pub fn replay_from(
+        &self,
+        conn: &rusqlite::Connection,
+        after_event_id: &str,
+    ) -> TdgResult<usize> {
         init_schema(conn)?;
         let events = self.journal.stream_after(Some(after_event_id), None);
         let mut applied = 0;
@@ -340,22 +364,48 @@ impl ReplayEngine {
         match entry.event_action.as_str() {
             "node_created" => {
                 if let Some(_node_id) = &entry.node_id {
-                    let node_type = payload.get("node_type").and_then(|v| v.as_str()).unwrap_or("observation");
-                    let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("replayed");
+                    let node_type = payload
+                        .get("node_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("observation");
+                    let name = payload
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("replayed");
                     let new_node = crate::models::NewNode {
                         node_type: node_type.to_string(),
                         name: name.to_string(),
-                        description: payload.get("description").and_then(|v| v.as_str()).map(String::from),
+                        description: payload
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
                         properties: payload.get("properties").cloned(),
                         quadrants: payload.get("quadrants").cloned(),
                         drives: payload.get("drives").cloned(),
-                        lifecycle_state: payload.get("lifecycle_state").and_then(|v| v.as_str()).map(String::from),
-                        teleological_level: payload.get("teleological_level").and_then(|v| v.as_str()).map(String::from),
-                        developmental_stage: payload.get("developmental_stage").and_then(|v| v.as_i64()).map(|v| v as i32),
+                        lifecycle_state: payload
+                            .get("lifecycle_state")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        teleological_level: payload
+                            .get("teleological_level")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        developmental_stage: payload
+                            .get("developmental_stage")
+                            .and_then(|v| v.as_i64())
+                            .map(|v| v as i32),
                         confidence: payload.get("confidence").and_then(|v| v.as_f64()),
-                        source: payload.get("source").and_then(|v| v.as_str()).map(String::from),
-                        parent_ids: payload.get("parent_ids").and_then(|v| serde_json::from_value(v.clone()).ok()),
-                        agent_id: payload.get("agent_id").and_then(|v| v.as_str()).map(String::from),
+                        source: payload
+                            .get("source")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        parent_ids: payload
+                            .get("parent_ids")
+                            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                        agent_id: payload
+                            .get("agent_id")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
                     };
                     let _ = crud::add_node(conn, &new_node);
                 }
@@ -363,7 +413,10 @@ impl ReplayEngine {
             }
             "edge_created" => {
                 if let (Some(src), Some(tgt)) = (&entry.source_id, &entry.target_id) {
-                    let edge_type = payload.get("edge_type").and_then(|v| v.as_str()).unwrap_or("RELATES_TO");
+                    let edge_type = payload
+                        .get("edge_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("RELATES_TO");
                     let new_edge = crate::models::NewEdge {
                         source_id: src.clone(),
                         target_id: tgt.clone(),
@@ -408,7 +461,6 @@ impl ReplayEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use tempfile::TempDir;
 
     fn temp_journal(dir: &Path) -> EventJournal {
@@ -421,7 +473,9 @@ mod tests {
         let journal = temp_journal(tmp.path());
         assert_eq!(journal.count(), 0);
 
-        let id = journal.append("node_created", Some("n001"), None, None, None, None).unwrap();
+        let id = journal
+            .append("node_created", Some("n001"), None, None, None, None)
+            .unwrap();
         assert!(id.starts_with("evt:"));
         assert_eq!(journal.count(), 1);
     }
@@ -431,8 +485,12 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         {
             let journal = temp_journal(tmp.path());
-            journal.append("node_created", Some("n001"), None, None, None, None).unwrap();
-            journal.append("edge_created", None, Some("n001"), Some("n002"), None, None).unwrap();
+            journal
+                .append("node_created", Some("n001"), None, None, None, None)
+                .unwrap();
+            journal
+                .append("edge_created", None, Some("n001"), Some("n002"), None, None)
+                .unwrap();
         }
         // Reload from disk
         let journal2 = EventJournal::new(tmp.path().join("events.jsonl")).unwrap();
@@ -508,12 +566,36 @@ mod tests {
     fn replay_determinism() {
         let tmp = TempDir::new().unwrap();
         let journal = temp_journal(tmp.path());
-        journal.append("node_created", Some("n001"), None, None, None,
-            Some(&serde_json::json!({"node_type": "observation", "name": "test"}))).unwrap();
-        journal.append("node_created", Some("n002"), None, None, None,
-            Some(&serde_json::json!({"node_type": "action", "name": "test2"}))).unwrap();
-        journal.append("edge_created", None, Some("n001"), Some("n002"), None,
-            Some(&serde_json::json!({"edge_type": "SUPPORTS"}))).unwrap();
+        journal
+            .append(
+                "node_created",
+                Some("n001"),
+                None,
+                None,
+                None,
+                Some(&serde_json::json!({"node_type": "observation", "name": "test"})),
+            )
+            .unwrap();
+        journal
+            .append(
+                "node_created",
+                Some("n002"),
+                None,
+                None,
+                None,
+                Some(&serde_json::json!({"node_type": "action", "name": "test2"})),
+            )
+            .unwrap();
+        journal
+            .append(
+                "edge_created",
+                None,
+                Some("n001"),
+                Some("n002"),
+                None,
+                Some(&serde_json::json!({"edge_type": "SUPPORTS"})),
+            )
+            .unwrap();
 
         let engine = ReplayEngine::new(journal);
         assert!(engine.verify_determinism().unwrap());
@@ -523,15 +605,25 @@ mod tests {
     fn replay_full_applies_events() {
         let tmp = TempDir::new().unwrap();
         let journal = temp_journal(tmp.path());
-        journal.append("node_created", Some("n001"), None, None, None,
-            Some(&serde_json::json!({"node_type": "observation", "name": "obs1"}))).unwrap();
+        journal
+            .append(
+                "node_created",
+                Some("n001"),
+                None,
+                None,
+                None,
+                Some(&serde_json::json!({"node_type": "observation", "name": "obs1"})),
+            )
+            .unwrap();
 
         let engine = ReplayEngine::new(journal);
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let applied = engine.replay_full(&conn).unwrap();
         assert_eq!(applied, 1);
 
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes", [], |r| r.get(0)).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM nodes", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(count, 1);
     }
 }

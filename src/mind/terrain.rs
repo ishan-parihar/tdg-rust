@@ -3,9 +3,9 @@
 //! Port of `core/mind/terrain.py` (279 lines).
 //! Provides domain-agnostic graph snapshot for mind injection.
 
-use std::collections::HashMap;
 use rusqlite::Connection;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 use crate::db::crud;
 use crate::error::TdgResult;
@@ -25,14 +25,7 @@ pub fn discover_skills_for_terrain(conn: &Connection) -> TdgResult<Vec<String>> 
 
     let mut skills = Vec::new();
     for _ntype in &top_types {
-        let skill_edges = crud::get_edges(
-            conn,
-            None,
-            None,
-            Some("ENABLES"),
-            None,
-            100,
-        )?;
+        let skill_edges = crud::get_edges(conn, None, None, Some("ENABLES"), None, 100)?;
 
         for edge in &skill_edges {
             if let Ok(Some(node)) = crud::get_node(conn, &edge.source_id) {
@@ -46,14 +39,7 @@ pub fn discover_skills_for_terrain(conn: &Connection) -> TdgResult<Vec<String>> 
             break;
         }
 
-        let fallback_edges = crud::get_edges(
-            conn,
-            None,
-            None,
-            Some("PACKAGES"),
-            None,
-            50,
-        )?;
+        let fallback_edges = crud::get_edges(conn, None, None, Some("PACKAGES"), None, 50)?;
 
         for edge in &fallback_edges {
             if let Ok(Some(node)) = crud::get_node(conn, &edge.source_id) {
@@ -76,7 +62,7 @@ pub fn count_active_nodes_by_type(conn: &Connection) -> TdgResult<HashMap<String
     let mut stmt = conn.prepare(
         "SELECT node_type, COUNT(*) as cnt FROM nodes
          WHERE lifecycle_state != 'archived'
-         GROUP BY node_type ORDER BY cnt DESC"
+         GROUP BY node_type ORDER BY cnt DESC",
     )?;
 
     let rows = stmt.query_map([], |row| {
@@ -95,10 +81,7 @@ pub fn count_active_nodes_by_type(conn: &Connection) -> TdgResult<HashMap<String
 ///
 /// Python: `generate_terrain_context(loop_state, metrics)` — returns active_nodes_by_type,
 /// highest_relevance_items, stale_items, open_edges, cycle_context.
-pub fn generate_terrain_context(
-    conn: &Connection,
-    loop_state: &Value,
-) -> TdgResult<Value> {
+pub fn generate_terrain_context(conn: &Connection, loop_state: &Value) -> TdgResult<Value> {
     let active_nodes_by_type = count_active_nodes_by_type(conn)?;
 
     let recent_nodes = crud::query_nodes(
@@ -119,7 +102,14 @@ pub fn generate_terrain_context(
 
     let highest_relevance_items: Vec<String> = recent_nodes
         .iter()
-        .map(|n| format!("{} [{}] (confidence: {:.0}%)", n.name, n.node_type, n.confidence * 100.0))
+        .map(|n| {
+            format!(
+                "{} [{}] (confidence: {:.0}%)",
+                n.name,
+                n.node_type,
+                n.confidence * 100.0
+            )
+        })
         .collect();
 
     let stale_nodes = crud::query_nodes(
@@ -196,9 +186,9 @@ fn truncate_str(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
     use crate::db::{init_schema, run_migrations};
     use crate::models::NewNode;
+    use rusqlite::Connection;
 
     fn setup() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -234,44 +224,56 @@ mod tests {
     #[test]
     fn discover_skills_with_skill_node() {
         let conn = setup();
-        let obs = crud::add_node(&conn, &NewNode {
-            node_type: "observation".to_string(),
-            name: "obs-1".to_string(),
-            description: None,
-            properties: None,
-            quadrants: None,
-            drives: None,
-            lifecycle_state: None,
-            teleological_level: None,
-            developmental_stage: None,
-            confidence: None,
-            source: None,
-            parent_ids: None,
-            agent_id: None,
-        }).unwrap();
-        let skill = crud::add_node(&conn, &NewNode {
-            node_type: "skill".to_string(),
-            name: "test-skill".to_string(),
-            description: None,
-            properties: None,
-            quadrants: None,
-            drives: None,
-            lifecycle_state: None,
-            teleological_level: None,
-            developmental_stage: None,
-            confidence: None,
-            source: None,
-            parent_ids: None,
-            agent_id: None,
-        }).unwrap();
-        crud::add_edge(&conn, &crate::models::NewEdge {
-            source_id: skill.id.clone(),
-            target_id: obs.id.clone(),
-            edge_type: "ENABLES".to_string(),
-            weight: None,
-            properties: None,
-            agent_id: None,
-        }).unwrap();
+        let obs = crud::add_node(
+            &conn,
+            &NewNode {
+                node_type: "observation".to_string(),
+                name: "obs-1".to_string(),
+                description: None,
+                properties: None,
+                quadrants: None,
+                drives: None,
+                lifecycle_state: None,
+                teleological_level: None,
+                developmental_stage: None,
+                confidence: None,
+                source: None,
+                parent_ids: None,
+                agent_id: None,
+            },
+        )
+        .unwrap();
+        let skill = crud::add_node(
+            &conn,
+            &NewNode {
+                node_type: "skill".to_string(),
+                name: "test-skill".to_string(),
+                description: None,
+                properties: None,
+                quadrants: None,
+                drives: None,
+                lifecycle_state: None,
+                teleological_level: None,
+                developmental_stage: None,
+                confidence: None,
+                source: None,
+                parent_ids: None,
+                agent_id: None,
+            },
+        )
+        .unwrap();
+        crud::add_edge(
+            &conn,
+            &crate::models::NewEdge {
+                source_id: skill.id.clone(),
+                target_id: obs.id.clone(),
+                edge_type: "ENABLES".to_string(),
+                weight: None,
+                properties: None,
+                agent_id: None,
+            },
+        )
+        .unwrap();
         let skills = discover_skills_for_terrain(&conn).unwrap();
         assert!(skills.contains(&"test-skill".to_string()));
     }

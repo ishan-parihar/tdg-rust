@@ -36,7 +36,7 @@ impl SourceLayer {
     }
 
     /// Parse from string.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_from_str(s: &str) -> Option<Self> {
         match s {
             "event_trajectory" => Some(Self::EventTrajectory),
             "entity_span" => Some(Self::EntitySpan),
@@ -194,7 +194,7 @@ impl ScoreReconciliationEngine {
         let nodes: Vec<(String, String)> = {
             let mut stmt = conn.prepare(
                 "SELECT id, drives_json FROM nodes
-                 WHERE lifecycle_state = 'active'"
+                 WHERE lifecycle_state = 'active'",
             )?;
 
             let rows = stmt.query_map([], |row| {
@@ -204,9 +204,7 @@ impl ScoreReconciliationEngine {
             })?;
 
             rows.filter_map(|r| r.ok())
-                .filter(|(_, drives_json)| {
-                    drives_json.contains(drive_name)
-                })
+                .filter(|(_, drives_json)| drives_json.contains(drive_name))
                 .collect()
         };
 
@@ -254,11 +252,8 @@ mod tests {
     #[test]
     fn test_reconcile_single_layer() {
         let mut engine = ScoreReconciliationEngine::new();
-        let score = engine.reconcile_score(
-            "node1",
-            "cognitive",
-            &[(SourceLayer::EventTrajectory, 0.8)],
-        );
+        let score =
+            engine.reconcile_score("node1", "cognitive", &[(SourceLayer::EventTrajectory, 0.8)]);
 
         assert!((score.value - 0.8).abs() < f64::EPSILON);
         assert_eq!(score.source_layer, SourceLayer::EventTrajectory);
@@ -272,8 +267,8 @@ mod tests {
             "node1",
             "cognitive",
             &[
-                (SourceLayer::EventTrajectory, 0.8),  // 0.60 weight
-                (SourceLayer::EntitySpan, 0.4),       // 0.50 weight
+                (SourceLayer::EventTrajectory, 0.8), // 0.60 weight
+                (SourceLayer::EntitySpan, 0.4),      // 0.50 weight
             ],
         );
 
@@ -304,11 +299,7 @@ mod tests {
 
         // Feed same score 5 times
         for _ in 0..FROZEN_CYCLE_THRESHOLD {
-            engine.reconcile_score(
-                "node1",
-                "cognitive",
-                &[(SourceLayer::EventTrajectory, 0.5)],
-            );
+            engine.reconcile_score("node1", "cognitive", &[(SourceLayer::EventTrajectory, 0.5)]);
         }
 
         assert!(engine.detect_frozen("node1", "cognitive"));

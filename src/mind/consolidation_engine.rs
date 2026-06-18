@@ -1,7 +1,7 @@
-use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
 use crate::error::TdgResult;
 use crate::mind::reflect_engine::{ReflectEngine, ReflectResult};
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsolidationReport {
@@ -57,13 +57,15 @@ impl<'a> ConsolidationEngine<'a> {
         let node_types = self.count_by_type()?;
         let nodes_count: i64 = node_types.values().sum();
 
-        let edges_count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM edges",
-            [],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let edges_count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM edges", [], |row| row.get(0))
+            .unwrap_or(0);
 
-        actions_taken.push(format!("Captured graph health: {} nodes, {} edges", nodes_count, edges_count));
+        actions_taken.push(format!(
+            "Captured graph health: {} nodes, {} edges",
+            nodes_count, edges_count
+        ));
 
         let reflect_result = self.run_reflection(&mut actions_taken, &mut patterns);
 
@@ -71,7 +73,13 @@ impl<'a> ConsolidationEngine<'a> {
 
         self.analyze_recent_activity(&mut insights)?;
 
-        self.analyze_edge_density(nodes_count, edges_count, &node_types, &mut insights, &mut recommendations)?;
+        self.analyze_edge_density(
+            nodes_count,
+            edges_count,
+            &node_types,
+            &mut insights,
+            &mut recommendations,
+        )?;
 
         let orphans = self.count_orphans()?;
         if orphans > 0 {
@@ -84,18 +92,24 @@ impl<'a> ConsolidationEngine<'a> {
         if !node_types.is_empty() {
             let mut sorted: Vec<_> = node_types.iter().collect();
             sorted.sort_by(|a, b| b.1.cmp(a.1));
-            let top: Vec<String> = sorted.iter().take(5).map(|(t, c)| format!("{}: {}", t, c)).collect();
+            let top: Vec<String> = sorted
+                .iter()
+                .take(5)
+                .map(|(t, c)| format!("{}: {}", t, c))
+                .collect();
             insights.push(format!("Node distribution — top types: {}", top.join(", ")));
             if let Some((dominant_type, count)) = sorted.first() {
                 patterns.push(format!(
                     "Graph composition: {} distinct node types, dominated by {} ({} nodes).",
-                    node_types.len(), dominant_type, count
+                    node_types.len(),
+                    dominant_type,
+                    count
                 ));
             }
         }
 
         let elapsed = start.elapsed().as_secs_f64();
-        let status = if reflect_result.as_ref().map_or(false, |r| !r.skipped) {
+        let status = if reflect_result.as_ref().is_some_and(|r| !r.skipped) {
             "consolidated".to_string()
         } else {
             "consolidated_partial".to_string()
@@ -134,20 +148,26 @@ impl<'a> ConsolidationEngine<'a> {
         })
     }
 
-    fn quick_health_snapshot(&self, timestamp: String, start: std::time::Instant) -> TdgResult<ConsolidationReport> {
+    fn quick_health_snapshot(
+        &self,
+        timestamp: String,
+        start: std::time::Instant,
+    ) -> TdgResult<ConsolidationReport> {
         let node_types = self.count_by_type()?;
         let nodes_count: i64 = node_types.values().sum();
-        let edges_count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM edges",
-            [],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let edges_count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM edges", [], |row| row.get(0))
+            .unwrap_or(0);
         let orphans = self.count_orphans()?;
         let elapsed = start.elapsed().as_secs_f64();
 
         Ok(ConsolidationReport {
             status: "consolidated_lean".to_string(),
-            message: format!("Lean consolidation in {:.1}s. Graph: {} nodes, {} edges.", elapsed, nodes_count, edges_count),
+            message: format!(
+                "Lean consolidation in {:.1}s. Graph: {} nodes, {} edges.",
+                elapsed, nodes_count, edges_count
+            ),
             timestamp,
             elapsed_seconds: elapsed,
             nodes_count,
@@ -155,11 +175,17 @@ impl<'a> ConsolidationEngine<'a> {
             node_types,
             orphans,
             reflection: None,
-            constraint_health: ConstraintHealth { total: 0, active: 0 },
+            constraint_health: ConstraintHealth {
+                total: 0,
+                active: 0,
+            },
             insights: vec!["Lean mode: cross-cutting analysis skipped.".to_string()],
             patterns: Vec::new(),
             recommendations: Vec::new(),
-            actions_taken: vec![format!("Lean health snapshot: {} nodes, {} edges", nodes_count, edges_count)],
+            actions_taken: vec![format!(
+                "Lean health snapshot: {} nodes, {} edges",
+                nodes_count, edges_count
+            )],
         })
     }
 
@@ -168,30 +194,31 @@ impl<'a> ConsolidationEngine<'a> {
             "SELECT node_type, COUNT(*) as cnt FROM nodes
              WHERE lifecycle_state = 'active'
              GROUP BY node_type
-             ORDER BY cnt DESC"
+             ORDER BY cnt DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0).unwrap_or_default(), row.get(1)?))
         })?;
         let mut map = std::collections::HashMap::new();
-        for row in rows {
-            if let Ok((nt, cnt)) = row {
-                map.insert(nt, cnt);
-            }
+        for (nt, cnt) in rows.flatten() {
+            map.insert(nt, cnt);
         }
         Ok(map)
     }
 
     fn count_orphans(&self) -> TdgResult<i64> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM nodes n
+        let count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM nodes n
              WHERE NOT EXISTS (
                  SELECT 1 FROM edges e
                  WHERE (e.source_id = n.id OR e.target_id = n.id)
              )",
-            [],
-            |row| row.get(0),
-        ).unwrap_or(0);
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
         Ok(count)
     }
 
@@ -229,18 +256,27 @@ impl<'a> ConsolidationEngine<'a> {
         }
     }
 
-    fn analyze_constraints(&self, recommendations: &mut Vec<String>) -> TdgResult<ConstraintHealth> {
-        let total: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM nodes WHERE node_type = 'constraint'",
-            [],
-            |row| row.get(0),
-        ).unwrap_or(0);
+    fn analyze_constraints(
+        &self,
+        recommendations: &mut Vec<String>,
+    ) -> TdgResult<ConstraintHealth> {
+        let total: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM nodes WHERE node_type = 'constraint'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
-        let active: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT source_id) FROM edges WHERE edge_type = 'BLOCKS'",
-            [],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let active: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(DISTINCT source_id) FROM edges WHERE edge_type = 'BLOCKS'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         if total > 0 && active < total {
             recommendations.push(format!(
@@ -254,18 +290,26 @@ impl<'a> ConsolidationEngine<'a> {
 
     fn analyze_recent_activity(&self, insights: &mut Vec<String>) -> TdgResult<()> {
         let since_24h = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM nodes
+        let count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM nodes
              WHERE node_type = 'observation'
                AND created_at >= ?1",
-            rusqlite::params![since_24h],
-            |row| row.get(0),
-        ).unwrap_or(0);
+                rusqlite::params![since_24h],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         if count > 0 {
-            insights.push(format!("{} observation(s) recorded in the last 24 hours.", count));
+            insights.push(format!(
+                "{} observation(s) recorded in the last 24 hours.",
+                count
+            ));
         } else {
-            insights.push("No observations recorded in the last 24 hours — agent may be idle.".to_string());
+            insights.push(
+                "No observations recorded in the last 24 hours — agent may be idle.".to_string(),
+            );
         }
 
         Ok(())
@@ -289,7 +333,10 @@ impl<'a> ConsolidationEngine<'a> {
                     rounded
                 ));
             }
-            insights.push(format!("Graph edge density: {} edges per observation.", rounded));
+            insights.push(format!(
+                "Graph edge density: {} edges per observation.",
+                rounded
+            ));
         }
         Ok(())
     }
@@ -331,9 +378,40 @@ mod tests {
     fn test_consolidation_with_nodes() {
         let conn = setup_db();
         for i in 0..10 {
-            crud::add_node(&conn, &crate::models::NewNode {
+            crud::add_node(
+                &conn,
+                &crate::models::NewNode {
+                    node_type: "observation".to_string(),
+                    name: format!("Obs {}", i),
+                    description: None,
+                    properties: None,
+                    quadrants: None,
+                    drives: None,
+                    lifecycle_state: Some("active".to_string()),
+                    teleological_level: None,
+                    developmental_stage: None,
+                    confidence: None,
+                    source: None,
+                    parent_ids: None,
+                    agent_id: None,
+                },
+            )
+            .unwrap();
+        }
+        let engine = ConsolidationEngine::new(&conn);
+        let report = engine.run().unwrap();
+        assert_eq!(report.nodes_count, 10);
+        assert!(report.node_types.contains_key("observation"));
+    }
+
+    #[test]
+    fn test_orphan_detection() {
+        let conn = setup_db();
+        crud::add_node(
+            &conn,
+            &crate::models::NewNode {
                 node_type: "observation".to_string(),
-                name: format!("Obs {}", i),
+                name: "Orphan".to_string(),
                 description: None,
                 properties: None,
                 quadrants: None,
@@ -345,35 +423,15 @@ mod tests {
                 source: None,
                 parent_ids: None,
                 agent_id: None,
-            }).unwrap();
-        }
-        let engine = ConsolidationEngine::new(&conn);
-        let report = engine.run().unwrap();
-        assert_eq!(report.nodes_count, 10);
-        assert!(report.node_types.contains_key("observation"));
-    }
-
-    #[test]
-    fn test_orphan_detection() {
-        let conn = setup_db();
-        crud::add_node(&conn, &crate::models::NewNode {
-            node_type: "observation".to_string(),
-            name: "Orphan".to_string(),
-            description: None,
-            properties: None,
-            quadrants: None,
-            drives: None,
-            lifecycle_state: Some("active".to_string()),
-            teleological_level: None,
-            developmental_stage: None,
-            confidence: None,
-            source: None,
-            parent_ids: None,
-            agent_id: None,
-        }).unwrap();
+            },
+        )
+        .unwrap();
         let engine = ConsolidationEngine::new(&conn);
         let report = engine.run().unwrap();
         assert_eq!(report.orphans, 1);
-        assert!(report.recommendations.iter().any(|r| r.contains("no edges")));
+        assert!(report
+            .recommendations
+            .iter()
+            .any(|r| r.contains("no edges")));
     }
 }

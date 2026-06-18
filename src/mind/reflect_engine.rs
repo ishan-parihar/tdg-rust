@@ -1,9 +1,9 @@
-use rusqlite::Connection;
-use sha2::{Sha256, Digest};
-use serde::{Deserialize, Serialize};
 use crate::db::crud;
 use crate::error::TdgResult;
 use crate::models::NewEdge;
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReflectConfig {
@@ -59,8 +59,8 @@ impl<'a> ReflectEngine<'a> {
     pub fn run(&self) -> TdgResult<ReflectResult> {
         let mut result = ReflectResult::default();
 
-        let cutoff = chrono::Utc::now()
-            - chrono::Duration::days(self.config.stale_observation_days as i64);
+        let cutoff =
+            chrono::Utc::now() - chrono::Duration::days(self.config.stale_observation_days as i64);
         let cutoff_ts = cutoff.to_rfc3339();
 
         let observations: Vec<(String, String, String)> = {
@@ -70,7 +70,7 @@ impl<'a> ReflectEngine<'a> {
                    AND lifecycle_state = 'active'
                  AND created_at >= ?1
                  ORDER BY created_at DESC
-                 LIMIT 100"
+                 LIMIT 100",
             )?;
             let rows = stmt.query_map(rusqlite::params![cutoff_ts], |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?))
@@ -98,7 +98,7 @@ impl<'a> ReflectEngine<'a> {
             let entities: Vec<String> = {
                 let mut stmt = self.conn.prepare(
                     "SELECT DISTINCT target_id FROM edges
-                     WHERE source_id = ?1 AND edge_type = 'MENTIONS'"
+                     WHERE source_id = ?1 AND edge_type = 'MENTIONS'",
                 )?;
                 let rows = stmt.query_map(rusqlite::params![oid], |row| row.get(0))?;
                 rows.filter_map(|r| r.ok()).collect()
@@ -123,10 +123,9 @@ impl<'a> ReflectEngine<'a> {
                 if assigned.contains(obs_list[j]) {
                     continue;
                 }
-                if let (Some(set_a), Some(set_b)) = (
-                    obs_entities.get(obs_list[i]),
-                    obs_entities.get(obs_list[j]),
-                ) {
+                if let (Some(set_a), Some(set_b)) =
+                    (obs_entities.get(obs_list[i]), obs_entities.get(obs_list[j]))
+                {
                     let shared: usize = set_a.intersection(set_b).count();
                     if shared >= self.config.min_shared_entities {
                         cluster.push(obs_list[j].to_string());
@@ -171,7 +170,7 @@ impl<'a> ReflectEngine<'a> {
                )",
             rusqlite::params![now, cutoff_ts],
         )?;
-        result.observations_archived = archived as usize;
+        result.observations_archived = archived;
 
         Ok(result)
     }
@@ -187,11 +186,14 @@ impl<'a> ReflectEngine<'a> {
         let mut contents = Vec::new();
 
         for oid in cluster {
-            let node: Option<(String, String, String)> = self.conn.query_row(
-                "SELECT name, description, properties_json FROM nodes WHERE id = ?1",
-                rusqlite::params![oid],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            ).ok();
+            let node: Option<(String, String, String)> = self
+                .conn
+                .query_row(
+                    "SELECT name, description, properties_json FROM nodes WHERE id = ?1",
+                    rusqlite::params![oid],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .ok();
 
             if let Some((name, desc, _props)) = node {
                 contents.push(format!("{} {}", name, desc));
@@ -224,11 +226,15 @@ impl<'a> ReflectEngine<'a> {
         };
         let skill_id = format!("skill:reflect_{}", fingerprint);
 
-        let exists: bool = self.conn.query_row(
-            "SELECT COUNT(*) FROM nodes WHERE id = ?1",
-            rusqlite::params![skill_id],
-            |row| row.get::<_, i64>(0),
-        ).map(|c| c > 0).unwrap_or(false);
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM nodes WHERE id = ?1",
+                rusqlite::params![skill_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
 
         if !exists {
             let tag_label = if fingerprint_parts.len() >= 3 {
@@ -264,14 +270,17 @@ impl<'a> ReflectEngine<'a> {
             detail.skill_created = true;
 
             for oid in cluster {
-                let _ = crud::add_edge(self.conn, &NewEdge {
-                    source_id: oid.clone(),
-                    target_id: skill_id.clone(),
-                    edge_type: "ENABLES".to_string(),
-                    weight: Some(0.5),
-                    properties: None,
-                    agent_id: Some("reflect_engine".to_string()),
-                });
+                let _ = crud::add_edge(
+                    self.conn,
+                    &NewEdge {
+                        source_id: oid.clone(),
+                        target_id: skill_id.clone(),
+                        edge_type: "ENABLES".to_string(),
+                        weight: Some(0.5),
+                        properties: None,
+                        agent_id: Some("reflect_engine".to_string()),
+                    },
+                );
             }
         }
 
@@ -299,52 +308,64 @@ mod tests {
     }
 
     fn create_obs(conn: &Connection, name: &str) -> String {
-        let node = crud::add_node(conn, &NewNode {
-            node_type: "observation".to_string(),
-            name: name.to_string(),
-            description: Some(format!("Description of {}", name)),
-            properties: None,
-            quadrants: None,
-            drives: None,
-            lifecycle_state: Some("active".to_string()),
-            teleological_level: None,
-            developmental_stage: None,
-            confidence: None,
-            source: None,
-            parent_ids: None,
-            agent_id: None,
-        }).unwrap();
+        let node = crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "observation".to_string(),
+                name: name.to_string(),
+                description: Some(format!("Description of {}", name)),
+                properties: None,
+                quadrants: None,
+                drives: None,
+                lifecycle_state: Some("active".to_string()),
+                teleological_level: None,
+                developmental_stage: None,
+                confidence: None,
+                source: None,
+                parent_ids: None,
+                agent_id: None,
+            },
+        )
+        .unwrap();
         node.id
     }
 
     fn create_entity(conn: &Connection, name: &str) -> String {
-        let node = crud::add_node(conn, &NewNode {
-            node_type: "people".to_string(),
-            name: name.to_string(),
-            description: None,
-            properties: None,
-            quadrants: None,
-            drives: None,
-            lifecycle_state: Some("active".to_string()),
-            teleological_level: None,
-            developmental_stage: None,
-            confidence: None,
-            source: None,
-            parent_ids: None,
-            agent_id: None,
-        }).unwrap();
+        let node = crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "people".to_string(),
+                name: name.to_string(),
+                description: None,
+                properties: None,
+                quadrants: None,
+                drives: None,
+                lifecycle_state: Some("active".to_string()),
+                teleological_level: None,
+                developmental_stage: None,
+                confidence: None,
+                source: None,
+                parent_ids: None,
+                agent_id: None,
+            },
+        )
+        .unwrap();
         node.id
     }
 
     fn mention(conn: &Connection, obs_id: &str, entity_id: &str) {
-        crud::add_edge(conn, &NewEdge {
-            source_id: obs_id.to_string(),
-            target_id: entity_id.to_string(),
-            edge_type: "MENTIONS".to_string(),
-            weight: None,
-            properties: None,
-            agent_id: None,
-        }).unwrap();
+        crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: obs_id.to_string(),
+                target_id: entity_id.to_string(),
+                edge_type: "MENTIONS".to_string(),
+                weight: None,
+                properties: None,
+                agent_id: None,
+            },
+        )
+        .unwrap();
     }
 
     #[test]
@@ -393,10 +414,14 @@ mod tests {
         let result = engine.run().unwrap();
         assert!(result.skills_created >= 1);
 
-        let skills = crate::db::crud::query_nodes(&conn, &crate::models::NodeQuery {
-            node_type: Some("skill".to_string()),
-            ..Default::default()
-        }).unwrap();
+        let skills = crate::db::crud::query_nodes(
+            &conn,
+            &crate::models::NodeQuery {
+                node_type: Some("skill".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert!(skills.iter().any(|s| s.source == "reflect_engine"));
     }
 
@@ -416,11 +441,22 @@ mod tests {
         let _r1 = engine.run().unwrap();
         let _r2 = engine.run().unwrap();
 
-        let skills = crate::db::crud::query_nodes(&conn, &crate::models::NodeQuery {
-            node_type: Some("skill".to_string()),
-            ..Default::default()
-        }).unwrap();
-        let reflect_skills: Vec<_> = skills.iter().filter(|s| s.source == "reflect_engine").collect();
-        assert_eq!(reflect_skills.len(), 1, "Should be idempotent - only 1 skill created");
+        let skills = crate::db::crud::query_nodes(
+            &conn,
+            &crate::models::NodeQuery {
+                node_type: Some("skill".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let reflect_skills: Vec<_> = skills
+            .iter()
+            .filter(|s| s.source == "reflect_engine")
+            .collect();
+        assert_eq!(
+            reflect_skills.len(),
+            1,
+            "Should be idempotent - only 1 skill created"
+        );
     }
 }

@@ -2,14 +2,14 @@
 //!
 //! Run with: `cargo bench`
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use tdg_rust::db::{init_fts, init_schema, run_migrations, ConnectionPool};
+use tdg_rust::hrr;
+use tdg_rust::knowledge;
+use tdg_rust::mind::diagnostic::DiagnosticEngine;
+use tdg_rust::mind::pulse::PulseEngine;
 use tdg_rust::models::{NewEdge, NewNode};
 use tdg_rust::ops;
-use tdg_rust::knowledge;
-use tdg_rust::mind::pulse::PulseEngine;
-use tdg_rust::mind::diagnostic::DiagnosticEngine;
-use tdg_rust::hrr;
 
 /// Create an in-memory pool with schema initialized.
 fn make_pool() -> ConnectionPool {
@@ -28,7 +28,13 @@ fn make_pool() -> ConnectionPool {
 fn populate(pool: &ConnectionPool, n: usize) {
     pool.with_connection(|conn| {
         for i in 0..n {
-            let node_type = if i % 5 == 0 { "telos" } else if i % 3 == 0 { "observation" } else { "action" };
+            let node_type = if i % 5 == 0 {
+                "telos"
+            } else if i % 3 == 0 {
+                "observation"
+            } else {
+                "action"
+            };
             tdg_rust::db::crud::add_node(
                 conn,
                 &NewNode {
@@ -44,7 +50,8 @@ fn populate(pool: &ConnectionPool, n: usize) {
         let nodes: Vec<String> = {
             let mut stmt = conn
                 .prepare("SELECT id FROM nodes WHERE valid_to IS NULL ORDER BY created_at ASC")?;
-            let ids = stmt.query_map([], |r| r.get::<_, String>(0))?
+            let ids = stmt
+                .query_map([], |r| r.get::<_, String>(0))?
                 .filter_map(|r| r.ok())
                 .collect::<Vec<_>>();
             ids
@@ -53,7 +60,11 @@ fn populate(pool: &ConnectionPool, n: usize) {
         for i in 1..nodes.len() {
             let source = &nodes[i - 1];
             let target = &nodes[i];
-            let edge_type = if i % 5 == 0 { "DECOMPOSES_TO" } else { "EVIDENCES" };
+            let edge_type = if i % 5 == 0 {
+                "DECOMPOSES_TO"
+            } else {
+                "EVIDENCES"
+            };
             let _ = tdg_rust::db::crud::add_edge(
                 conn,
                 &NewEdge {
@@ -104,9 +115,9 @@ fn bench_get_node(c: &mut Criterion) {
 
     let node_ids: Vec<String> = pool
         .with_connection(|conn| {
-            let mut stmt = conn
-                .prepare("SELECT id FROM nodes WHERE valid_to IS NULL LIMIT 10")?;
-            let ids = stmt.query_map([], |r| r.get(0))?
+            let mut stmt = conn.prepare("SELECT id FROM nodes WHERE valid_to IS NULL LIMIT 10")?;
+            let ids = stmt
+                .query_map([], |r| r.get(0))?
                 .filter_map(|r| r.ok())
                 .collect::<Vec<_>>();
             Ok(ids)
@@ -155,7 +166,9 @@ fn bench_pathfind(c: &mut Criterion) {
     let (first, last): (String, String) = pool
         .with_connection(|conn| {
             let ids: Vec<String> = conn
-                .prepare("SELECT id FROM nodes WHERE valid_to IS NULL ORDER BY created_at ASC LIMIT 2")?
+                .prepare(
+                    "SELECT id FROM nodes WHERE valid_to IS NULL ORDER BY created_at ASC LIMIT 2",
+                )?
                 .query_map([], |r| r.get(0))?
                 .filter_map(|r| r.ok())
                 .collect();
@@ -170,6 +183,37 @@ fn bench_pathfind(c: &mut Criterion) {
                 Ok(())
             })
             .unwrap();
+        });
+    });
+}
+
+fn bench_pathfind_petgraph(c: &mut Criterion) {
+    let pool = make_pool();
+    populate(&pool, 50);
+
+    let (first, last): (String, String) = pool
+        .with_connection(|conn| {
+            let ids: Vec<String> = conn
+                .prepare(
+                    "SELECT id FROM nodes WHERE valid_to IS NULL ORDER BY created_at ASC LIMIT 2",
+                )?
+                .query_map([], |r| r.get(0))?
+                .filter_map(|r| r.ok())
+                .collect();
+            Ok((ids[0].clone(), ids[ids.len() - 1].clone()))
+        })
+        .unwrap();
+
+    let proj = pool
+        .with_connection(|conn| {
+            tdg_rust::graph_projection::GraphProjection::build(conn)
+                .map_err(|e| tdg_rust::TdgError::Custom(e))
+        })
+        .unwrap();
+
+    c.bench_function("petgraph_pathfind", |b| {
+        b.iter(|| {
+            let _ = proj.shortest_path(&first, &last);
         });
     });
 }
@@ -201,7 +245,9 @@ fn bench_aggregate_upward(c: &mut Criterion) {
     let action_ids: Vec<String> = pool
         .with_connection(|conn| {
             let ids: Vec<String> = conn
-                .prepare("SELECT id FROM nodes WHERE valid_to IS NULL AND node_type = 'action' LIMIT 10")?
+                .prepare(
+                    "SELECT id FROM nodes WHERE valid_to IS NULL AND node_type = 'action' LIMIT 10",
+                )?
                 .query_map([], |r| r.get(0))?
                 .filter_map(|r| r.ok())
                 .collect();
@@ -351,10 +397,7 @@ fn bench_hrr_bundle(c: &mut Criterion) {
 fn bench_hrr_probe(c: &mut Criterion) {
     let mut bank = hrr::HrrMemoryBank::new();
     for i in 0..100 {
-        bank.store(
-            format!("item_{i}"),
-            hrr::random_key(hrr::HRR_DIM),
-        );
+        bank.store(format!("item_{i}"), hrr::random_key(hrr::HRR_DIM));
     }
     let query = hrr::random_key(hrr::HRR_DIM);
 
@@ -405,6 +448,7 @@ criterion_group!(
     bench_get_node,
     bench_search,
     bench_pathfind,
+    bench_pathfind_petgraph,
     bench_renormalize_graph,
     bench_aggregate_upward,
     bench_detect_orphans,

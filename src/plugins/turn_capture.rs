@@ -55,10 +55,7 @@ impl TurnCapture {
             conn,
             &NewNode {
                 node_type: "observation".to_string(),
-                name: format!(
-                    "Turn: {}",
-                    text.chars().take(80).collect::<String>()
-                ),
+                name: format!("Turn: {}", text.chars().take(80).collect::<String>()),
                 description: Some(text.to_string()),
                 source: Some("turn_capture".to_string()),
                 agent_id: agent_id.map(|s| s.to_string()),
@@ -119,6 +116,12 @@ impl TurnCapture {
     }
 }
 
+impl Default for TurnCapture {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Calculate text similarity using word overlap (Jaccard-like).
 fn calculate_overlap(a: &str, b: &str) -> f64 {
     let a_words: std::collections::HashSet<&str> = a.split_whitespace().collect();
@@ -163,7 +166,9 @@ mod tests {
         let conn = setup_db();
         let capture = TurnCapture::new();
         let r1 = capture.capture(&conn, "Hello world test", None).unwrap();
-        let _r2 = capture.capture(&conn, "Hello world test again", None).unwrap();
+        let _r2 = capture
+            .capture(&conn, "Hello world test again", None)
+            .unwrap();
         // The second one might be deduplicated
         assert!(!r1.observation_id.is_empty());
     }

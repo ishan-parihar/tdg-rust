@@ -55,29 +55,48 @@ static KNOWN_PATTERNS: LazyLock<Vec<(&'static str, &'static str)>> = LazyLock::n
 /// Tool/action-bound words.
 static TOOL_WORDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     vec![
-        "deploy", "build", "test", "compile", "lint", "format",
-        "commit", "push", "pull", "merge", "rebase", "branch",
-        "install", "upgrade", "migrate", "backup", "restore",
-        "docker", "kubernetes", "terraform", "ansible",
-        "pytest", "cargo", "npm", "pnpm", "yarn", "pip",
+        "deploy",
+        "build",
+        "test",
+        "compile",
+        "lint",
+        "format",
+        "commit",
+        "push",
+        "pull",
+        "merge",
+        "rebase",
+        "branch",
+        "install",
+        "upgrade",
+        "migrate",
+        "backup",
+        "restore",
+        "docker",
+        "kubernetes",
+        "terraform",
+        "ansible",
+        "pytest",
+        "cargo",
+        "npm",
+        "pnpm",
+        "yarn",
+        "pip",
     ]
 });
 
 /// Stop words to exclude from token matching.
 static STOP_WORDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     vec![
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "can", "shall", "to", "of", "in", "for",
-        "on", "with", "at", "by", "from", "as", "into", "through", "during",
-        "before", "after", "above", "below", "between", "out", "off", "over",
-        "under", "again", "further", "then", "once", "here", "there", "when",
-        "where", "why", "how", "all", "each", "every", "both", "few", "more",
-        "most", "other", "some", "such", "no", "nor", "not", "only", "own",
-        "same", "so", "than", "too", "very", "just", "don", "now",
-        "and", "but", "or", "if", "it", "its", "this", "that", "these",
-        "those", "i", "you", "he", "she", "we", "they", "me", "him",
-        "her", "us", "them", "my", "your", "his", "our", "their",
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "could", "should", "may", "might", "can", "shall",
+        "to", "of", "in", "for", "on", "with", "at", "by", "from", "as", "into", "through",
+        "during", "before", "after", "above", "below", "between", "out", "off", "over", "under",
+        "again", "further", "then", "once", "here", "there", "when", "where", "why", "how", "all",
+        "each", "every", "both", "few", "more", "most", "other", "some", "such", "no", "nor",
+        "not", "only", "own", "same", "so", "than", "too", "very", "just", "don", "now", "and",
+        "but", "or", "if", "it", "its", "this", "that", "these", "those", "i", "you", "he", "she",
+        "we", "they", "me", "him", "her", "us", "them", "my", "your", "his", "our", "their",
     ]
 });
 
@@ -106,8 +125,7 @@ impl EntityExtractor {
         for (pattern, etype) in KNOWN_PATTERNS.iter() {
             if text.to_lowercase().contains(pattern) {
                 let name = pattern.to_string();
-                if !seen.contains_key(&name) {
-                    seen.insert(name.clone(), true);
+                if seen.insert(name.clone(), true).is_none() {
                     entities.push(ExtractedEntity {
                         name: name.clone(),
                         entity_type: etype.to_string(),
@@ -156,8 +174,7 @@ impl EntityExtractor {
             if let Ok(graph_entities) = self.graph_token_match(text, db) {
                 for e in graph_entities {
                     let key = e.name.to_lowercase();
-                    if !seen.contains_key(&key) {
-                        seen.insert(key, true);
+                    if seen.insert(key, true).is_none() {
                         entities.push(e);
                     }
                 }
@@ -167,11 +184,7 @@ impl EntityExtractor {
         entities
     }
 
-    fn graph_token_match(
-        &self,
-        text: &str,
-        conn: &Connection,
-    ) -> TdgResult<Vec<ExtractedEntity>> {
+    fn graph_token_match(&self, text: &str, conn: &Connection) -> TdgResult<Vec<ExtractedEntity>> {
         // Load entity nodes from graph
         let mut stmt = conn.prepare(
             "SELECT id, name, node_type FROM nodes WHERE valid_to IS NULL AND node_type IN ('people', 'skill', 'artifact', 'being')",
@@ -238,6 +251,12 @@ impl EntityExtractor {
         }
 
         Ok(results)
+    }
+}
+
+impl Default for EntityExtractor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

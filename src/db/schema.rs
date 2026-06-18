@@ -346,7 +346,11 @@ mod tests {
         .unwrap();
 
         let event_count: i32 = conn
-            .query_row("SELECT COUNT(*) FROM events WHERE node_id='n_test001'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE node_id='n_test001'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(event_count, 1);
     }

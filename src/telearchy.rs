@@ -2,12 +2,12 @@
 //!
 //! Ported from Python `telearchy/tdg_telearchy_engine.py`.
 
-use std::collections::HashMap;
-use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
 use crate::db::crud;
 use crate::error::TdgResult;
-use crate::schema::{Stage, TelosLevel, MAX_PARENT_CHILD_STAGE_DELTA, BYPASS_RISK_THRESHOLD};
+use crate::schema::{Stage, TelosLevel, BYPASS_RISK_THRESHOLD, MAX_PARENT_CHILD_STAGE_DELTA};
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StageEvidence {
@@ -105,7 +105,14 @@ impl<'a> EvidenceCollector<'a> {
             }
         }
 
-        let children = crud::get_edges(self.conn, Some(node_id), None, Some("DECOMPOSES_TO"), None, 1000)?;
+        let children = crud::get_edges(
+            self.conn,
+            Some(node_id),
+            None,
+            Some("DECOMPOSES_TO"),
+            None,
+            1000,
+        )?;
         ev.total_children = children.len();
         for c in &children {
             if let Ok(Some(child_node)) = crud::get_node(self.conn, &c.target_id) {
@@ -141,10 +148,19 @@ impl<'a> TelearchyEngine<'a> {
             .ok_or_else(|| crate::error::TdgError::NotFound(root_id.to_string()))?;
         let collector = EvidenceCollector::new(self.conn);
 
-        let children = crud::get_edges(self.conn, Some(root_id), None, Some("DECOMPOSES_TO"), None, 1000)?;
+        let children = crud::get_edges(
+            self.conn,
+            Some(root_id),
+            None,
+            Some("DECOMPOSES_TO"),
+            None,
+            1000,
+        )?;
         for c in &children {
             if let Ok(Some(child)) = crud::get_node(self.conn, &c.target_id) {
-                if let (Some(root_stage), Some(child_stage)) = (root.developmental_stage, child.developmental_stage) {
+                if let (Some(root_stage), Some(child_stage)) =
+                    (root.developmental_stage, child.developmental_stage)
+                {
                     let delta = (root_stage as i8 - child_stage as i8).unsigned_abs();
                     if delta > MAX_PARENT_CHILD_STAGE_DELTA {
                         issues.push(format!(
@@ -154,7 +170,9 @@ impl<'a> TelearchyEngine<'a> {
                     }
                 }
 
-                if let (Some(root_tl), Some(child_tl)) = (&root.teleological_level, &child.teleological_level) {
+                if let (Some(root_tl), Some(child_tl)) =
+                    (&root.teleological_level, &child.teleological_level)
+                {
                     if root_tl != "T4" && child_tl == "T0" {
                         issues.push(format!(
                             "T0 node {} has non-T4 parent {} ({})",
@@ -216,7 +234,10 @@ impl<'a> TelearchyEngine<'a> {
             }
 
             let mut updates = HashMap::new();
-            updates.insert("developmental_stage".to_string(), serde_json::json!(next_stage.as_u8() as i32));
+            updates.insert(
+                "developmental_stage".to_string(),
+                serde_json::json!(next_stage.as_u8() as i32),
+            );
             crud::update_node(self.conn, node_id, &updates)?;
 
             return Ok(Some(next_stage));
@@ -229,8 +250,9 @@ impl<'a> TelearchyEngine<'a> {
         let node = crud::get_node(self.conn, node_id)?
             .ok_or_else(|| crate::error::TdgError::NotFound(node_id.to_string()))?;
         let current_tl = node.teleological_level.as_deref().unwrap_or("T4");
-        let tl: TelosLevel = current_tl.parse()
-            .map_err(|e: String| crate::error::TdgError::Custom(format!("Invalid telos level: {}", e)))?;
+        let tl: TelosLevel = current_tl.parse().map_err(|e: String| {
+            crate::error::TdgError::Custom(format!("Invalid telos level: {}", e))
+        })?;
 
         let promos = crate::schema::tlevel_promotion_stage();
         if let Some(&required_stage) = promos.get(&tl) {
@@ -247,7 +269,10 @@ impl<'a> TelearchyEngine<'a> {
     pub fn promote_tlevel(&self, node_id: &str) -> TdgResult<Option<TelosLevel>> {
         if let Some(next_tl) = self.check_tlevel_promotion(node_id)? {
             let mut updates = HashMap::new();
-            updates.insert("teleological_level".to_string(), serde_json::json!(next_tl.to_string()));
+            updates.insert(
+                "teleological_level".to_string(),
+                serde_json::json!(next_tl.to_string()),
+            );
             crud::update_node(self.conn, node_id, &updates)?;
             return Ok(Some(next_tl));
         }
@@ -260,23 +285,42 @@ impl<'a> TelearchyEngine<'a> {
         let ev = self.compute_stage_evidence(root_id)?;
         let issues = self.validate_hierarchy(root_id)?;
 
-        let children = crud::get_edges(self.conn, Some(root_id), None, Some("DECOMPOSES_TO"), None, 1000)?;
-        let child_reports: Vec<ChildReport> = children.iter().filter_map(|c| {
-            crud::get_node(self.conn, &c.target_id).ok().flatten().map(|child| ChildReport {
-                id: child.id.clone(),
-                name: child.name.clone(),
-                node_type: child.node_type.clone(),
-                stage: child.developmental_stage.unwrap_or(1) as u8,
-                tlevel: child.teleological_level.clone().unwrap_or_else(|| "T4".to_string()),
-                lifecycle_state: child.lifecycle_state.clone(),
+        let children = crud::get_edges(
+            self.conn,
+            Some(root_id),
+            None,
+            Some("DECOMPOSES_TO"),
+            None,
+            1000,
+        )?;
+        let child_reports: Vec<ChildReport> = children
+            .iter()
+            .filter_map(|c| {
+                crud::get_node(self.conn, &c.target_id)
+                    .ok()
+                    .flatten()
+                    .map(|child| ChildReport {
+                        id: child.id.clone(),
+                        name: child.name.clone(),
+                        node_type: child.node_type.clone(),
+                        stage: child.developmental_stage.unwrap_or(1) as u8,
+                        tlevel: child
+                            .teleological_level
+                            .clone()
+                            .unwrap_or_else(|| "T4".to_string()),
+                        lifecycle_state: child.lifecycle_state.clone(),
+                    })
             })
-        }).collect();
+            .collect();
 
         Ok(TelearchyReport {
             root_id: root.id.clone(),
             root_name: root.name.clone(),
             root_stage: root.developmental_stage.unwrap_or(1) as u8,
-            root_tlevel: root.teleological_level.clone().unwrap_or_else(|| "T4".to_string()),
+            root_tlevel: root
+                .teleological_level
+                .clone()
+                .unwrap_or_else(|| "T4".to_string()),
             stage_evidence: ev,
             children: child_reports,
             issues,
@@ -354,21 +398,25 @@ mod tests {
     fn test_validate_empty_hierarchy() {
         let conn = setup_db();
         let engine = TelearchyEngine::new(&conn);
-        let node = crud::add_node(&conn, &crate::models::NewNode {
-            node_type: "telos".to_string(),
-            name: "Test".to_string(),
-            description: None,
-            properties: None,
-            quadrants: None,
-            drives: None,
-            lifecycle_state: None,
-            teleological_level: None,
-            developmental_stage: None,
-            confidence: None,
-            source: None,
-            parent_ids: None,
-            agent_id: None,
-        }).unwrap();
+        let node = crud::add_node(
+            &conn,
+            &crate::models::NewNode {
+                node_type: "telos".to_string(),
+                name: "Test".to_string(),
+                description: None,
+                properties: None,
+                quadrants: None,
+                drives: None,
+                lifecycle_state: None,
+                teleological_level: None,
+                developmental_stage: None,
+                confidence: None,
+                source: None,
+                parent_ids: None,
+                agent_id: None,
+            },
+        )
+        .unwrap();
         let issues = engine.validate_hierarchy(&node.id).unwrap();
         assert!(issues.is_empty());
     }

@@ -12,7 +12,7 @@ use std::f64;
 use std::sync::LazyLock;
 
 use rusqlite::{params, Connection};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::db::crud::{get_edges, get_node, now_iso, record_event};
 use crate::error::TdgResult;
@@ -187,8 +187,14 @@ impl FlowDriveState {
     pub fn from_json(v: &serde_json::Value) -> Self {
         let extract = |drive_name: &str| -> DualPoleDrive {
             let d = &v[drive_name];
-            let pos = d.get("positive_pole").and_then(|v| v.as_f64()).unwrap_or(5.0);
-            let neg = d.get("negative_pole").and_then(|v| v.as_f64()).unwrap_or(2.0);
+            let pos = d
+                .get("positive_pole")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(5.0);
+            let neg = d
+                .get("negative_pole")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(2.0);
             DualPoleDrive::new(pos, neg)
         };
         Self {
@@ -223,27 +229,195 @@ struct IntrinsicSig {
 /// Returns intrinsic drive signatures for each node type.
 fn intrinsic_signatures() -> HashMap<&'static str, IntrinsicSig> {
     let mut m = HashMap::new();
-    m.insert("telos",       IntrinsicSig { eros: (6.0, 2.0), agape: (5.0, 2.0), agency: (6.0, 2.0), communion: (5.0, 2.0) });
-    m.insert("action",      IntrinsicSig { eros: (7.0, 2.0), agape: (4.0, 1.0), agency: (7.0, 2.0), communion: (4.0, 1.0) });
-    m.insert("capability",  IntrinsicSig { eros: (5.0, 1.0), agape: (5.0, 1.0), agency: (6.0, 2.0), communion: (5.0, 2.0) });
-    m.insert("question",    IntrinsicSig { eros: (9.0, 2.0), agape: (2.0, 1.0), agency: (3.0, 1.0), communion: (4.0, 2.0) });
-    m.insert("observation", IntrinsicSig { eros: (4.0, 1.0), agape: (3.0, 1.0), agency: (3.0, 1.0), communion: (4.0, 1.0) });
-    m.insert("hypothesis",  IntrinsicSig { eros: (6.0, 2.0), agape: (3.0, 1.0), agency: (5.0, 2.0), communion: (4.0, 2.0) });
-    m.insert("constraint",  IntrinsicSig { eros: (3.0, 1.0), agape: (5.0, 2.0), agency: (4.0, 1.0), communion: (5.0, 2.0) });
-    m.insert("discovery",   IntrinsicSig { eros: (8.0, 2.0), agape: (3.0, 1.0), agency: (5.0, 2.0), communion: (3.0, 1.0) });
-    m.insert("project",     IntrinsicSig { eros: (5.0, 2.0), agape: (4.0, 1.0), agency: (6.0, 2.0), communion: (5.0, 2.0) });
-    m.insert("trajectory",  IntrinsicSig { eros: (5.0, 1.0), agape: (4.0, 1.0), agency: (5.0, 1.0), communion: (5.0, 1.0) });
-    m.insert("synthesis",   IntrinsicSig { eros: (6.0, 2.0), agape: (6.0, 2.0), agency: (5.0, 2.0), communion: (6.0, 2.0) });
-    m.insert("skill",       IntrinsicSig { eros: (5.0, 1.0), agape: (4.0, 1.0), agency: (6.0, 1.0), communion: (4.0, 1.0) });
-    m.insert("people",      IntrinsicSig { eros: (4.0, 1.0), agape: (6.0, 2.0), agency: (3.0, 1.0), communion: (7.0, 2.0) });
-    m.insert("artifact",    IntrinsicSig { eros: (3.0, 1.0), agape: (3.0, 1.0), agency: (5.0, 2.0), communion: (3.0, 1.0) });
-    m.insert("being",       IntrinsicSig { eros: (5.0, 2.0), agape: (5.0, 2.0), agency: (5.0, 2.0), communion: (6.0, 2.0) });
-    m.insert("communication", IntrinsicSig { eros: (4.0, 1.0), agape: (6.0, 2.0), agency: (3.0, 1.0), communion: (7.0, 2.0) });
-    m.insert("event",       IntrinsicSig { eros: (4.0, 1.0), agape: (3.0, 1.0), agency: (4.0, 1.0), communion: (4.0, 1.0) });
-    m.insert("insight",     IntrinsicSig { eros: (8.0, 2.0), agape: (4.0, 1.0), agency: (5.0, 2.0), communion: (4.0, 2.0) });
-    m.insert("value",       IntrinsicSig { eros: (2.5, 1.0), agape: (3.0, 1.5), agency: (4.0, 1.0), communion: (3.5, 1.5) });
-    m.insert("bond",        IntrinsicSig { eros: (3.0, 1.5), agape: (5.0, 1.0), agency: (3.0, 1.0), communion: (6.0, 1.5) });
-    m.insert("narrative",   IntrinsicSig { eros: (6.0, 2.0), agape: (4.0, 1.5), agency: (5.0, 2.0), communion: (5.0, 1.5) });
+    m.insert(
+        "telos",
+        IntrinsicSig {
+            eros: (6.0, 2.0),
+            agape: (5.0, 2.0),
+            agency: (6.0, 2.0),
+            communion: (5.0, 2.0),
+        },
+    );
+    m.insert(
+        "action",
+        IntrinsicSig {
+            eros: (7.0, 2.0),
+            agape: (4.0, 1.0),
+            agency: (7.0, 2.0),
+            communion: (4.0, 1.0),
+        },
+    );
+    m.insert(
+        "capability",
+        IntrinsicSig {
+            eros: (5.0, 1.0),
+            agape: (5.0, 1.0),
+            agency: (6.0, 2.0),
+            communion: (5.0, 2.0),
+        },
+    );
+    m.insert(
+        "question",
+        IntrinsicSig {
+            eros: (9.0, 2.0),
+            agape: (2.0, 1.0),
+            agency: (3.0, 1.0),
+            communion: (4.0, 2.0),
+        },
+    );
+    m.insert(
+        "observation",
+        IntrinsicSig {
+            eros: (4.0, 1.0),
+            agape: (3.0, 1.0),
+            agency: (3.0, 1.0),
+            communion: (4.0, 1.0),
+        },
+    );
+    m.insert(
+        "hypothesis",
+        IntrinsicSig {
+            eros: (6.0, 2.0),
+            agape: (3.0, 1.0),
+            agency: (5.0, 2.0),
+            communion: (4.0, 2.0),
+        },
+    );
+    m.insert(
+        "constraint",
+        IntrinsicSig {
+            eros: (3.0, 1.0),
+            agape: (5.0, 2.0),
+            agency: (4.0, 1.0),
+            communion: (5.0, 2.0),
+        },
+    );
+    m.insert(
+        "discovery",
+        IntrinsicSig {
+            eros: (8.0, 2.0),
+            agape: (3.0, 1.0),
+            agency: (5.0, 2.0),
+            communion: (3.0, 1.0),
+        },
+    );
+    m.insert(
+        "project",
+        IntrinsicSig {
+            eros: (5.0, 2.0),
+            agape: (4.0, 1.0),
+            agency: (6.0, 2.0),
+            communion: (5.0, 2.0),
+        },
+    );
+    m.insert(
+        "trajectory",
+        IntrinsicSig {
+            eros: (5.0, 1.0),
+            agape: (4.0, 1.0),
+            agency: (5.0, 1.0),
+            communion: (5.0, 1.0),
+        },
+    );
+    m.insert(
+        "synthesis",
+        IntrinsicSig {
+            eros: (6.0, 2.0),
+            agape: (6.0, 2.0),
+            agency: (5.0, 2.0),
+            communion: (6.0, 2.0),
+        },
+    );
+    m.insert(
+        "skill",
+        IntrinsicSig {
+            eros: (5.0, 1.0),
+            agape: (4.0, 1.0),
+            agency: (6.0, 1.0),
+            communion: (4.0, 1.0),
+        },
+    );
+    m.insert(
+        "people",
+        IntrinsicSig {
+            eros: (4.0, 1.0),
+            agape: (6.0, 2.0),
+            agency: (3.0, 1.0),
+            communion: (7.0, 2.0),
+        },
+    );
+    m.insert(
+        "artifact",
+        IntrinsicSig {
+            eros: (3.0, 1.0),
+            agape: (3.0, 1.0),
+            agency: (5.0, 2.0),
+            communion: (3.0, 1.0),
+        },
+    );
+    m.insert(
+        "being",
+        IntrinsicSig {
+            eros: (5.0, 2.0),
+            agape: (5.0, 2.0),
+            agency: (5.0, 2.0),
+            communion: (6.0, 2.0),
+        },
+    );
+    m.insert(
+        "communication",
+        IntrinsicSig {
+            eros: (4.0, 1.0),
+            agape: (6.0, 2.0),
+            agency: (3.0, 1.0),
+            communion: (7.0, 2.0),
+        },
+    );
+    m.insert(
+        "event",
+        IntrinsicSig {
+            eros: (4.0, 1.0),
+            agape: (3.0, 1.0),
+            agency: (4.0, 1.0),
+            communion: (4.0, 1.0),
+        },
+    );
+    m.insert(
+        "insight",
+        IntrinsicSig {
+            eros: (8.0, 2.0),
+            agape: (4.0, 1.0),
+            agency: (5.0, 2.0),
+            communion: (4.0, 2.0),
+        },
+    );
+    m.insert(
+        "value",
+        IntrinsicSig {
+            eros: (2.5, 1.0),
+            agape: (3.0, 1.5),
+            agency: (4.0, 1.0),
+            communion: (3.5, 1.5),
+        },
+    );
+    m.insert(
+        "bond",
+        IntrinsicSig {
+            eros: (3.0, 1.5),
+            agape: (5.0, 1.0),
+            agency: (3.0, 1.0),
+            communion: (6.0, 1.5),
+        },
+    );
+    m.insert(
+        "narrative",
+        IntrinsicSig {
+            eros: (6.0, 2.0),
+            agape: (4.0, 1.5),
+            agency: (5.0, 2.0),
+            communion: (5.0, 1.5),
+        },
+    );
     m
 }
 
@@ -252,12 +426,12 @@ fn intrinsic_signatures() -> HashMap<&'static str, IntrinsicSig> {
 /// `quadrant` defaults to "LR" if not found.
 pub fn get_intrinsic_signature(node_type: &str, quadrant: &str) -> FlowDriveState {
     let sigs = intrinsic_signatures();
-    let base = sigs.get(node_type).unwrap_or_else(|| {
-        sigs.get("observation").unwrap()
-    });
-    let mods = QUADRANT_MODULATORS.get(quadrant).unwrap_or_else(|| {
-        QUADRANT_MODULATORS.get("LR").unwrap()
-    });
+    let base = sigs
+        .get(node_type)
+        .unwrap_or_else(|| sigs.get("observation").unwrap());
+    let mods = QUADRANT_MODULATORS
+        .get(quadrant)
+        .unwrap_or_else(|| QUADRANT_MODULATORS.get("LR").unwrap());
 
     let mod_eros = mods.get("eros").copied().unwrap_or(0.5);
     let mod_agape = mods.get("agape").copied().unwrap_or(0.5);
@@ -278,14 +452,17 @@ pub fn get_intrinsic_signature(node_type: &str, quadrant: &str) -> FlowDriveStat
             blind_spot: false,
         },
         agency: DualPoleDrive {
-            positive_pole: (base.agency.0 * mod_agency * 2.0).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
+            positive_pole: (base.agency.0 * mod_agency * 2.0)
+                .clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
             negative_pole: (base.agency.1 * mod_agency).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
             availability: (mod_agency * 2.0).min(1.0),
             blind_spot: false,
         },
         communion: DualPoleDrive {
-            positive_pole: (base.communion.0 * mod_communion * 2.0).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
-            negative_pole: (base.communion.1 * mod_communion).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
+            positive_pole: (base.communion.0 * mod_communion * 2.0)
+                .clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
+            negative_pole: (base.communion.1 * mod_communion)
+                .clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
             availability: (mod_communion * 2.0).min(1.0),
             blind_spot: false,
         },
@@ -317,8 +494,14 @@ fn contributes_to_polarity(edge_type: &str) -> bool {
 /// Edge types that are traversed downward from parent to child.
 fn downward_edge_types() -> Vec<&'static str> {
     vec![
-        "DECOMPOSES_TO", "ENABLES", "REALIZES", "SUPPORTS",
-        "DEPENDS_ON", "CONTEXT", "BLOCKS", "CONTRADICTS",
+        "DECOMPOSES_TO",
+        "ENABLES",
+        "REALIZES",
+        "SUPPORTS",
+        "DEPENDS_ON",
+        "CONTEXT",
+        "BLOCKS",
+        "CONTRADICTS",
     ]
 }
 
@@ -344,7 +527,10 @@ fn store_drive_state(conn: &Connection, node_id: &str, state: &FlowDriveState) -
 /// Falls back to intrinsic signature if not set.
 fn load_drive_state(_conn: &Connection, node: &Node) -> FlowDriveState {
     let drives_json = &node.drives;
-    if drives_json.as_object().map_or(false, |m| m.contains_key("eros")) {
+    if drives_json
+        .as_object()
+        .is_some_and(|m| m.contains_key("eros"))
+    {
         FlowDriveState::from_json(drives_json)
     } else {
         FlowDriveState::intrinsic(&node.node_type)
@@ -367,8 +553,8 @@ fn receive_stabilize(
                        contrib: &DualPoleDrive,
                        influence_weight: f64|
      -> DualPoleDrive {
-        let capped_pos = contrib.positive_pole.max(-5.0).min(5.0) * influence_weight.min(0.6);
-        let capped_neg = contrib.negative_pole.max(-5.0).min(5.0) * influence_weight.min(0.6);
+        let capped_pos = contrib.positive_pole.clamp(-5.0, 5.0) * influence_weight.min(0.6);
+        let capped_neg = contrib.negative_pole.clamp(-5.0, 5.0) * influence_weight.min(0.6);
 
         let new_pos = child.positive_pole * INTRINSIC_BLEND_RATIO
             + capped_pos * (1.0 - INTRINSIC_BLEND_RATIO);
@@ -392,9 +578,24 @@ fn receive_stabilize(
     let influence = contribution.eros.positive_pole.abs() / MAX_DRIVE_VALUE;
 
     FlowDriveState {
-        eros: clamp_drive(&child_state.eros, &intrinsic.eros, &contribution.eros, influence),
-        agape: clamp_drive(&child_state.agape, &intrinsic.agape, &contribution.agape, influence),
-        agency: clamp_drive(&child_state.agency, &intrinsic.agency, &contribution.agency, influence),
+        eros: clamp_drive(
+            &child_state.eros,
+            &intrinsic.eros,
+            &contribution.eros,
+            influence,
+        ),
+        agape: clamp_drive(
+            &child_state.agape,
+            &intrinsic.agape,
+            &contribution.agape,
+            influence,
+        ),
+        agency: clamp_drive(
+            &child_state.agency,
+            &intrinsic.agency,
+            &contribution.agency,
+            influence,
+        ),
         communion: clamp_drive(
             &child_state.communion,
             &intrinsic.communion,
@@ -407,7 +608,10 @@ fn receive_stabilize(
 /// Build a FlowDriveState representing the contribution from a parent to a child.
 fn build_contribution(parent_state: &FlowDriveState, flow_rate: f64) -> FlowDriveState {
     let scale = |d: &DualPoleDrive| -> DualPoleDrive {
-        DualPoleDrive::new(d.positive_pole * flow_rate, d.negative_pole * flow_rate.abs())
+        DualPoleDrive::new(
+            d.positive_pole * flow_rate,
+            d.negative_pole * flow_rate.abs(),
+        )
     };
     FlowDriveState {
         eros: scale(&parent_state.eros),
@@ -421,11 +625,7 @@ fn build_contribution(parent_state: &FlowDriveState, flow_rate: f64) -> FlowDriv
 ///
 /// Traverses the graph BFS, propagating signed drive contributions.
 /// Returns the number of nodes affected.
-pub fn emit_downward(
-    conn: &Connection,
-    parent_id: &str,
-    max_depth: i64,
-) -> TdgResult<i64> {
+pub fn emit_downward(conn: &Connection, parent_id: &str, max_depth: i64) -> TdgResult<i64> {
     let parent = get_node(conn, parent_id)?
         .ok_or_else(|| crate::error::TdgError::Custom(format!("Node {parent_id} not found")))?;
 
@@ -446,7 +646,8 @@ pub fn emit_downward(
         queue.push_back((child_id, 1, parent_id.to_string(), parent_state.clone()));
     }
 
-    while let Some((current_id, depth, immediate_parent_id, parent_drive_state)) = queue.pop_front() {
+    while let Some((current_id, depth, immediate_parent_id, parent_drive_state)) = queue.pop_front()
+    {
         if depth > max_depth {
             continue;
         }
@@ -457,11 +658,17 @@ pub fn emit_downward(
 
             let edge_type_str = get_edge_type_for_edge(conn, &immediate_parent_id, &current_id)?;
             if !contributes_to_polarity(&edge_type_str) {
-                let grandchildren = get_children_for_emission(conn, &current_id, &downward_types, &reversed_types)?;
+                let grandchildren =
+                    get_children_for_emission(conn, &current_id, &downward_types, &reversed_types)?;
                 for gc in grandchildren {
                     if !visited.contains(&gc) {
                         visited.insert(gc.clone());
-                        queue.push_back((gc, depth + 1, current_id.clone(), parent_drive_state.clone()));
+                        queue.push_back((
+                            gc,
+                            depth + 1,
+                            current_id.clone(),
+                            parent_drive_state.clone(),
+                        ));
                     }
                 }
                 continue;
@@ -490,7 +697,8 @@ pub fn emit_downward(
 
             affected += 1;
 
-            let grandchildren = get_children_for_emission(conn, &current_id, &downward_types, &reversed_types)?;
+            let grandchildren =
+                get_children_for_emission(conn, &current_id, &downward_types, &reversed_types)?;
             for gc in grandchildren {
                 if !visited.contains(&gc) {
                     visited.insert(gc.clone());
@@ -550,7 +758,11 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
     Ok(0.4) // default
 }
 
-fn get_edge_type_for_edge(conn: &Connection, source_id: &str, target_id: &str) -> TdgResult<String> {
+fn get_edge_type_for_edge(
+    conn: &Connection,
+    source_id: &str,
+    target_id: &str,
+) -> TdgResult<String> {
     let edges = get_edges(conn, Some(source_id), Some(target_id), None, None, 10)?;
     if let Some(e) = edges.first() {
         return Ok(e.edge_type.clone());
@@ -565,19 +777,14 @@ fn get_edge_type_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
 /// Phase 3: Aggregate child drive states upward to parent.
 ///
 /// Returns the number of parents updated.
-pub fn aggregate_upward(
-    conn: &Connection,
-    node_id: &str,
-) -> TdgResult<i64> {
+pub fn aggregate_upward(conn: &Connection, node_id: &str) -> TdgResult<i64> {
     // Find all parent edges (incoming to this node)
     let incoming = get_edges(conn, None, Some(node_id), None, None, 500)?;
     let mut parent_ids: Vec<String> = Vec::new();
 
     for e in &incoming {
-        if contributes_to_polarity(&e.edge_type) {
-            if !parent_ids.contains(&e.source_id) {
-                parent_ids.push(e.source_id.clone());
-            }
+        if contributes_to_polarity(&e.edge_type) && !parent_ids.contains(&e.source_id) {
+            parent_ids.push(e.source_id.clone());
         }
     }
 
@@ -683,9 +890,8 @@ pub fn renormalize_graph(conn: &Connection, force_intrinsic: bool) -> TdgResult<
 
     // Phase 1: Schema heal — ensure all nodes have drive_state
     {
-        let mut stmt = conn.prepare(
-            "SELECT id, node_type, drives_json FROM nodes WHERE valid_to IS NULL",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, node_type, drives_json FROM nodes WHERE valid_to IS NULL")?;
         let rows: Vec<(String, String, String)> = stmt
             .query_map([], |row| {
                 Ok((
@@ -729,8 +935,7 @@ pub fn renormalize_graph(conn: &Connection, force_intrinsic: bool) -> TdgResult<
     // Phase 3: Upward aggregation using topological order
     // We do a simple iterative approach: aggregate from leaves upward
     {
-        let mut stmt =
-            conn.prepare("SELECT id FROM nodes WHERE valid_to IS NULL")?;
+        let mut stmt = conn.prepare("SELECT id FROM nodes WHERE valid_to IS NULL")?;
         let all_ids: Vec<String> = stmt
             .query_map([], |row| row.get(0))?
             .filter_map(|r| r.ok())
@@ -758,14 +963,7 @@ pub fn renormalize_graph(conn: &Connection, force_intrinsic: bool) -> TdgResult<
     });
 
     // Record event
-    crate::db::crud::record_event(
-        conn,
-        "graph_renormalized",
-        None,
-        None,
-        None,
-        Some(&result),
-    )?;
+    crate::db::crud::record_event(conn, "graph_renormalized", None, None, None, Some(&result))?;
 
     Ok(result)
 }
@@ -778,9 +976,8 @@ pub fn diagnose_polarity(conn: &Connection) -> TdgResult<serde_json::Value> {
     let mut tension_pairs = Vec::new();
     let mut chakra_health: HashMap<String, serde_json::Value> = HashMap::new();
 
-    let mut stmt = conn.prepare(
-        "SELECT id, node_type, name, drives_json FROM nodes WHERE valid_to IS NULL",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id, node_type, name, drives_json FROM nodes WHERE valid_to IS NULL")?;
 
     let rows: Vec<(String, String, String, String)> = stmt
         .query_map([], |row| {
@@ -867,9 +1064,8 @@ pub fn compute_graph_entropy(conn: &Connection) -> TdgResult<serde_json::Value> 
     drive_values.insert("agency", Vec::new());
     drive_values.insert("communion", Vec::new());
 
-    let mut stmt = conn.prepare(
-        "SELECT drives_json FROM nodes WHERE valid_to IS NULL AND drives_json != '{}'",
-    )?;
+    let mut stmt = conn
+        .prepare("SELECT drives_json FROM nodes WHERE valid_to IS NULL AND drives_json != '{}'")?;
 
     let rows: Vec<String> = stmt
         .query_map([], |row| row.get(0))?
@@ -882,9 +1078,18 @@ pub fn compute_graph_entropy(conn: &Connection) -> TdgResult<serde_json::Value> 
         let state = FlowDriveState::from_json(&drives);
 
         drive_values.get_mut("eros").unwrap().push(state.eros.net());
-        drive_values.get_mut("agape").unwrap().push(state.agape.net());
-        drive_values.get_mut("agency").unwrap().push(state.agency.net());
-        drive_values.get_mut("communion").unwrap().push(state.communion.net());
+        drive_values
+            .get_mut("agape")
+            .unwrap()
+            .push(state.agape.net());
+        drive_values
+            .get_mut("agency")
+            .unwrap()
+            .push(state.agency.net());
+        drive_values
+            .get_mut("communion")
+            .unwrap()
+            .push(state.communion.net());
     }
 
     let mut per_drive = serde_json::Map::new();
@@ -892,7 +1097,10 @@ pub fn compute_graph_entropy(conn: &Connection) -> TdgResult<serde_json::Value> 
 
     for (name, values) in &drive_values {
         if values.is_empty() {
-            per_drive.insert(name.to_string(), serde_json::json!({"entropy": 0.0, "count": 0}));
+            per_drive.insert(
+                name.to_string(),
+                serde_json::json!({"entropy": 0.0, "count": 0}),
+            );
             continue;
         }
 
@@ -1051,7 +1259,7 @@ mod tests {
         // Child should now have a drive state in drives_json
         let child_node = get_node(&conn, &child.id).unwrap().unwrap();
         let drives = &child_node.drives;
-        assert!(drives.as_object().map_or(false, |m| m.contains_key("eros")));
+        assert!(drives.as_object().is_some_and(|m| m.contains_key("eros")));
     }
 
     #[test]
@@ -1144,7 +1352,10 @@ mod tests {
             assert!(mods.contains_key("eros"), "Missing eros in {quadrant}");
             assert!(mods.contains_key("agape"), "Missing agape in {quadrant}");
             assert!(mods.contains_key("agency"), "Missing agency in {quadrant}");
-            assert!(mods.contains_key("communion"), "Missing communion in {quadrant}");
+            assert!(
+                mods.contains_key("communion"),
+                "Missing communion in {quadrant}"
+            );
         }
     }
 
@@ -1166,13 +1377,22 @@ mod tests {
     fn missing_intrinsic_signatures_added() {
         // These 3 were added in Phase 14
         let value = FlowDriveState::intrinsic("value");
-        assert!(value.eros.positive_pole > 0.0, "value eros should be positive");
+        assert!(
+            value.eros.positive_pole > 0.0,
+            "value eros should be positive"
+        );
 
         let bond = FlowDriveState::intrinsic("bond");
-        assert!(bond.agape.positive_pole > 0.0, "bond agape should be positive");
+        assert!(
+            bond.agape.positive_pole > 0.0,
+            "bond agape should be positive"
+        );
 
         let narrative = FlowDriveState::intrinsic("narrative");
-        assert!(narrative.eros.positive_pole > 0.0, "narrative eros should be positive");
+        assert!(
+            narrative.eros.positive_pole > 0.0,
+            "narrative eros should be positive"
+        );
     }
 
     #[test]
@@ -1180,9 +1400,13 @@ mod tests {
         let conn = setup_db();
         let _telos = add_test_node(&conn, "Lean Telos", "telos");
 
-        unsafe { LEAN_MODE = true; }
+        unsafe {
+            LEAN_MODE = true;
+        }
         let result = renormalize_graph(&conn, false).unwrap();
-        unsafe { LEAN_MODE = false; }
+        unsafe {
+            LEAN_MODE = false;
+        }
 
         assert_eq!(result.get("skipped"), Some(&serde_json::json!(true)));
         assert_eq!(result.get("reason"), Some(&serde_json::json!("lean_mode")));
@@ -1208,13 +1432,17 @@ mod tests {
         emit_downward(&conn, &parent.id, 5).unwrap();
 
         // Check that drive_recomputed events were recorded
-        let _events = crate::db::crud::get_edges(&conn, Some(&parent.id), None, None, None, 100).unwrap();
+        let _events =
+            crate::db::crud::get_edges(&conn, Some(&parent.id), None, None, None, 100).unwrap();
         // Events go to the events table, not edges — check via SQL
-        let mut stmt = conn.prepare(
-            "SELECT COUNT(*) FROM events WHERE event_action = 'drive_recomputed'"
-        ).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT COUNT(*) FROM events WHERE event_action = 'drive_recomputed'")
+            .unwrap();
         let count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
-        assert!(count >= 1, "Expected at least 1 drive_recomputed event, got {count}");
+        assert!(
+            count >= 1,
+            "Expected at least 1 drive_recomputed event, got {count}"
+        );
     }
 
     #[test]
@@ -1237,7 +1465,10 @@ mod tests {
         let (blocks_rate, _) = edge_flow_rate("BLOCKS");
         let (contradicts_rate, _) = edge_flow_rate("CONTRADICTS");
         assert!(blocks_rate < 0.0, "BLOCKS rate should be negative");
-        assert!(contradicts_rate < 0.0, "CONTRADICTS rate should be negative");
+        assert!(
+            contradicts_rate < 0.0,
+            "CONTRADICTS rate should be negative"
+        );
         // CONTRADICTS should be 1.5x stronger than BLOCKS
         assert!(contradicts_rate.abs() > blocks_rate.abs());
     }

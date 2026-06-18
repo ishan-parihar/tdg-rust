@@ -21,11 +21,7 @@ pub fn compute_trust(confidence: f64, helpful_count: i32, retrieval_count: i32) 
 }
 
 /// Rate a node with helpful/unhelpful feedback. Updates helpful_count and recomputes trust.
-pub fn rate_node(
-    conn: &Connection,
-    node_id: &str,
-    helpful: bool,
-) -> TdgResult<Option<Node>> {
+pub fn rate_node(conn: &Connection, node_id: &str, helpful: bool) -> TdgResult<Option<Node>> {
     let delta = if helpful { 1 } else { 0 };
     let now = crate::db::crud::now_iso();
 
@@ -134,14 +130,16 @@ pub fn list_by_trust(
 /// Aggregate statistics for the database.
 pub fn stats(conn: &Connection) -> TdgResult<serde_json::Value> {
     let total_nodes: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0)
+        "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL",
+        [],
+        |r| r.get(0),
     )?;
     let total_edges: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM edges WHERE valid_to IS NULL", [], |r| r.get(0)
+        "SELECT COUNT(*) FROM edges WHERE valid_to IS NULL",
+        [],
+        |r| r.get(0),
     )?;
-    let total_events: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM events", [], |r| r.get(0)
-    )?;
+    let total_events: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))?;
 
     // Count by type
     let mut stmt = conn.prepare(
@@ -171,7 +169,7 @@ pub fn stats(conn: &Connection) -> TdgResult<serde_json::Value> {
 
     // Edge type counts
     let mut stmt = conn.prepare(
-        "SELECT edge_type, COUNT(*) FROM edges WHERE valid_to IS NULL GROUP BY edge_type"
+        "SELECT edge_type, COUNT(*) FROM edges WHERE valid_to IS NULL GROUP BY edge_type",
     )?;
     let edge_types: serde_json::Map<String, serde_json::Value> = stmt
         .query_map([], |row| {
@@ -208,7 +206,14 @@ mod tests {
 
     #[test]
     fn trust_score_computation() {
-        assert!((compute_trust(1.0, 10, 5) - (0.6 * 1.0 + 0.25 * (10.0 / 11.0) + 0.15 * (5.0_f64.ln() / (1.0 + 5.0_f64.ln())))).abs() < 1e-10);
+        assert!(
+            (compute_trust(1.0, 10, 5)
+                - (0.6 * 1.0
+                    + 0.25 * (10.0 / 11.0)
+                    + 0.15 * (5.0_f64.ln() / (1.0 + 5.0_f64.ln()))))
+            .abs()
+                < 1e-10
+        );
         assert!((compute_trust(1.0, 0, 0) - 0.6).abs() < 1e-10);
         assert!((compute_trust(0.0, 0, 0) - 0.0).abs() < 1e-10);
     }

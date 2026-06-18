@@ -172,16 +172,19 @@ impl NodeGrammar {
         })?;
 
         // Build title from template
-        let title = blueprint.title_template.replace("{description}", description);
+        let title = blueprint
+            .title_template
+            .replace("{description}", description);
 
         let new_node = NewNode {
             node_type: blueprint.node_type.clone(),
             name: title,
             description: Some(description.to_string()),
             properties: None,
-            quadrants: blueprint.quadrant.as_ref().map(|q| {
-                serde_json::json!({"primary": q})
-            }),
+            quadrants: blueprint
+                .quadrant
+                .as_ref()
+                .map(|q| serde_json::json!({"primary": q})),
             drives: None,
             lifecycle_state: None,
             teleological_level: Some(blueprint.t_level.clone()),
@@ -216,7 +219,7 @@ impl NodeGrammar {
                  FROM nodes
                  WHERE teleological_level = 'T4'
                    AND node_type = 'observation'
-                   AND lifecycle_state = 'active'"
+                   AND lifecycle_state = 'active'",
             )?;
 
             let rows = stmt.query_map([], |row| {
@@ -225,15 +228,19 @@ impl NodeGrammar {
                     node_type: row.get(1)?,
                     name: row.get(2)?,
                     description: row.get(3)?,
-                    properties: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or(serde_json::json!({})),
-                    quadrants: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or(serde_json::json!({})),
-                    drives: serde_json::from_str(&row.get::<_, String>(6)?).unwrap_or(serde_json::json!({})),
+                    properties: serde_json::from_str(&row.get::<_, String>(4)?)
+                        .unwrap_or(serde_json::json!({})),
+                    quadrants: serde_json::from_str(&row.get::<_, String>(5)?)
+                        .unwrap_or(serde_json::json!({})),
+                    drives: serde_json::from_str(&row.get::<_, String>(6)?)
+                        .unwrap_or(serde_json::json!({})),
                     lifecycle_state: row.get(7)?,
                     teleological_level: row.get(8)?,
                     developmental_stage: row.get(9)?,
                     confidence: row.get(10)?,
                     source: row.get(11)?,
-                    parent_ids: serde_json::from_str(&row.get::<_, String>(12)?).unwrap_or_default(),
+                    parent_ids: serde_json::from_str(&row.get::<_, String>(12)?)
+                        .unwrap_or_default(),
                     agent_path: row.get(13)?,
                     created_at: row.get(14)?,
                     updated_at: row.get(15)?,
@@ -293,8 +300,8 @@ impl NodeGrammar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
     use crate::db::init_schema;
+    use rusqlite::Connection;
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -361,9 +368,18 @@ mod tests {
     #[test]
     fn test_catalyst_type_parsing() {
         use std::str::FromStr;
-        assert_eq!(CatalystType::from_str("external_success").ok(), Some(CatalystType::ExternalSuccess));
-        assert_eq!("EXTERNAL_SUCCESS".parse::<CatalystType>().ok(), Some(CatalystType::ExternalSuccess));
-        assert_eq!("skill_mastered".parse::<CatalystType>().ok(), Some(CatalystType::SkillMastered));
+        assert_eq!(
+            CatalystType::from_str("external_success").ok(),
+            Some(CatalystType::ExternalSuccess)
+        );
+        assert_eq!(
+            "EXTERNAL_SUCCESS".parse::<CatalystType>().ok(),
+            Some(CatalystType::ExternalSuccess)
+        );
+        assert_eq!(
+            "skill_mastered".parse::<CatalystType>().ok(),
+            Some(CatalystType::SkillMastered)
+        );
         assert!("unknown".parse::<CatalystType>().is_err());
     }
 

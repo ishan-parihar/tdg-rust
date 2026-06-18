@@ -43,10 +43,10 @@ impl Default for RetrievalWeights {
 
 /// Stop words for filtering.
 static STOP_WORDS: &[&str] = &[
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "have", "has",
-    "had", "do", "does", "did", "will", "would", "could", "should", "may",
-    "might", "can", "to", "of", "in", "for", "on", "with", "at", "by", "from",
-    "as", "into", "and", "but", "or", "if", "it", "its", "this", "that",
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "have", "has", "had", "do", "does",
+    "did", "will", "would", "could", "should", "may", "might", "can", "to", "of", "in", "for",
+    "on", "with", "at", "by", "from", "as", "into", "and", "but", "or", "if", "it", "its", "this",
+    "that",
 ];
 
 /// High-value node types for boosting.
@@ -176,12 +176,7 @@ impl HybridRetriever {
         };
 
         let rows = stmt.query_map(params![query, limit], crate::db::crud::row_to_node)?;
-        let mut nodes = Vec::new();
-        for row in rows {
-            if let Ok(node) = row {
-                nodes.push(node);
-            }
-        }
+        let nodes: Vec<Node> = rows.flatten().collect();
         Ok(nodes)
     }
 
@@ -220,14 +215,10 @@ impl HybridRetriever {
         );
 
         let mut stmt = conn.prepare(&sql)?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            all_params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(&*param_refs, crate::db::crud::row_to_node)?;
-        let mut nodes = Vec::new();
-        for row in rows {
-            if let Ok(node) = row {
-                nodes.push(node);
-            }
-        }
+        let nodes: Vec<Node> = rows.flatten().collect();
         Ok(nodes)
     }
 
@@ -267,12 +258,7 @@ impl HybridRetriever {
             stmt.query_map(params![limit], crate::db::crud::row_to_node)?
         };
 
-        let mut nodes = Vec::new();
-        for row in rows {
-            if let Ok(node) = row {
-                nodes.push(node);
-            }
-        }
+        let nodes: Vec<Node> = rows.flatten().collect();
         Ok(nodes)
     }
 
@@ -303,6 +289,12 @@ impl HybridRetriever {
         } else {
             0.5 // default mid-score
         }
+    }
+}
+
+impl Default for HybridRetriever {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

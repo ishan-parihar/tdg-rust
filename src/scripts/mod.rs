@@ -2,10 +2,10 @@
 //!
 //! Port of `scripts/*.py` CLI tools.
 
-use rusqlite::Connection;
-use serde_json::{json, Value};
 use crate::error::TdgResult;
 use crate::models::NewNode;
+use rusqlite::Connection;
+use serde_json::{json, Value};
 
 /// Audit graph integration: orphan detection, health scores, archival.
 pub fn audit(conn: &Connection) -> TdgResult<Value> {
@@ -13,10 +13,12 @@ pub fn audit(conn: &Connection) -> TdgResult<Value> {
     let hygiene = crate::knowledge::generate_hygiene_report(conn)?;
     let stale = crate::knowledge::archive_stale_nodes(conn, None)?;
 
-    let orphan_count = orphans.get("disconnected")
+    let orphan_count = orphans
+        .get("disconnected")
         .and_then(|v| v.as_array())
         .map_or(0, |a| a.len());
-    let unlinked = orphans.get("unlinked_observations")
+    let unlinked = orphans
+        .get("unlinked_observations")
         .and_then(|v| v.as_array())
         .map_or(0, |a| a.len());
 
@@ -37,20 +39,29 @@ pub fn audit(conn: &Connection) -> TdgResult<Value> {
 
 /// Check constraint vitality: count constraints, BLOCKS edges, ghost nodes.
 pub fn check(conn: &Connection) -> TdgResult<Value> {
-    let constraints: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL AND node_type = 'constraint'",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
+    let constraints: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL AND node_type = 'constraint'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
-    let blocks_edges: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM edges WHERE valid_to IS NULL AND edge_type = 'BLOCKS'",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
+    let blocks_edges: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM edges WHERE valid_to IS NULL AND edge_type = 'BLOCKS'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
-    let active_nodes: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL AND lifecycle_state = 'active'",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
+    let active_nodes: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL AND lifecycle_state = 'active'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     // Ghost nodes: active nodes with no quadrant data
     let ghost_nodes: i64 = conn.query_row(
@@ -61,7 +72,10 @@ pub fn check(conn: &Connection) -> TdgResult<Value> {
     let warnings = if blocks_edges == 0 && active_nodes > 0 {
         vec!["No BLOCKS edges found — constraints may not be enforced".to_string()]
     } else if ghost_nodes > 0 {
-        vec![format!("{} ghost nodes detected (no quadrant data)", ghost_nodes)]
+        vec![format!(
+            "{} ghost nodes detected (no quadrant data)",
+            ghost_nodes
+        )]
     } else {
         vec![]
     };
@@ -90,14 +104,17 @@ pub fn auto_capture(
         "source": "auto_capture",
     });
 
-    let node = crate::db::crud::add_node(conn, &NewNode {
-        node_type: "observation".to_string(),
-        name: format!("Obs: {}", &description[..description.len().min(80)]),
-        description: Some(description.to_string()),
-        source: Some("auto_capture".to_string()),
-        properties: Some(props),
-        ..Default::default()
-    })?;
+    let node = crate::db::crud::add_node(
+        conn,
+        &NewNode {
+            node_type: "observation".to_string(),
+            name: format!("Obs: {}", &description[..description.len().min(80)]),
+            description: Some(description.to_string()),
+            source: Some("auto_capture".to_string()),
+            properties: Some(props),
+            ..Default::default()
+        },
+    )?;
 
     // Record the event
     crate::db::crud::record_event(
@@ -128,13 +145,16 @@ pub fn create_node(
     name: &str,
     description: Option<&str>,
 ) -> TdgResult<Value> {
-    let node = crate::db::crud::add_node(conn, &NewNode {
-        node_type: node_type.to_string(),
-        name: name.to_string(),
-        description: description.map(|s| s.to_string()),
-        source: Some("cli".to_string()),
-        ..Default::default()
-    })?;
+    let node = crate::db::crud::add_node(
+        conn,
+        &NewNode {
+            node_type: node_type.to_string(),
+            name: name.to_string(),
+            description: description.map(|s| s.to_string()),
+            source: Some("cli".to_string()),
+            ..Default::default()
+        },
+    )?;
 
     Ok(json!({
         "id": node.id,
@@ -160,34 +180,42 @@ pub fn maintenance_check(conn: &Connection) -> TdgResult<Value> {
 
 /// Unify persistence: reconcile events table with node/edge state.
 pub fn unify(conn: &Connection) -> TdgResult<Value> {
-    let total_events: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM events", [], |r| r.get(0),
-    ).unwrap_or(0);
+    let total_events: i64 = conn
+        .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
+        .unwrap_or(0);
 
-    let orphan_events: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM events e
+    let orphan_events: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM events e
          LEFT JOIN nodes n ON e.node_id = n.id
          WHERE e.node_id IS NOT NULL AND n.id IS NULL",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
-    let duplicate_edges: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM (
+    let duplicate_edges: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM (
             SELECT source_id, target_id, edge_type, COUNT(*) as cnt
             FROM edges WHERE valid_to IS NULL
             GROUP BY source_id, target_id, edge_type
             HAVING cnt > 1
          )",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     // Fix lifecycle_state inconsistencies
-    let fixed_lifecycle: i64 = conn.execute(
-        "UPDATE nodes SET lifecycle_state = 'active'
+    let fixed_lifecycle: i64 = conn
+        .execute(
+            "UPDATE nodes SET lifecycle_state = 'active'
          WHERE valid_to IS NULL AND lifecycle_state NOT IN
          ('active', 'archived', 'discarded', 'draft', 'completed')",
-        [],
-    ).unwrap_or(0) as i64;
+            [],
+        )
+        .unwrap_or(0) as i64;
 
     Ok(json!({
         "total_events": total_events,
@@ -237,12 +265,15 @@ pub fn reconcile_constraints(conn: &Connection) -> TdgResult<Value> {
     }
 
     // Repair BLOCKS edges with dangling targets
-    let dangling_blocks: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM edges e
+    let dangling_blocks: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM edges e
          LEFT JOIN nodes n ON e.target_id = n.id
          WHERE e.edge_type = 'BLOCKS' AND e.valid_to IS NULL AND n.id IS NULL",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     if dangling_blocks > 0 {
         let now = crate::db::crud::now_iso();
@@ -290,33 +321,58 @@ pub fn sync_skills(conn: &Connection, dir: &str) -> TdgResult<Value> {
                             serde_json::from_str::<Value>(&content)
                         } else {
                             // Simple YAML-like parsing: extract name and description
-                            let name = content.lines()
+                            let name = content
+                                .lines()
                                 .find(|l| l.starts_with("name:") || l.starts_with("title:"))
-                                .map(|l| l.splitn(2, ':').nth(1).unwrap_or("").trim().trim_matches('"').trim_matches('\'').to_string());
-                            let description = content.lines()
+                                .map(|l| {
+                                    l.split_once(':')
+                                        .map(|(_, v)| v.trim().trim_matches('"').trim_matches('\'').to_string())
+                                        .unwrap_or_default()
+                                });
+                            let description = content
+                                .lines()
                                 .find(|l| l.starts_with("description:") || l.starts_with("desc:"))
-                                .map(|l| l.splitn(2, ':').nth(1).unwrap_or("").trim().trim_matches('"').trim_matches('\'').to_string());
+                                .map(|l| {
+                                    l.split_once(':')
+                                        .map(|(_, v)| v.trim().trim_matches('"').trim_matches('\'').to_string())
+                                        .unwrap_or_default()
+                                });
 
                             match name {
-                                Some(n) => Ok(json!({"name": n, "description": description.unwrap_or_default(), "source_file": path.display().to_string()})),
+                                Some(n) => Ok(
+                                    json!({"name": n, "description": description.unwrap_or_default(), "source_file": path.display().to_string()}),
+                                ),
                                 None => Err(serde_json::Error::io(std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData, "No name field found",
+                                    std::io::ErrorKind::InvalidData,
+                                    "No name field found",
                                 ))),
                             }
                         };
 
                         match parsed {
                             Ok(skill) => {
-                                let skill_name = skill.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                let skill_desc = skill.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                                let source_file = skill.get("source_file").and_then(|v| v.as_str()).unwrap_or("");
+                                let skill_name = skill
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown");
+                                let skill_desc = skill
+                                    .get("description")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let source_file = skill
+                                    .get("source_file")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
 
                                 // Check if skill node already exists
-                                let existing: Option<String> = conn.query_row(
-                                    "SELECT id FROM nodes WHERE valid_to IS NULL
+                                let existing: Option<String> = conn
+                                    .query_row(
+                                        "SELECT id FROM nodes WHERE valid_to IS NULL
                                      AND node_type = 'skill' AND name = ?1",
-                                    rusqlite::params![skill_name], |r| r.get(0),
-                                ).ok();
+                                        rusqlite::params![skill_name],
+                                        |r| r.get(0),
+                                    )
+                                    .ok();
 
                                 if let Some(_existing_id) = existing {
                                     skipped += 1;
@@ -359,7 +415,8 @@ pub fn sync_skills(conn: &Connection, dir: &str) -> TdgResult<Value> {
 /// Repair orphan nodes: attempt to link to structural nodes or archive critical ones.
 pub fn repair_orphans(conn: &Connection) -> TdgResult<Value> {
     let orphans = crate::knowledge::detect_orphans(conn)?;
-    let disconnected = orphans.get("disconnected")
+    let disconnected = orphans
+        .get("disconnected")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
@@ -367,7 +424,10 @@ pub fn repair_orphans(conn: &Connection) -> TdgResult<Value> {
     let mut archived = 0;
 
     for orphan in &disconnected {
-        let severity = orphan.get("severity").and_then(|v| v.as_str()).unwrap_or("");
+        let severity = orphan
+            .get("severity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let node_id = orphan.get("node_id").and_then(|v| v.as_str()).unwrap_or("");
         let age_days = orphan.get("age_days").and_then(|v| v.as_i64()).unwrap_or(0);
 
@@ -425,9 +485,15 @@ mod tests {
     #[test]
     fn check_with_constraints() {
         let conn = setup_db();
-        crate::db::crud::add_node(&conn, &NewNode {
-            node_type: "constraint".to_string(), name: "C1".to_string(), ..Default::default()
-        }).unwrap();
+        crate::db::crud::add_node(
+            &conn,
+            &NewNode {
+                node_type: "constraint".to_string(),
+                name: "C1".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let result = check(&conn).unwrap();
         assert_eq!(result["constraints"], 1);
     }

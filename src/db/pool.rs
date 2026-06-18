@@ -46,10 +46,7 @@ impl ConnectionPool {
         // 8MB cache
         conn.execute_batch("PRAGMA cache_size=-8000;")?;
         // Busy timeout
-        conn.execute_batch(&format!(
-            "PRAGMA busy_timeout={};",
-            self.busy_timeout
-        ))?;
+        conn.execute_batch(&format!("PRAGMA busy_timeout={};", self.busy_timeout))?;
 
         Ok(conn)
     }
@@ -57,9 +54,10 @@ impl ConnectionPool {
     /// Get a connection from the pool, creating one if needed.
     /// Blocks if pool is full until a connection is returned.
     pub fn get_connection(&self) -> TdgResult<Connection> {
-        let mut conns = self.connections.lock().map_err(|e| {
-            TdgError::Custom(format!("Pool lock poisoned: {e}"))
-        })?;
+        let mut conns = self
+            .connections
+            .lock()
+            .map_err(|e| TdgError::Custom(format!("Pool lock poisoned: {e}")))?;
 
         loop {
             if let Some(conn) = conns.pop() {
@@ -78,9 +76,10 @@ impl ConnectionPool {
             }
 
             // Pool is full and all connections are in use — wait
-            conns = self.condvar.wait(conns).map_err(|e| {
-                TdgError::Custom(format!("Pool condvar poisoned: {e}"))
-            })?;
+            conns = self
+                .condvar
+                .wait(conns)
+                .map_err(|e| TdgError::Custom(format!("Pool condvar poisoned: {e}")))?;
         }
     }
 
@@ -90,7 +89,6 @@ impl ConnectionPool {
             if conns.len() < self.max_connections {
                 conns.push(conn);
                 self.condvar.notify_one();
-                return;
             }
         }
         // Connection dropped (closed) if pool is full
@@ -137,7 +135,8 @@ mod tests {
         let pool = ConnectionPool::new(path, 5, 30000).unwrap();
 
         let conn = pool.get_connection().unwrap();
-        conn.execute_batch("CREATE TABLE test (id INTEGER PRIMARY KEY);").unwrap();
+        conn.execute_batch("CREATE TABLE test (id INTEGER PRIMARY KEY);")
+            .unwrap();
         pool.release_connection(conn);
 
         pool.close();

@@ -2,8 +2,8 @@
 //!
 //! Ported from Python `canonical_schema.py`.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ── Stage (developmental stage, IntEnum in Python) ──
 

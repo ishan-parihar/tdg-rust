@@ -10,9 +10,7 @@ use std::collections::HashMap;
 
 use rusqlite::Connection;
 
-use crate::db::crud::{
-    count_nodes, get_node, now_iso, query_nodes, record_event,
-};
+use crate::db::crud::{count_nodes, get_node, now_iso, query_nodes, record_event};
 use crate::error::TdgResult;
 use crate::flow::{self, FlowDriveState};
 use crate::knowledge;
@@ -28,14 +26,7 @@ pub fn reconcile(conn: &Connection) -> TdgResult<serde_json::Value> {
     let result = flow::renormalize_graph(conn, false)?;
 
     // Record the reconcile event
-    record_event(
-        conn,
-        "reconcile",
-        None,
-        None,
-        None,
-        Some(&result),
-    )?;
+    record_event(conn, "reconcile", None, None, None, Some(&result))?;
 
     Ok(serde_json::json!({
         "status": "completed",
@@ -598,12 +589,12 @@ pub fn cmd_graph(
     match subcommand {
         "stats" => crate::db::events::stats(conn),
         "create-node" => {
-            let node_type = args.get("node_type").ok_or_else(|| {
-                crate::error::TdgError::Custom("Missing --node-type".to_string())
-            })?;
-            let name = args.get("name").ok_or_else(|| {
-                crate::error::TdgError::Custom("Missing --name".to_string())
-            })?;
+            let node_type = args
+                .get("node_type")
+                .ok_or_else(|| crate::error::TdgError::Custom("Missing --node-type".to_string()))?;
+            let name = args
+                .get("name")
+                .ok_or_else(|| crate::error::TdgError::Custom("Missing --name".to_string()))?;
             let node = crate::db::crud::add_node(
                 conn,
                 &NewNode {
@@ -617,13 +608,10 @@ pub fn cmd_graph(
             Ok(serde_json::to_value(&node)?)
         }
         "search" => {
-            let query = args.get("query").ok_or_else(|| {
-                crate::error::TdgError::Custom("Missing --query".to_string())
-            })?;
-            let limit = args
-                .get("limit")
-                .and_then(|l| l.parse().ok())
-                .unwrap_or(10);
+            let query = args
+                .get("query")
+                .ok_or_else(|| crate::error::TdgError::Custom("Missing --query".to_string()))?;
+            let limit = args.get("limit").and_then(|l| l.parse().ok()).unwrap_or(10);
             let results = crate::db::crud::search(conn, query, limit)?;
             Ok(serde_json::json!({
                 "results": results.iter().map(|(n, score)| serde_json::json!({
@@ -636,7 +624,7 @@ pub fn cmd_graph(
             }))
         }
         "query" => {
-            let node_type = args.get("node_type").map(|s| s.clone());
+            let node_type = args.get("node_type").cloned();
             let limit = args
                 .get("limit")
                 .and_then(|l| l.parse().ok())
@@ -657,12 +645,12 @@ pub fn cmd_graph(
             }))
         }
         "pathfind" => {
-            let source = args.get("source").ok_or_else(|| {
-                crate::error::TdgError::Custom("Missing --source".to_string())
-            })?;
-            let target = args.get("target").ok_or_else(|| {
-                crate::error::TdgError::Custom("Missing --target".to_string())
-            })?;
+            let source = args
+                .get("source")
+                .ok_or_else(|| crate::error::TdgError::Custom("Missing --source".to_string()))?;
+            let target = args
+                .get("target")
+                .ok_or_else(|| crate::error::TdgError::Custom("Missing --target".to_string()))?;
             let max_depth = args
                 .get("max-depth")
                 .and_then(|l| l.parse().ok())
@@ -695,9 +683,9 @@ pub fn cmd_knowledge(
         "archive-stale" => knowledge::archive_stale_nodes(conn, None),
         "hygiene" => hygiene(conn),
         "process-lifecycle" => {
-            let node_id = args.get("node-id").ok_or_else(|| {
-                crate::error::TdgError::Custom("Missing --node-id".to_string())
-            })?;
+            let node_id = args
+                .get("node-id")
+                .ok_or_else(|| crate::error::TdgError::Custom("Missing --node-id".to_string()))?;
             knowledge::process_catalyst_lifecycle(conn, node_id)
         }
         _ => Err(crate::error::TdgError::Custom(format!(

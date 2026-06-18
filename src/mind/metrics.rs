@@ -6,7 +6,6 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-
 /// Per-action performance metrics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionMetrics {
@@ -202,7 +201,9 @@ impl MetricsEngine {
 
         // Quadrant imbalance
         if self.state.quadrant_history.len() >= 50 {
-            let recent: Vec<&str> = self.state.quadrant_history
+            let recent: Vec<&str> = self
+                .state
+                .quadrant_history
                 .iter()
                 .rev()
                 .take(50)
@@ -245,17 +246,22 @@ impl MetricsEngine {
                 } else {
                     0.0
                 };
-                (at.clone(), serde_json::json!({
-                    "cycles": m.cycles,
-                    "conversions": m.conversions,
-                    "avg_quality": (avg_quality * 10.0).round() / 10.0,
-                    "revenue": m.total_revenue,
-                }))
+                (
+                    at.clone(),
+                    serde_json::json!({
+                        "cycles": m.cycles,
+                        "conversions": m.conversions,
+                        "avg_quality": (avg_quality * 10.0).round() / 10.0,
+                        "revenue": m.total_revenue,
+                    }),
+                )
             })
             .collect();
 
         // Quadrant balance (last 50)
-        let recent_quads: Vec<&str> = self.state.quadrant_history
+        let recent_quads: Vec<&str> = self
+            .state
+            .quadrant_history
             .iter()
             .rev()
             .take(50)
@@ -278,6 +284,12 @@ impl MetricsEngine {
             "quadrant_balance": quad_balance,
             "wisdom_count": self.state.wisdom_nodes.len(),
         })
+    }
+}
+
+impl Default for MetricsEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -304,7 +316,9 @@ mod tests {
             engine.record_cycle(Some("cold_outreach"), None, None, Some(5.0));
         }
         let wisdom = engine.detect_wisdom();
-        assert!(wisdom.iter().any(|w| w.category == "high_effort_zero_return"));
+        assert!(wisdom
+            .iter()
+            .any(|w| w.category == "high_effort_zero_return"));
     }
 
     #[test]

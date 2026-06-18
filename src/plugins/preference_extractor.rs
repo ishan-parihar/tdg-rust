@@ -49,10 +49,51 @@ static MEMORY_PATTERNS: LazyLock<Vec<(&'static str, f64)>> = LazyLock::new(|| {
 /// Topic keyword classification.
 static TOPIC_KEYWORDS: LazyLock<Vec<(&'static str, Vec<&'static str>)>> = LazyLock::new(|| {
     vec![
-        ("lr", vec!["deploy", "server", "database", "api", "infrastructure", "docker", "aws", "pricing", "cost"]),
-        ("ul", vec!["prefer", "feel", "like", "dislike", "comfortable", "trust", "believe", "value"]),
-        ("ll", vec!["identity", "brand", "name", "persona", "style", "tone", "voice", "culture"]),
-        ("ur", vec!["do", "action", "behavior", "habit", "practice", "technique", "approach"]),
+        (
+            "lr",
+            vec![
+                "deploy",
+                "server",
+                "database",
+                "api",
+                "infrastructure",
+                "docker",
+                "aws",
+                "pricing",
+                "cost",
+            ],
+        ),
+        (
+            "ul",
+            vec![
+                "prefer",
+                "feel",
+                "like",
+                "dislike",
+                "comfortable",
+                "trust",
+                "believe",
+                "value",
+            ],
+        ),
+        (
+            "ll",
+            vec![
+                "identity", "brand", "name", "persona", "style", "tone", "voice", "culture",
+            ],
+        ),
+        (
+            "ur",
+            vec![
+                "do",
+                "action",
+                "behavior",
+                "habit",
+                "practice",
+                "technique",
+                "approach",
+            ],
+        ),
     ]
 });
 
@@ -136,6 +177,12 @@ impl PreferenceExtractor {
         }
 
         "ur".to_string() // default
+    }
+}
+
+impl Default for PreferenceExtractor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

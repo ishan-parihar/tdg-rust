@@ -3,9 +3,9 @@
 //! Port of `core/mind/data_loader.py` (193 lines).
 //! Provides robust JSON state file loading with graceful failure fallback.
 
-use std::path::Path;
 use rusqlite::Connection;
 use serde_json::Value;
+use std::path::Path;
 
 use crate::config::Config;
 use crate::db::crud;
@@ -91,10 +91,7 @@ pub fn load_micro_slice(cfg: &Config) -> Value {
 ///
 /// Python: `load_recent_graph_events(loop_state)` — queries nodes/edges created/updated since
 /// `last_cycle_at` timestamp.
-pub fn load_recent_graph_events(
-    conn: &Connection,
-    loop_state: &Value,
-) -> TdgResult<Vec<Value>> {
+pub fn load_recent_graph_events(conn: &Connection, loop_state: &Value) -> TdgResult<Vec<Value>> {
     let last_cycle = loop_state
         .get("last_cycle_at")
         .and_then(|v| v.as_str())
@@ -163,7 +160,12 @@ mod tests {
 
     #[test]
     fn load_meta_view_empty() {
-        let cfg = Config::with_db_path(tempfile::NamedTempFile::new().unwrap().into_temp_path().to_path_buf());
+        let cfg = Config::with_db_path(
+            tempfile::NamedTempFile::new()
+                .unwrap()
+                .into_temp_path()
+                .to_path_buf(),
+        );
         let result = load_meta_view(&cfg);
         assert!(result.is_object());
     }

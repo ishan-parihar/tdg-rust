@@ -49,7 +49,10 @@ pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
         .as_ref()
         .map(|v| v.to_string())
         .unwrap_or_else(|| "{}".to_string());
-    let lifecycle_state = new.lifecycle_state.clone().unwrap_or_else(|| "active".to_string());
+    let lifecycle_state = new
+        .lifecycle_state
+        .clone()
+        .unwrap_or_else(|| "active".to_string());
     let teleological_level = new.teleological_level.clone();
     let developmental_stage = new.developmental_stage;
     let confidence = new.confidence.unwrap_or(1.0);
@@ -194,10 +197,8 @@ pub fn update_node(
     param_values.push(Box::new(node_id.to_string()));
 
     let mut stmt = conn.prepare(&sql)?;
-    let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values
-        .iter()
-        .map(|p| p.as_ref())
-        .collect();
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|p| p.as_ref()).collect();
     stmt.execute(params_ref.as_slice())?;
 
     get_node(conn, node_id)
@@ -223,8 +224,14 @@ pub fn delete_node(conn: &Connection, node_id: &str) -> TdgResult<bool> {
 
 /// Hard-delete a node (actually remove from DB).
 pub fn hard_delete_node(conn: &Connection, node_id: &str) -> TdgResult<bool> {
-    conn.execute("DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1", params![node_id])?;
-    conn.execute("DELETE FROM embeddings WHERE node_id = ?1", params![node_id])?;
+    conn.execute(
+        "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
+        params![node_id],
+    )?;
+    conn.execute(
+        "DELETE FROM embeddings WHERE node_id = ?1",
+        params![node_id],
+    )?;
     let affected = conn.execute("DELETE FROM nodes WHERE id = ?1", params![node_id])?;
     Ok(affected > 0)
 }
@@ -331,10 +338,8 @@ pub fn get_edges(
     param_values.push(Box::new(limit));
 
     let mut stmt = conn.prepare(&sql)?;
-    let all_params: Vec<&dyn rusqlite::types::ToSql> = param_values
-        .iter()
-        .map(|p| p.as_ref())
-        .collect();
+    let all_params: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|p| p.as_ref()).collect();
 
     let rows = stmt.query_map(all_params.as_slice(), row_to_edge)?;
 
@@ -388,10 +393,8 @@ pub fn update_edge(
     param_values.push(Box::new(edge_id.to_string()));
 
     let mut stmt = conn.prepare(&sql)?;
-    let all_params: Vec<&dyn rusqlite::types::ToSql> = param_values
-        .iter()
-        .map(|p| p.as_ref())
-        .collect();
+    let all_params: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|p| p.as_ref()).collect();
 
     stmt.execute(all_params.as_slice())?;
 
@@ -472,8 +475,8 @@ pub fn add_nodes_batch(conn: &Connection, nodes: &[NewNode]) -> TdgResult<Vec<No
 
     for id in &ids {
         if let Some(node) = get_node_including_deleted(conn, id)? {
-            let parent_ids_json = serde_json::to_string(&node.parent_ids)
-                .unwrap_or_else(|_| "[]".to_string());
+            let parent_ids_json =
+                serde_json::to_string(&node.parent_ids).unwrap_or_else(|_| "[]".to_string());
             let computed_path = compute_agent_path(conn, &parent_ids_json)?;
             conn.execute(
                 "UPDATE nodes SET agent_path = ?1 WHERE id = ?2",
@@ -602,16 +605,13 @@ pub fn record_event(
 // ─── Phase 3: Query Engine ──────────────────────────────────────────────────
 
 /// Query nodes with filters. Matches Python `query_nodes()`.
-pub fn query_nodes(
-    conn: &Connection,
-    query: &NodeQuery,
-) -> TdgResult<Vec<Node>> {
+pub fn query_nodes(conn: &Connection, query: &NodeQuery) -> TdgResult<Vec<Node>> {
     let mut conditions = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
 
     if !query.include_deleted {
-        conditions.push(format!("valid_to IS NULL"));
+        conditions.push("valid_to IS NULL".to_string());
     }
 
     if let Some(ref nt) = query.node_type {
@@ -669,10 +669,8 @@ pub fn query_nodes(
     param_values.push(Box::new(offset));
 
     let mut stmt = conn.prepare(&sql)?;
-    let all_params: Vec<&dyn rusqlite::types::ToSql> = param_values
-        .iter()
-        .map(|p| p.as_ref())
-        .collect();
+    let all_params: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|p| p.as_ref()).collect();
 
     let rows = stmt.query_map(all_params.as_slice(), row_to_node)?;
 
@@ -684,11 +682,7 @@ pub fn query_nodes(
 }
 
 /// Full-text search using FTS5. Matches Python `search()`.
-pub fn search(
-    conn: &Connection,
-    query: &str,
-    limit: i64,
-) -> TdgResult<Vec<(Node, f64)>> {
+pub fn search(conn: &Connection, query: &str, limit: i64) -> TdgResult<Vec<(Node, f64)>> {
     let limit = limit.min(crate::validation::MAX_LIMIT);
 
     let sql = "
@@ -802,7 +796,7 @@ pub fn pathfind(
     max_depth: i64,
     max_edges: i64,
 ) -> TdgResult<Vec<Vec<String>>> {
-    use std::collections::{VecDeque, HashSet};
+    use std::collections::{HashSet, VecDeque};
 
     let mut all_paths = Vec::new();
     let mut queue: VecDeque<(String, Vec<String>)> = VecDeque::new();
@@ -869,7 +863,7 @@ pub fn node_graph(
     depth: i64,
     max_nodes: i64,
 ) -> TdgResult<serde_json::Value> {
-    use std::collections::{VecDeque, HashSet};
+    use std::collections::{HashSet, VecDeque};
 
     let mut nodes = Vec::new();
     let mut edge_ids_seen = HashSet::new();
@@ -951,8 +945,7 @@ pub(crate) fn row_to_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<Node> {
         serde_json::from_str(&quadrants_json).unwrap_or(serde_json::json!({}));
     let drives: serde_json::Value =
         serde_json::from_str(&drives_json).unwrap_or(serde_json::json!({}));
-    let parent_ids: Vec<String> =
-        serde_json::from_str(&parent_ids_json).unwrap_or_default();
+    let parent_ids: Vec<String> = serde_json::from_str(&parent_ids_json).unwrap_or_default();
 
     Ok(Node {
         id: row.get(0)?,
@@ -1035,8 +1028,9 @@ fn update_parent_ids_on_decompose(conn: &Connection, target_id: &str) -> TdgResu
             |row| row.get(0),
         )
         .ok();
-    let mut all_parents: Vec<String> =
-        existing.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let mut all_parents: Vec<String> = existing
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
 
     // Get all DECOMPOSES_TO source IDs for this target
     let mut stmt = conn.prepare(
@@ -1134,7 +1128,9 @@ mod tests {
         let node = add_node(&conn, &make_node("action", "Delete Me")).unwrap();
         assert!(delete_node(&conn, &node.id).unwrap());
         assert!(get_node(&conn, &node.id).unwrap().is_none());
-        assert!(get_node_including_deleted(&conn, &node.id).unwrap().is_some());
+        assert!(get_node_including_deleted(&conn, &node.id)
+            .unwrap()
+            .is_some());
     }
 
     #[test]
@@ -1143,7 +1139,9 @@ mod tests {
         let node = add_node(&conn, &make_node("artifact", "Gone")).unwrap();
         assert!(hard_delete_node(&conn, &node.id).unwrap());
         assert!(get_node(&conn, &node.id).unwrap().is_none());
-        assert!(get_node_including_deleted(&conn, &node.id).unwrap().is_none());
+        assert!(get_node_including_deleted(&conn, &node.id)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -1206,7 +1204,9 @@ mod tests {
         .unwrap();
 
         assert!(delete_edge(&conn, &edge.id).unwrap());
-        assert!(get_edges(&conn, Some(&n1.id), None, None, None, 100).unwrap().is_empty());
+        assert!(get_edges(&conn, Some(&n1.id), None, None, None, 100)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

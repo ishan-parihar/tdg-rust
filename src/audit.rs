@@ -26,6 +26,7 @@ pub struct Anomaly {
     pub domain: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl Anomaly {
     pub fn new(
         anomaly_id: &str,
@@ -297,7 +298,9 @@ impl<'a> AuditEngine<'a> {
             }
 
             // Orphan check
-            let edge_count = crud::get_edges(self.conn, Some(&node.id), None, None, None, 1000).map(|e| e.len() as i64).unwrap_or(0);
+            let edge_count = crud::get_edges(self.conn, Some(&node.id), None, None, None, 1000)
+                .map(|e| e.len() as i64)
+                .unwrap_or(0);
             if edge_count == 0 {
                 anomalies.push(Anomaly::new(
                     &format!("orphan_{}", &node.id[..8]),
@@ -403,7 +406,8 @@ impl<'a> AuditEngine<'a> {
             *by_severity.entry(a.severity.clone()).or_insert(0) += 1;
         }
 
-        let high_count = by_severity.get("high").unwrap_or(&0) + by_severity.get("critical").unwrap_or(&0);
+        let high_count =
+            by_severity.get("high").unwrap_or(&0) + by_severity.get("critical").unwrap_or(&0);
 
         Ok(serde_json::json!({
             "report_type": "graph_integrity",
@@ -444,16 +448,24 @@ impl<'a> AuditEngine<'a> {
 
     /// 3. Stage progression report — telos hierarchy health
     pub fn stage_report(&self) -> Result<serde_json::Value, String> {
-        let telos_nodes = crud::query_nodes(self.conn, &crate::models::NodeQuery {
-            node_type: Some("telos".to_string()),
-            limit: Some(1),
-            ..Default::default()
-        }).map_err(|e| e.to_string())?;
+        let telos_nodes = crud::query_nodes(
+            self.conn,
+            &crate::models::NodeQuery {
+                node_type: Some("telos".to_string()),
+                limit: Some(1),
+                ..Default::default()
+            },
+        )
+        .map_err(|e| e.to_string())?;
 
         if let Some(root) = telos_nodes.first() {
             let engine = TelearchyEngine::new(self.conn);
-            let validation = engine.validate_hierarchy(&root.id).map_err(|e| e.to_string())?;
-            let report = engine.generate_telearchy_report(&root.id).map_err(|e| e.to_string())?;
+            let validation = engine
+                .validate_hierarchy(&root.id)
+                .map_err(|e| e.to_string())?;
+            let report = engine
+                .generate_telearchy_report(&root.id)
+                .map_err(|e| e.to_string())?;
 
             Ok(serde_json::json!({
                 "report_type": "stage_progression",
@@ -480,7 +492,10 @@ impl<'a> AuditEngine<'a> {
 
     /// 4. Persistence consistency report
     pub fn persistence_report(&self) -> Result<serde_json::Value, String> {
-        let event_count: i64 = self.conn.query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0)).unwrap_or(0);
+        let event_count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))
+            .unwrap_or(0);
 
         // Count nodes and edges
         let node_count = crud::count_nodes(self.conn, None).unwrap_or(0);
@@ -531,8 +546,15 @@ impl<'a> AuditEngine<'a> {
             }
 
             // Check dependents (DEPENDS_ON edges incoming)
-            let deps = crud::get_edges(self.conn, None, Some(&cap.id), Some("DEPENDS_ON"), None, 1000)
-                .map_err(|e| e.to_string())?;
+            let deps = crud::get_edges(
+                self.conn,
+                None,
+                Some(&cap.id),
+                Some("DEPENDS_ON"),
+                None,
+                1000,
+            )
+            .map_err(|e| e.to_string())?;
 
             // Check what it enables (SUPPORTS/ENABLES/REALIZES outgoing)
             let enables = crud::get_edges(self.conn, Some(&cap.id), None, None, None, 1000)
@@ -561,7 +583,11 @@ impl<'a> AuditEngine<'a> {
             b.get("is_broken")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false)
-                .cmp(&a.get("is_broken").and_then(|v| v.as_bool()).unwrap_or(false))
+                .cmp(
+                    &a.get("is_broken")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                )
         });
 
         let total = caps.len();
@@ -589,28 +615,29 @@ impl<'a> AuditEngine<'a> {
         let chronic = self.registry.get_chronic();
         let node_count = crud::count_nodes(self.conn, None).unwrap_or(0);
         let edge_count = crud::count_edges(self.conn, None).unwrap_or(0);
-        let event_count: i64 = self.conn.query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0)).unwrap_or(0);
+        let event_count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))
+            .unwrap_or(0);
 
         // Compute overall health
         let mut issues = Vec::new();
 
         if let Some(integrity) = reports.get("integrity") {
-            if integrity
+            if !integrity
                 .get("is_healthy")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true)
-                == false
             {
                 issues.push("Graph integrity violations".to_string());
             }
         }
 
         if let Some(persistence) = reports.get("persistence") {
-            if persistence
+            if !persistence
                 .get("is_consistent")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true)
-                == false
             {
                 issues.push("Persistence inconsistency".to_string());
             }
@@ -663,7 +690,10 @@ pub fn export_audit_markdown(bundle: &AuditBundle) -> String {
         lines.push("## 1. Graph Integrity".to_string());
         lines.push(format!(
             "- Anomalies: {}",
-            integrity.get("anomaly_count").and_then(|v| v.as_u64()).unwrap_or(0)
+            integrity
+                .get("anomaly_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
         ));
         lines.push(format!(
             "- Healthy: {}",
@@ -683,7 +713,12 @@ pub fn export_audit_markdown(bundle: &AuditBundle) -> String {
                 let sev = a.get("severity").and_then(|v| v.as_str()).unwrap_or("");
                 let typ = a.get("type").and_then(|v| v.as_str()).unwrap_or("");
                 let desc = a.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                lines.push(format!("  - [{}] {}: {}", sev, typ, &desc[..80.min(desc.len())]));
+                lines.push(format!(
+                    "  - [{}] {}: {}",
+                    sev,
+                    typ,
+                    &desc[..80.min(desc.len())]
+                ));
             }
         }
     }
@@ -699,16 +734,27 @@ pub fn export_audit_markdown(bundle: &AuditBundle) -> String {
                     .get("normalized_entropy")
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0),
-                entropy.get("health").and_then(|v| v.as_str()).unwrap_or("unknown")
+                entropy
+                    .get("health")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
             ));
         }
         lines.push(format!(
             "- Addictions: {}",
-            polarity.get("graph_addictions").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0)
+            polarity
+                .get("graph_addictions")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0)
         ));
         lines.push(format!(
             "- Allergies: {}",
-            polarity.get("graph_allergies").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0)
+            polarity
+                .get("graph_allergies")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0)
         ));
     }
 
@@ -740,7 +786,10 @@ pub fn export_audit_markdown(bundle: &AuditBundle) -> String {
         lines.push("## 4. Persistence".to_string());
         lines.push(format!(
             "- Events: {}",
-            persistence.get("event_count").and_then(|v| v.as_u64()).unwrap_or(0)
+            persistence
+                .get("event_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
         ));
         lines.push(format!(
             "- Consistent: {}",
@@ -762,9 +811,18 @@ pub fn export_audit_markdown(bundle: &AuditBundle) -> String {
         lines.push("## 5. Capabilities".to_string());
         lines.push(format!(
             "- Total: {} | Broken: {} | Unused: {}",
-            capability.get("total").and_then(|v| v.as_u64()).unwrap_or(0),
-            capability.get("broken").and_then(|v| v.as_u64()).unwrap_or(0),
-            capability.get("unused").and_then(|v| v.as_u64()).unwrap_or(0)
+            capability
+                .get("total")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            capability
+                .get("broken")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            capability
+                .get("unused")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
         ));
     }
 
@@ -775,7 +833,9 @@ pub fn export_audit_markdown(bundle: &AuditBundle) -> String {
         for a in bundle.chronic_anomalies.iter().take(5) {
             lines.push(format!(
                 "- [{}] {}: {}",
-                a.severity, a.anomaly_type, &a.description[..80.min(a.description.len())]
+                a.severity,
+                a.anomaly_type,
+                &a.description[..80.min(a.description.len())]
             ));
         }
     }
@@ -810,7 +870,7 @@ mod tests {
     #[test]
     fn integrity_report_detects_orphan() {
         let conn = setup();
-        let node = crud::add_node(
+        let _node = crud::add_node(
             &conn,
             &NewNode {
                 node_type: "observation".to_string(),

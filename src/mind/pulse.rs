@@ -43,7 +43,12 @@ fn closure_rules() -> HashMap<&'static str, ClosureRule> {
     );
     m.insert(
         "action",
-        ClosureRule::new(2, &["DECOMPOSES_TO", "DEPENDS_ON", "ENABLES"], "outgoing", 1.2),
+        ClosureRule::new(
+            2,
+            &["DECOMPOSES_TO", "DEPENDS_ON", "ENABLES"],
+            "outgoing",
+            1.2,
+        ),
     );
     m.insert(
         "capability",
@@ -55,7 +60,12 @@ fn closure_rules() -> HashMap<&'static str, ClosureRule> {
     );
     m.insert(
         "hypothesis",
-        ClosureRule::new(2, &["EVIDENCES", "SUPPORTS", "CONTRADICTS"], "incoming", 1.3),
+        ClosureRule::new(
+            2,
+            &["EVIDENCES", "SUPPORTS", "CONTRADICTS"],
+            "incoming",
+            1.3,
+        ),
     );
     m.insert(
         "constraint",
@@ -67,7 +77,12 @@ fn closure_rules() -> HashMap<&'static str, ClosureRule> {
     );
     m.insert(
         "project",
-        ClosureRule::new(2, &["DECOMPOSES_TO", "DEPENDS_ON", "ADVANCES"], "outgoing", 1.4),
+        ClosureRule::new(
+            2,
+            &["DECOMPOSES_TO", "DEPENDS_ON", "ADVANCES"],
+            "outgoing",
+            1.4,
+        ),
     );
     m.insert(
         "trajectory",
@@ -75,7 +90,12 @@ fn closure_rules() -> HashMap<&'static str, ClosureRule> {
     );
     m.insert(
         "synthesis",
-        ClosureRule::new(2, &["SYNTHESIZES", "SUPPORTS", "CONTRADICTS"], "incoming", 1.1),
+        ClosureRule::new(
+            2,
+            &["SYNTHESIZES", "SUPPORTS", "CONTRADICTS"],
+            "incoming",
+            1.1,
+        ),
     );
     m.insert(
         "people",
@@ -95,7 +115,12 @@ fn closure_rules() -> HashMap<&'static str, ClosureRule> {
     );
     m.insert(
         "insight",
-        ClosureRule::new(1, &["EVIDENCES", "SYNTHESIZES", "ILLUMINATES"], "outgoing", 1.3),
+        ClosureRule::new(
+            1,
+            &["EVIDENCES", "SYNTHESIZES", "ILLUMINATES"],
+            "outgoing",
+            1.3,
+        ),
     );
     m.insert(
         "question",
@@ -158,11 +183,7 @@ impl PulseEngine {
     }
 
     /// Analyze all active nodes for structural gaps.
-    pub fn pulse(
-        &self,
-        conn: &Connection,
-        exclude_types: &[&str],
-    ) -> TdgResult<Vec<PulseResult>> {
+    pub fn pulse(&self, conn: &Connection, exclude_types: &[&str]) -> TdgResult<Vec<PulseResult>> {
         let mut results = Vec::new();
 
         let mut stmt = conn.prepare(
@@ -199,7 +220,7 @@ impl PulseEngine {
             }
 
             // Count matching edges
-            let edge_count = self.count_matching_edges(conn, &id, rule)?;
+            let edge_count = self.count_matching_edges(conn, id, rule)?;
 
             // Calculate age in days
             let age_days = chrono::NaiveDateTime::parse_from_str(
@@ -238,7 +259,11 @@ impl PulseEngine {
         }
 
         // Sort by gap_score descending (most critical first)
-        results.sort_by(|a, b| b.gap_score.partial_cmp(&a.gap_score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.gap_score
+                .partial_cmp(&a.gap_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         Ok(results)
     }
@@ -278,7 +303,8 @@ impl PulseEngine {
             params.push(Box::new(et.to_string()));
         }
 
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
 
         let count: i64 = conn.query_row(&sql, params_ref.as_slice(), |row| row.get(0))?;
         Ok(count)
@@ -287,16 +313,23 @@ impl PulseEngine {
     /// Get a summary of pulse results.
     pub fn summarize(&self, results: &[PulseResult]) -> serde_json::Value {
         let total = results.len();
-        let critical = results.iter().filter(|r| r.severity == PulseSeverity::Critical).count();
-        let gap = results.iter().filter(|r| r.severity == PulseSeverity::Gap).count();
-        let minor = results.iter().filter(|r| r.severity == PulseSeverity::Minor).count();
-
-        let by_type: HashMap<String, usize> = results
+        let critical = results
             .iter()
-            .fold(HashMap::new(), |mut acc, r| {
-                *acc.entry(r.node_type.clone()).or_insert(0) += 1;
-                acc
-            });
+            .filter(|r| r.severity == PulseSeverity::Critical)
+            .count();
+        let gap = results
+            .iter()
+            .filter(|r| r.severity == PulseSeverity::Gap)
+            .count();
+        let minor = results
+            .iter()
+            .filter(|r| r.severity == PulseSeverity::Minor)
+            .count();
+
+        let by_type: HashMap<String, usize> = results.iter().fold(HashMap::new(), |mut acc, r| {
+            *acc.entry(r.node_type.clone()).or_insert(0) += 1;
+            acc
+        });
 
         serde_json::json!({
             "total_gaps": total,
@@ -312,6 +345,12 @@ impl PulseEngine {
                 "severity": r.severity.as_str(),
             })).collect::<Vec<_>>(),
         })
+    }
+}
+
+impl Default for PulseEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -424,18 +463,16 @@ mod tests {
     #[test]
     fn pulse_summary() {
         let engine = PulseEngine::new();
-        let results = vec![
-            PulseResult {
-                node_id: "n1".to_string(),
-                node_type: "telos".to_string(),
-                name: "T1".to_string(),
-                gap_score: 15.0,
-                existing_edges: 0,
-                required_edges: 2,
-                severity: PulseSeverity::Critical,
-                age_days: 30,
-            },
-        ];
+        let results = vec![PulseResult {
+            node_id: "n1".to_string(),
+            node_type: "telos".to_string(),
+            name: "T1".to_string(),
+            gap_score: 15.0,
+            existing_edges: 0,
+            required_edges: 2,
+            severity: PulseSeverity::Critical,
+            age_days: 30,
+        }];
         let summary = engine.summarize(&results);
         assert_eq!(summary["critical"], 1);
         assert_eq!(summary["total_gaps"], 1);

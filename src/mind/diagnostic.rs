@@ -416,7 +416,10 @@ impl DiagnosticEngine {
         Ok(count)
     }
 
-    fn categorize_drive_labels(&self, drive_dist: &HashMap<String, f64>) -> HashMap<String, DriveLabel> {
+    fn categorize_drive_labels(
+        &self,
+        drive_dist: &HashMap<String, f64>,
+    ) -> HashMap<String, DriveLabel> {
         let mut labels = HashMap::new();
         for (name, &net) in drive_dist {
             let label = if net.abs() < 0.5 {
@@ -440,7 +443,9 @@ impl DiagnosticEngine {
             "SELECT id, name, drives_json, quadrants_json FROM nodes WHERE valid_to IS NULL AND node_type = 'observation'",
         )?;
         let rows: Vec<(String, String, String, String)> = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -466,7 +471,10 @@ impl DiagnosticEngine {
             let expected_drive = quadrant_map.get(active_quadrant).unwrap_or(&"eros");
 
             for drive_name in &["eros", "agape", "agency", "communion"] {
-                let drive_val = drives.get(*drive_name).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let drive_val = drives
+                    .get(*drive_name)
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
                 if drive_name == expected_drive && drive_val.abs() > 7.0 {
                     phantoms.push(PhantomNode {
                         node_id: id.clone(),
@@ -496,11 +504,10 @@ impl DiagnosticEngine {
             Some(payload) => {
                 let v: serde_json::Value =
                     serde_json::from_str(&payload).unwrap_or(serde_json::json!({}));
-                let timestamp_str = v
-                    .get("timestamp")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("");
-                if let Ok(ts) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%dT%H:%M:%S") {
+                let timestamp_str = v.get("timestamp").and_then(|t| t.as_str()).unwrap_or("");
+                if let Ok(ts) =
+                    chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%dT%H:%M:%S")
+                {
                     let now = chrono::Utc::now().naive_utc();
                     let hours = (now - ts).num_hours();
                     Ok(hours > 24)
@@ -587,6 +594,12 @@ impl DiagnosticEngine {
     }
 }
 
+impl Default for DiagnosticEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -615,7 +628,12 @@ mod tests {
         .unwrap();
 
         let engine = DiagnosticEngine::new();
-        let quadrant_history = vec!["UL".to_string(), "UR".to_string(), "LL".to_string(), "LR".to_string()];
+        let quadrant_history = vec![
+            "UL".to_string(),
+            "UR".to_string(),
+            "LL".to_string(),
+            "LR".to_string(),
+        ];
         let report = engine.analyze(&conn, &[], &quadrant_history).unwrap();
         assert!(report.suggestion.contains("nominal"));
         assert_eq!(report.ghost_nodes, 1);

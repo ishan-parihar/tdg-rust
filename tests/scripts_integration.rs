@@ -2,11 +2,11 @@
 //!
 //! Tests cross-module functionality: scripts → CRUD → knowledge → ops.
 
+use serde_json::json;
 use tdg_rust::db::{init_fts, init_schema, run_migrations, ConnectionPool};
+use tdg_rust::knowledge;
 use tdg_rust::models::{NewEdge, NewNode};
 use tdg_rust::scripts;
-use tdg_rust::knowledge;
-use serde_json::json;
 
 /// Helper: create an in-memory pool for scripts integration tests.
 fn make_pool() -> ConnectionPool {
@@ -35,16 +35,22 @@ fn scripts_audit_empty_graph() {
 fn scripts_audit_with_data() {
     let pool = make_pool();
     pool.with_connection(|conn| {
-        tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "observation".to_string(),
-            name: "Test Obs".to_string(),
-            ..Default::default()
-        })?;
-        tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "hypothesis".to_string(),
-            name: "Test Hyp".to_string(),
-            ..Default::default()
-        })?;
+        tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "observation".to_string(),
+                name: "Test Obs".to_string(),
+                ..Default::default()
+            },
+        )?;
+        tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "hypothesis".to_string(),
+                name: "Test Hyp".to_string(),
+                ..Default::default()
+            },
+        )?;
         Ok(())
     })
     .unwrap();
@@ -68,16 +74,22 @@ fn scripts_check_empty() {
 fn scripts_check_with_constraints() {
     let pool = make_pool();
     pool.with_connection(|conn| {
-        tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "constraint".to_string(),
-            name: "Constraint 1".to_string(),
-            ..Default::default()
-        })?;
-        tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "action".to_string(),
-            name: "Action 1".to_string(),
-            ..Default::default()
-        })?;
+        tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "constraint".to_string(),
+                name: "Constraint 1".to_string(),
+                ..Default::default()
+            },
+        )?;
+        tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "action".to_string(),
+                name: "Action 1".to_string(),
+                ..Default::default()
+            },
+        )?;
         Ok(())
     })
     .unwrap();
@@ -95,7 +107,13 @@ fn scripts_auto_capture_basic() {
     let pool = make_pool();
     let result = pool
         .with_connection(|conn| {
-            scripts::auto_capture(conn, "New observation from test", "LR", 0.8, Some("entity1"))
+            scripts::auto_capture(
+                conn,
+                "New observation from test",
+                "LR",
+                0.8,
+                Some("entity1"),
+            )
         })
         .unwrap();
     assert!(result["observation_id"].as_str().unwrap().starts_with('n'));
@@ -132,7 +150,9 @@ fn scripts_auto_capture_creates_event() {
 fn scripts_create_node_basic() {
     let pool = make_pool();
     let result = pool
-        .with_connection(|conn| scripts::create_node(conn, "telos", "My Goal", Some("A primary goal")))
+        .with_connection(|conn| {
+            scripts::create_node(conn, "telos", "My Goal", Some("A primary goal"))
+        })
         .unwrap();
     assert!(result["id"].as_str().unwrap().starts_with('n'));
     assert_eq!(result["node_type"], "telos");
@@ -153,7 +173,9 @@ fn scripts_create_node_no_description() {
 #[test]
 fn scripts_maintenance_check_empty() {
     let pool = make_pool();
-    let result = pool.with_connection(|conn| scripts::maintenance_check(conn)).unwrap();
+    let result = pool
+        .with_connection(|conn| scripts::maintenance_check(conn))
+        .unwrap();
     assert_eq!(result["orphan_count"], 0);
 }
 
@@ -163,17 +185,22 @@ fn scripts_maintenance_check_with_orphans() {
     // Create orphan nodes (no edges)
     pool.with_connection(|conn| {
         for i in 0..5 {
-            tdg_rust::db::crud::add_node(conn, &NewNode {
-                node_type: "observation".to_string(),
-                name: format!("Orphan {i}"),
-                ..Default::default()
-            })?;
+            tdg_rust::db::crud::add_node(
+                conn,
+                &NewNode {
+                    node_type: "observation".to_string(),
+                    name: format!("Orphan {i}"),
+                    ..Default::default()
+                },
+            )?;
         }
         Ok(())
     })
     .unwrap();
 
-    let result = pool.with_connection(|conn| scripts::maintenance_check(conn)).unwrap();
+    let result = pool
+        .with_connection(|conn| scripts::maintenance_check(conn))
+        .unwrap();
     assert_eq!(result["orphan_count"], 5);
 }
 
@@ -182,7 +209,9 @@ fn scripts_maintenance_check_with_orphans() {
 #[test]
 fn scripts_repair_orphans_empty() {
     let pool = make_pool();
-    let result = pool.with_connection(|conn| scripts::repair_orphans(conn)).unwrap();
+    let result = pool
+        .with_connection(|conn| scripts::repair_orphans(conn))
+        .unwrap();
     assert_eq!(result["total_orphans"], 0);
     assert_eq!(result["archived"], 0);
 }
@@ -193,11 +222,14 @@ fn scripts_repair_orphans_archives_critical() {
     // Create orphan nodes and manually age them
     pool.with_connection(|conn| {
         for i in 0..3 {
-            let node = tdg_rust::db::crud::add_node(conn, &NewNode {
-                node_type: "observation".to_string(),
-                name: format!("Old orphan {i}"),
-                ..Default::default()
-            })?;
+            let node = tdg_rust::db::crud::add_node(
+                conn,
+                &NewNode {
+                    node_type: "observation".to_string(),
+                    name: format!("Old orphan {i}"),
+                    ..Default::default()
+                },
+            )?;
             // Set created_at to 90 days ago to trigger critical severity
             let ninety_days_ago = chrono::Utc::now()
                 .naive_utc()
@@ -214,7 +246,9 @@ fn scripts_repair_orphans_archives_critical() {
     })
     .unwrap();
 
-    let result = pool.with_connection(|conn| scripts::repair_orphans(conn)).unwrap();
+    let result = pool
+        .with_connection(|conn| scripts::repair_orphans(conn))
+        .unwrap();
     assert!(result["total_orphans"].as_i64().unwrap() >= 1);
     assert!(result["archived"].as_i64().unwrap() >= 1);
 }
@@ -235,22 +269,31 @@ fn scripts_unify_empty_graph() {
 fn scripts_unify_with_events_and_edges() {
     let pool = make_pool();
     pool.with_connection(|conn| {
-        let a = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "telos".to_string(),
-            name: "A".to_string(),
-            ..Default::default()
-        })?;
-        let b = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "action".to_string(),
-            name: "B".to_string(),
-            ..Default::default()
-        })?;
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: a.id.clone(),
-            target_id: b.id.clone(),
-            edge_type: "DECOMPOSES_TO".to_string(),
-            ..Default::default()
-        })?;
+        let a = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "telos".to_string(),
+                name: "A".to_string(),
+                ..Default::default()
+            },
+        )?;
+        let b = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "action".to_string(),
+                name: "B".to_string(),
+                ..Default::default()
+            },
+        )?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: a.id.clone(),
+                target_id: b.id.clone(),
+                edge_type: "DECOMPOSES_TO".to_string(),
+                ..Default::default()
+            },
+        )?;
         tdg_rust::db::crud::record_event(
             conn,
             "test",
@@ -274,7 +317,9 @@ fn scripts_unify_with_events_and_edges() {
 #[test]
 fn scripts_reconcile_constraints_empty() {
     let pool = make_pool();
-    let result = pool.with_connection(|conn| scripts::reconcile_constraints(conn)).unwrap();
+    let result = pool
+        .with_connection(|conn| scripts::reconcile_constraints(conn))
+        .unwrap();
     assert_eq!(result["constraints_deduped"], 0);
     assert_eq!(result["dangling_blocks_repaired"], 0);
 }
@@ -285,17 +330,22 @@ fn scripts_reconcile_constraints_dedup() {
     pool.with_connection(|conn| {
         // Create 3 constraints with the same name
         for _ in 0..3 {
-            tdg_rust::db::crud::add_node(conn, &NewNode {
-                node_type: "constraint".to_string(),
-                name: "Duplicate Constraint".to_string(),
-                ..Default::default()
-            })?;
+            tdg_rust::db::crud::add_node(
+                conn,
+                &NewNode {
+                    node_type: "constraint".to_string(),
+                    name: "Duplicate Constraint".to_string(),
+                    ..Default::default()
+                },
+            )?;
         }
         Ok(())
     })
     .unwrap();
 
-    let result = pool.with_connection(|conn| scripts::reconcile_constraints(conn)).unwrap();
+    let result = pool
+        .with_connection(|conn| scripts::reconcile_constraints(conn))
+        .unwrap();
     // Should have deduped 2 constraints (kept 1, archived 2)
     assert_eq!(result["constraints_deduped"], 2);
 }
@@ -335,9 +385,7 @@ fn scripts_sync_skills_json_files() {
     .unwrap();
 
     let result = pool
-        .with_connection(|conn| {
-            scripts::sync_skills(conn, dir.path().to_str().unwrap())
-        })
+        .with_connection(|conn| scripts::sync_skills(conn, dir.path().to_str().unwrap()))
         .unwrap();
     assert_eq!(result["synced"], 1);
 
@@ -376,9 +424,7 @@ fn scripts_sync_skills_skip_duplicates() {
 
     // Second sync (should skip)
     let result = pool
-        .with_connection(|conn| {
-            scripts::sync_skills(conn, dir.path().to_str().unwrap())
-        })
+        .with_connection(|conn| scripts::sync_skills(conn, dir.path().to_str().unwrap()))
         .unwrap();
     assert_eq!(result["synced"], 0);
     assert_eq!(result["skipped"], 1);
@@ -401,18 +447,24 @@ fn scripts_full_pipeline() {
         let obs_id = n3["id"].as_str().unwrap();
 
         // 2. Connect them
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: goal_id.to_string(),
-            target_id: action_id.to_string(),
-            edge_type: "DECOMPOSES_TO".to_string(),
-            ..Default::default()
-        })?;
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: obs_id.to_string(),
-            target_id: goal_id.to_string(),
-            edge_type: "EVIDENCES".to_string(),
-            ..Default::default()
-        })?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: goal_id.to_string(),
+                target_id: action_id.to_string(),
+                edge_type: "DECOMPOSES_TO".to_string(),
+                ..Default::default()
+            },
+        )?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: obs_id.to_string(),
+                target_id: goal_id.to_string(),
+                edge_type: "EVIDENCES".to_string(),
+                ..Default::default()
+            },
+        )?;
 
         // 3. Auto-capture
         let captured = scripts::auto_capture(conn, "New insight", "UR", 0.9, Some("entity1"))?;

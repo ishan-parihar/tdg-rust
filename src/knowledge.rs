@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use rusqlite::{params, Connection};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::db::crud::{get_edges, get_node, now_iso, record_event};
 use crate::error::TdgResult;
@@ -24,11 +24,7 @@ pub const DEFAULT_STALE_THRESHOLD_DAYS: i64 = 60;
 pub const DEFAULT_INTEGRATION_DECAY_DAYS: i64 = 14;
 
 /// Structural node types that catalysts can link to.
-pub const STRUCTURAL_TARGET_TYPES: &[&str] = &[
-    "hypothesis",
-    "constraint",
-    "telos",
-];
+pub const STRUCTURAL_TARGET_TYPES: &[&str] = &["hypothesis", "constraint", "telos"];
 
 /// Edge types used for catalyst linkage validation.
 pub const CATALYST_LINK_EDGES: &[&str] = &[
@@ -64,7 +60,7 @@ impl CatalystType {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_from_str(s: &str) -> Self {
         match s {
             "signal" => CatalystType::Signal,
             "insight" => CatalystType::Insight,
@@ -193,11 +189,20 @@ fn infer_catalyst_type(node: &Node) -> CatalystType {
     // Keyword matching heuristic
     if combined.contains("signal") || combined.contains("alert") || combined.contains("warning") {
         CatalystType::Signal
-    } else if combined.contains("insight") || combined.contains("discovery") || combined.contains("realization") {
+    } else if combined.contains("insight")
+        || combined.contains("discovery")
+        || combined.contains("realization")
+    {
         CatalystType::Insight
-    } else if combined.contains("feedback") || combined.contains("review") || combined.contains("comment") {
+    } else if combined.contains("feedback")
+        || combined.contains("review")
+        || combined.contains("comment")
+    {
         CatalystType::Feedback
-    } else if combined.contains("metric") || combined.contains("measure") || combined.contains("stat") {
+    } else if combined.contains("metric")
+        || combined.contains("measure")
+        || combined.contains("stat")
+    {
         CatalystType::Metric
     } else if node.node_type == "observation" {
         CatalystType::Observation
@@ -236,8 +241,14 @@ pub fn classify_catalyst(conn: &Connection, node_id: &str) -> TdgResult<serde_js
     // Update node properties with catalyst metadata
     let mut properties = node.properties.clone();
     if let Some(obj) = properties.as_object_mut() {
-        obj.insert("catalyst_type".to_string(), serde_json::json!(catalyst_type.as_str()));
-        obj.insert("catalyst_status".to_string(), serde_json::json!("classified"));
+        obj.insert(
+            "catalyst_type".to_string(),
+            serde_json::json!(catalyst_type.as_str()),
+        );
+        obj.insert(
+            "catalyst_status".to_string(),
+            serde_json::json!("classified"),
+        );
         if let Some(ref aa) = archive_after {
             obj.insert("archive_after".to_string(), serde_json::json!(aa));
         }
@@ -272,7 +283,10 @@ pub fn classify_catalyst(conn: &Connection, node_id: &str) -> TdgResult<serde_js
 /// Phase 2: Link catalyst to structural nodes in the graph.
 ///
 /// Analyzes outgoing edges to find connections to hypotheses, constraints, teloi.
-pub fn link_catalyst_to_structure(conn: &Connection, node_id: &str) -> TdgResult<serde_json::Value> {
+pub fn link_catalyst_to_structure(
+    conn: &Connection,
+    node_id: &str,
+) -> TdgResult<serde_json::Value> {
     let node = get_node(conn, node_id)?
         .ok_or_else(|| crate::error::TdgError::Custom(format!("Node {node_id} not found")))?;
 
@@ -305,8 +319,14 @@ pub fn link_catalyst_to_structure(conn: &Connection, node_id: &str) -> TdgResult
     let mut properties = node.properties.clone();
     if let Some(obj) = properties.as_object_mut() {
         obj.insert("catalyst_status".to_string(), serde_json::json!("linked"));
-        obj.insert("linked_hypotheses".to_string(), serde_json::json!(linked_hypotheses));
-        obj.insert("linked_constraints".to_string(), serde_json::json!(linked_constraints));
+        obj.insert(
+            "linked_hypotheses".to_string(),
+            serde_json::json!(linked_hypotheses),
+        );
+        obj.insert(
+            "linked_constraints".to_string(),
+            serde_json::json!(linked_constraints),
+        );
         obj.insert("linked_teloi".to_string(), serde_json::json!(linked_teloi));
         obj.insert("link_count".to_string(), serde_json::json!(valid_links));
     }
@@ -346,7 +366,10 @@ pub fn link_catalyst_to_structure(conn: &Connection, node_id: &str) -> TdgResult
 ///
 /// Score: 0.0 (isolated) → 1.0 (deeply integrated).
 /// Factors: edge ratio, structural links, time-decay.
-pub fn evaluate_integration_quality(conn: &Connection, node_id: &str) -> TdgResult<serde_json::Value> {
+pub fn evaluate_integration_quality(
+    conn: &Connection,
+    node_id: &str,
+) -> TdgResult<serde_json::Value> {
     let node = get_node(conn, node_id)?
         .ok_or_else(|| crate::error::TdgError::Custom(format!("Node {node_id} not found")))?;
 
@@ -449,7 +472,10 @@ pub fn evaluate_integration_quality(conn: &Connection, node_id: &str) -> TdgResu
 }
 
 /// End-to-end catalyst lifecycle: classify → link → evaluate.
-pub fn process_catalyst_lifecycle(conn: &Connection, node_id: &str) -> TdgResult<serde_json::Value> {
+pub fn process_catalyst_lifecycle(
+    conn: &Connection,
+    node_id: &str,
+) -> TdgResult<serde_json::Value> {
     let classified = classify_catalyst(conn, node_id)?;
     let linked = link_catalyst_to_structure(conn, node_id)?;
     let evaluated = evaluate_integration_quality(conn, node_id)?;
@@ -467,9 +493,8 @@ pub fn process_catalyst_lifecycle(conn: &Connection, node_id: &str) -> TdgResult
 
 /// Detect orphan nodes: nodes with no active edges.
 pub fn detect_orphans(conn: &Connection) -> TdgResult<serde_json::Value> {
-    let mut stmt = conn.prepare(
-        "SELECT id, node_type, name, created_at FROM nodes WHERE valid_to IS NULL",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id, node_type, name, created_at FROM nodes WHERE valid_to IS NULL")?;
 
     let rows: Vec<(String, String, String, String)> = stmt
         .query_map([], |row| {
@@ -500,9 +525,9 @@ pub fn detect_orphans(conn: &Connection) -> TdgResult<serde_json::Value> {
                 "%Y-%m-%dT%H:%M:%S%.f",
             )
             .ok()
-            .and_then(|created| {
+            .map(|created| {
                 let now = chrono::Utc::now().naive_utc();
-                Some((now - created).num_days())
+                (now - created).num_days()
             })
             .unwrap_or(0);
 
@@ -615,7 +640,10 @@ pub fn prune_dangling_edges(conn: &Connection) -> TdgResult<serde_json::Value> {
 }
 
 /// Archive stale nodes that have passed their archive_after deadline.
-pub fn archive_stale_nodes(conn: &Connection, days_threshold: Option<i64>) -> TdgResult<serde_json::Value> {
+pub fn archive_stale_nodes(
+    conn: &Connection,
+    days_threshold: Option<i64>,
+) -> TdgResult<serde_json::Value> {
     let threshold = days_threshold.unwrap_or(DEFAULT_STALE_THRESHOLD_DAYS);
     let mut archived = 0i64;
     let mut archived_ids = Vec::new();
@@ -645,7 +673,9 @@ pub fn archive_stale_nodes(conn: &Connection, days_threshold: Option<i64>) -> Td
         let properties: serde_json::Value =
             serde_json::from_str(properties_json).unwrap_or(serde_json::json!({}));
 
-        let should_archive = if let Some(ref archive_after) = properties.get("archive_after").and_then(|v| v.as_str()) {
+        let should_archive = if let Some(archive_after) =
+            properties.get("archive_after").and_then(|v| v.as_str())
+        {
             if let Ok(aa) = chrono::NaiveDateTime::parse_from_str(
                 archive_after.replace('Z', "").as_str(),
                 "%Y-%m-%dT%H:%M:%S%.f",
@@ -712,9 +742,15 @@ pub fn enforce_observation_lifecycle(conn: &Connection) -> TdgResult<serde_json:
     let mut enforced_ids = Vec::new();
 
     for orphan in &disconnected {
-        let severity = orphan.get("severity").and_then(|v| v.as_str()).unwrap_or("");
+        let severity = orphan
+            .get("severity")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let node_id = orphan.get("node_id").and_then(|v| v.as_str()).unwrap_or("");
-        let node_type = orphan.get("node_type").and_then(|v| v.as_str()).unwrap_or("");
+        let node_type = orphan
+            .get("node_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         if severity == "critical" && node_type == "observation" {
             // Archive this critical orphan
@@ -862,7 +898,7 @@ pub fn generate_hygiene_report(conn: &Connection) -> TdgResult<HygieneReport> {
             orphan_ids.len()
         ));
     }
-    if dangling_edge_ids.len() > 0 {
+    if !dangling_edge_ids.is_empty() {
         recommendations.push(format!(
             "Prune {} dangling edges pointing to deleted nodes",
             dangling_edge_ids.len()
@@ -894,21 +930,30 @@ pub fn generate_hygiene_report(conn: &Connection) -> TdgResult<HygieneReport> {
 /// Combined hygiene pipeline: prune dangling → archive stale → enforce lifecycle → report.
 pub fn run_full_hygiene_cycle(conn: &Connection, lean: bool) -> TdgResult<HygieneReport> {
     let pruned = prune_dangling_edges(conn)?;
-    let pruned_count = pruned.get("pruned_count").and_then(|v| v.as_i64()).unwrap_or(0);
+    let pruned_count = pruned
+        .get("pruned_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
 
     let archived = if lean {
         serde_json::json!({"archived_count": 0, "archived_ids": []})
     } else {
         archive_stale_nodes(conn, None)?
     };
-    let archived_count = archived.get("archived_count").and_then(|v| v.as_i64()).unwrap_or(0);
+    let archived_count = archived
+        .get("archived_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
 
     let enforced = if lean {
         serde_json::json!({"enforced_count": 0, "enforced_ids": []})
     } else {
         enforce_observation_lifecycle(conn)?
     };
-    let enforced_count = enforced.get("enforced_count").and_then(|v| v.as_i64()).unwrap_or(0);
+    let enforced_count = enforced
+        .get("enforced_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
 
     let mut report = generate_hygiene_report(conn)?;
 
@@ -1117,7 +1162,8 @@ mod tests {
 
         // Temporarily disable FK constraints to delete node while leaving edge dangling
         conn.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
-        conn.execute("DELETE FROM nodes WHERE id = ?1", params![target.id]).unwrap();
+        conn.execute("DELETE FROM nodes WHERE id = ?1", params![target.id])
+            .unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON").unwrap();
 
         let result = prune_dangling_edges(&conn).unwrap();

@@ -5,6 +5,6 @@
 pub mod auto_wire;
 pub mod node_grammar;
 
+pub use crate::schema::CatalystType;
 pub use auto_wire::auto_wire_edges;
 pub use node_grammar::{NodeBlueprint, NodeGrammar};
-pub use crate::schema::CatalystType;

@@ -1,5 +1,5 @@
-use proptest::prelude::*;
 use ndarray::Array1;
+use proptest::prelude::*;
 
 fn vec_f64(min: f64, max: f64, len: usize) -> impl Strategy<Value = Array1<f64>> {
     prop::collection::vec(min..max, len).prop_map(Array1::from_vec)

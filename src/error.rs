@@ -1,4 +1,3 @@
-
 /// Core error type for the TDG system.
 #[derive(Debug, thiserror::Error)]
 pub enum TdgError {
@@ -18,9 +17,7 @@ pub enum TdgError {
     NotFound(String),
 
     #[error("Circuit breaker tripped after {threshold} consecutive failures")]
-    CircuitBreakerTripped {
-        threshold: usize,
-    },
+    CircuitBreakerTripped { threshold: usize },
 
     #[error("Graph size limit exceeded: {0}")]
     GraphSizeLimit(String),
@@ -43,7 +40,6 @@ pub enum TdgError {
     #[error("{0}")]
     Custom(String),
 }
-
 
 /// Result type alias for TDG operations.
 pub type TdgResult<T> = Result<T, TdgError>;

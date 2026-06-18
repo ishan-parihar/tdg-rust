@@ -3,14 +3,14 @@
 //! Tests cross-module functionality: CRUD → Query → Knowledge → Mind → Ops → MCP.
 
 use tdg_rust::db::{init_fts, init_schema, run_migrations, ConnectionPool};
+use tdg_rust::knowledge;
 use tdg_rust::models::{NewEdge, NewNode, NodeQuery};
 use tdg_rust::ops;
-use tdg_rust::knowledge;
 // scripts module tested via ops pipeline
-use tdg_rust::mind::pulse::PulseEngine;
-use tdg_rust::mind::diagnostic::DiagnosticEngine;
-use tdg_rust::flow::FlowDriveState;
 use serde_json::json;
+use tdg_rust::flow::FlowDriveState;
+use tdg_rust::mind::diagnostic::DiagnosticEngine;
+use tdg_rust::mind::pulse::PulseEngine;
 
 /// Helper: create an in-memory pool for integration tests.
 fn make_pool() -> ConnectionPool {
@@ -20,7 +20,8 @@ fn make_pool() -> ConnectionPool {
         init_fts(conn)?;
         run_migrations(conn)?;
         Ok(())
-    }).expect("schema init");
+    })
+    .expect("schema init");
     pool
 }
 
@@ -31,43 +32,61 @@ fn integration_create_query_search() {
     let pool = make_pool();
     pool.with_connection(|conn| {
         // Create nodes of different types
-        let telos = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "telos".to_string(),
-            name: "Main Goal".to_string(),
-            description: Some("Primary objective".to_string()),
-            ..Default::default()
-        })?;
+        let telos = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "telos".to_string(),
+                name: "Main Goal".to_string(),
+                description: Some("Primary objective".to_string()),
+                ..Default::default()
+            },
+        )?;
 
-        let hyp = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "hypothesis".to_string(),
-            name: "Rust is memory safe".to_string(),
-            description: Some("Memory safety without GC".to_string()),
-            ..Default::default()
-        })?;
+        let hyp = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "hypothesis".to_string(),
+                name: "Rust is memory safe".to_string(),
+                description: Some("Memory safety without GC".to_string()),
+                ..Default::default()
+            },
+        )?;
 
-        let obs = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "observation".to_string(),
-            name: "Observation: Rust benchmarks".to_string(),
-            description: Some("Rust performs well in benchmarks".to_string()),
-            ..Default::default()
-        })?;
+        let obs = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "observation".to_string(),
+                name: "Observation: Rust benchmarks".to_string(),
+                description: Some("Rust performs well in benchmarks".to_string()),
+                ..Default::default()
+            },
+        )?;
 
         // Connect them: telos → hypothesis (DECOMPOSES_TO), obs → hyp (EVIDENCES)
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: telos.id.clone(),
-            target_id: hyp.id.clone(),
-            edge_type: "DECOMPOSES_TO".to_string(),
-            ..Default::default()
-        })?;
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: obs.id.clone(),
-            target_id: hyp.id.clone(),
-            edge_type: "EVIDENCES".to_string(),
-            ..Default::default()
-        })?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: telos.id.clone(),
+                target_id: hyp.id.clone(),
+                edge_type: "DECOMPOSES_TO".to_string(),
+                ..Default::default()
+            },
+        )?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: obs.id.clone(),
+                target_id: hyp.id.clone(),
+                edge_type: "EVIDENCES".to_string(),
+                ..Default::default()
+            },
+        )?;
 
         // Query by type
-        let q = NodeQuery { node_type: Some("hypothesis".to_string()), ..Default::default() };
+        let q = NodeQuery {
+            node_type: Some("hypothesis".to_string()),
+            ..Default::default()
+        };
         let hyps = tdg_rust::db::crud::query_nodes(conn, &q)?;
         assert_eq!(hyps.len(), 1);
         assert_eq!(hyps[0].id, hyp.id);
@@ -77,7 +96,8 @@ fn integration_create_query_search() {
         assert!(!results.is_empty());
 
         // Get edges
-        let out_edges = tdg_rust::db::crud::get_edges(conn, Some(&telos.id), None, None, None, 100)?;
+        let out_edges =
+            tdg_rust::db::crud::get_edges(conn, Some(&telos.id), None, None, None, 100)?;
         assert_eq!(out_edges.len(), 1);
         assert_eq!(out_edges[0].edge_type, "DECOMPOSES_TO");
 
@@ -86,13 +106,18 @@ fn integration_create_query_search() {
 
         // Record event
         let event_id = tdg_rust::db::crud::record_event(
-            conn, "test_event", Some(&hyp.id), None, None,
+            conn,
+            "test_event",
+            Some(&hyp.id),
+            None,
+            None,
             Some(&json!({"test": true})),
         )?;
         assert!(!event_id.is_empty()); // UUID hex string
 
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
 }
 
 // ─── Knowledge Engine Pipeline ───────────────────────────────────────────────
@@ -102,26 +127,35 @@ fn integration_knowledge_lifecycle() {
     let pool = make_pool();
     pool.with_connection(|conn| {
         // Create observation nodes
-        let obs1 = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "observation".to_string(),
-            name: "Signal: Performance drop".to_string(),
-            description: Some("Signal alert detected".to_string()),
-            ..Default::default()
-        })?;
+        let obs1 = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "observation".to_string(),
+                name: "Signal: Performance drop".to_string(),
+                description: Some("Signal alert detected".to_string()),
+                ..Default::default()
+            },
+        )?;
 
-        let hyp = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "hypothesis".to_string(),
-            name: "CPU bottleneck".to_string(),
-            ..Default::default()
-        })?;
+        let hyp = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "hypothesis".to_string(),
+                name: "CPU bottleneck".to_string(),
+                ..Default::default()
+            },
+        )?;
 
         // Link observation to hypothesis
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: obs1.id.clone(),
-            target_id: hyp.id.clone(),
-            edge_type: "EVIDENCES".to_string(),
-            ..Default::default()
-        })?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: obs1.id.clone(),
+                target_id: hyp.id.clone(),
+                edge_type: "EVIDENCES".to_string(),
+                ..Default::default()
+            },
+        )?;
 
         // Classify → Link → Evaluate
         let classified = knowledge::classify_catalyst(conn, &obs1.id)?;
@@ -136,17 +170,23 @@ fn integration_knowledge_lifecycle() {
         assert!(quality > 0.0);
 
         // Full lifecycle
-        let obs2 = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "observation".to_string(),
-            name: "Insight: Pattern found".to_string(),
-            ..Default::default()
-        })?;
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: obs2.id.clone(),
-            target_id: hyp.id.clone(),
-            edge_type: "EVIDENCES".to_string(),
-            ..Default::default()
-        })?;
+        let obs2 = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "observation".to_string(),
+                name: "Insight: Pattern found".to_string(),
+                ..Default::default()
+            },
+        )?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: obs2.id.clone(),
+                target_id: hyp.id.clone(),
+                edge_type: "EVIDENCES".to_string(),
+                ..Default::default()
+            },
+        )?;
         let lifecycle = knowledge::process_catalyst_lifecycle(conn, &obs2.id)?;
         assert_eq!(lifecycle["status"], "lifecycle_complete");
 
@@ -167,7 +207,8 @@ fn integration_knowledge_lifecycle() {
         assert!(archived_count >= 0); // may or may not archive depending on timing
 
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
 }
 
 // ─── Flow Engine Pipeline ────────────────────────────────────────────────────
@@ -176,24 +217,33 @@ fn integration_knowledge_lifecycle() {
 fn integration_flow_drives() {
     let pool = make_pool();
     pool.with_connection(|conn| {
-        let telos = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "telos".to_string(),
-            name: "Flow Telos".to_string(),
-            ..Default::default()
-        })?;
+        let telos = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "telos".to_string(),
+                name: "Flow Telos".to_string(),
+                ..Default::default()
+            },
+        )?;
 
-        let action = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "action".to_string(),
-            name: "Flow Action".to_string(),
-            ..Default::default()
-        })?;
+        let action = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "action".to_string(),
+                name: "Flow Action".to_string(),
+                ..Default::default()
+            },
+        )?;
 
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: telos.id.clone(),
-            target_id: action.id.clone(),
-            edge_type: "DECOMPOSES_TO".to_string(),
-            ..Default::default()
-        })?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: telos.id.clone(),
+                target_id: action.id.clone(),
+                edge_type: "DECOMPOSES_TO".to_string(),
+                ..Default::default()
+            },
+        )?;
 
         // Set drive state on action
         let state = FlowDriveState::intrinsic("action");
@@ -205,7 +255,11 @@ fn integration_flow_drives() {
 
         // Renormalize graph
         let result = tdg_rust::flow::renormalize_graph(conn, false)?;
-        assert!(result.get("healed").is_some() || result.get("emitted").is_some() || result.get("aggregated").is_some());
+        assert!(
+            result.get("healed").is_some()
+                || result.get("emitted").is_some()
+                || result.get("aggregated").is_some()
+        );
 
         // Compute entropy
         let entropy = tdg_rust::flow::compute_graph_entropy(conn)?;
@@ -221,7 +275,8 @@ fn integration_flow_drives() {
         assert!(aggregated >= 0);
 
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
 }
 
 // ─── Mind Pipeline ───────────────────────────────────────────────────────────
@@ -231,22 +286,31 @@ fn integration_mind_pulse_diagnostic() {
     let pool = make_pool();
     pool.with_connection(|conn| {
         // Create a minimal graph
-        let telos = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "telos".to_string(),
-            name: "Mind Telos".to_string(),
-            ..Default::default()
-        })?;
-        let obs = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "observation".to_string(),
-            name: "Mind Observation".to_string(),
-            ..Default::default()
-        })?;
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: obs.id.clone(),
-            target_id: telos.id.clone(),
-            edge_type: "EVIDENCES".to_string(),
-            ..Default::default()
-        })?;
+        let telos = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "telos".to_string(),
+                name: "Mind Telos".to_string(),
+                ..Default::default()
+            },
+        )?;
+        let obs = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "observation".to_string(),
+                name: "Mind Observation".to_string(),
+                ..Default::default()
+            },
+        )?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: obs.id.clone(),
+                target_id: telos.id.clone(),
+                edge_type: "EVIDENCES".to_string(),
+                ..Default::default()
+            },
+        )?;
 
         // Pulse
         let pulse_engine = PulseEngine::new();
@@ -260,7 +324,8 @@ fn integration_mind_pulse_diagnostic() {
         assert!(report.ghost_nodes >= 0);
 
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
 }
 
 // ─── Ops Pipeline ────────────────────────────────────────────────────────────
@@ -269,22 +334,31 @@ fn integration_mind_pulse_diagnostic() {
 fn integration_ops_reconcile_micro_macro() {
     let pool = make_pool();
     pool.with_connection(|conn| {
-        let telos = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "telos".to_string(),
-            name: "Ops Telos".to_string(),
-            ..Default::default()
-        })?;
-        let action = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "action".to_string(),
-            name: "Ops Action".to_string(),
-            ..Default::default()
-        })?;
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: telos.id.clone(),
-            target_id: action.id.clone(),
-            edge_type: "DECOMPOSES_TO".to_string(),
-            ..Default::default()
-        })?;
+        let telos = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "telos".to_string(),
+                name: "Ops Telos".to_string(),
+                ..Default::default()
+            },
+        )?;
+        let action = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "action".to_string(),
+                name: "Ops Action".to_string(),
+                ..Default::default()
+            },
+        )?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: telos.id.clone(),
+                target_id: action.id.clone(),
+                edge_type: "DECOMPOSES_TO".to_string(),
+                ..Default::default()
+            },
+        )?;
 
         // Reconcile
         let reconciled = ops::reconcile(conn)?;
@@ -319,10 +393,9 @@ fn integration_ops_reconcile_micro_macro() {
         assert!(hygiene.get("orphans").is_some());
 
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
 }
-
-
 
 // ─── End-to-End: Create → Connect → Query → Knowledge → Archive ──────────────
 
@@ -331,50 +404,71 @@ fn integration_end_to_end_workflow() {
     let pool = make_pool();
     pool.with_connection(|conn| {
         // 1. Create a telos with actions
-        let telos = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "telos".to_string(),
-            name: "E2E Goal".to_string(),
-            description: Some("End to end test goal".to_string()),
-            ..Default::default()
-        })?;
+        let telos = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "telos".to_string(),
+                name: "E2E Goal".to_string(),
+                description: Some("End to end test goal".to_string()),
+                ..Default::default()
+            },
+        )?;
 
-        let action_a = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "action".to_string(),
-            name: "Action A".to_string(),
-            ..Default::default()
-        })?;
-        let action_b = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "action".to_string(),
-            name: "Action B".to_string(),
-            ..Default::default()
-        })?;
+        let action_a = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "action".to_string(),
+                name: "Action A".to_string(),
+                ..Default::default()
+            },
+        )?;
+        let action_b = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "action".to_string(),
+                name: "Action B".to_string(),
+                ..Default::default()
+            },
+        )?;
 
         // 2. Connect: telos → actions
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: telos.id.clone(),
-            target_id: action_a.id.clone(),
-            edge_type: "DECOMPOSES_TO".to_string(),
-            ..Default::default()
-        })?;
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: telos.id.clone(),
-            target_id: action_b.id.clone(),
-            edge_type: "DECOMPOSES_TO".to_string(),
-            ..Default::default()
-        })?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: telos.id.clone(),
+                target_id: action_a.id.clone(),
+                edge_type: "DECOMPOSES_TO".to_string(),
+                ..Default::default()
+            },
+        )?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: telos.id.clone(),
+                target_id: action_b.id.clone(),
+                edge_type: "DECOMPOSES_TO".to_string(),
+                ..Default::default()
+            },
+        )?;
 
         // 3. Create observations that evidence the telos
-        let obs = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "observation".to_string(),
-            name: "Observation supporting goal".to_string(),
-            ..Default::default()
-        })?;
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: obs.id.clone(),
-            target_id: telos.id.clone(),
-            edge_type: "EVIDENCES".to_string(),
-            ..Default::default()
-        })?;
+        let obs = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "observation".to_string(),
+                name: "Observation supporting goal".to_string(),
+                ..Default::default()
+            },
+        )?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: obs.id.clone(),
+                target_id: telos.id.clone(),
+                edge_type: "EVIDENCES".to_string(),
+                ..Default::default()
+            },
+        )?;
 
         // 4. Classify + link observation
         knowledge::classify_catalyst(conn, &obs.id)?;
@@ -411,20 +505,23 @@ fn integration_end_to_end_workflow() {
 
         // 11. Full stats check
         let node_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0),
+            "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL",
+            [],
+            |r| r.get(0),
         )?;
         let edge_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM edges WHERE valid_to IS NULL", [], |r| r.get(0),
+            "SELECT COUNT(*) FROM edges WHERE valid_to IS NULL",
+            [],
+            |r| r.get(0),
         )?;
-        let event_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM events", [], |r| r.get(0),
-        )?;
+        let event_count: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))?;
         assert!(node_count >= 4);
         assert!(edge_count >= 3);
         assert!(event_count >= 1); // at least the classify event
 
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
 }
 
 // ─── Database Pool Stress Test ───────────────────────────────────────────────
@@ -435,19 +532,31 @@ fn integration_pool_concurrent_connections() {
     // Verify pool can handle multiple sequential connections
     for i in 0..20 {
         pool.with_connection(|conn| {
-            let node = tdg_rust::db::crud::add_node(conn, &NewNode {
-                node_type: "observation".to_string(),
-                name: format!("Pool Test Node {i}"),
-                ..Default::default()
-            })?;
+            let node = tdg_rust::db::crud::add_node(
+                conn,
+                &NewNode {
+                    node_type: "observation".to_string(),
+                    name: format!("Pool Test Node {i}"),
+                    ..Default::default()
+                },
+            )?;
             assert!(node.id.starts_with('n'));
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
     }
 
-    let count: i64 = pool.with_connection(|conn| {
-        Ok(conn.query_row("SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0)).unwrap())
-    }).unwrap();
+    let count: i64 = pool
+        .with_connection(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap())
+        })
+        .unwrap();
     assert_eq!(count, 20);
 }
 
@@ -457,29 +566,55 @@ fn integration_pool_concurrent_connections() {
 fn integration_pathfind() {
     let pool = make_pool();
     pool.with_connection(|conn| {
-        let a = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "telos".to_string(), name: "A".to_string(), ..Default::default()
-        })?;
-        let b = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "action".to_string(), name: "B".to_string(), ..Default::default()
-        })?;
-        let c = tdg_rust::db::crud::add_node(conn, &NewNode {
-            node_type: "action".to_string(), name: "C".to_string(), ..Default::default()
-        })?;
+        let a = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "telos".to_string(),
+                name: "A".to_string(),
+                ..Default::default()
+            },
+        )?;
+        let b = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "action".to_string(),
+                name: "B".to_string(),
+                ..Default::default()
+            },
+        )?;
+        let c = tdg_rust::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "action".to_string(),
+                name: "C".to_string(),
+                ..Default::default()
+            },
+        )?;
 
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: a.id.clone(), target_id: b.id.clone(),
-            edge_type: "DECOMPOSES_TO".to_string(), ..Default::default()
-        })?;
-        tdg_rust::db::crud::add_edge(conn, &NewEdge {
-            source_id: b.id.clone(), target_id: c.id.clone(),
-            edge_type: "DECOMPOSES_TO".to_string(), ..Default::default()
-        })?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: a.id.clone(),
+                target_id: b.id.clone(),
+                edge_type: "DECOMPOSES_TO".to_string(),
+                ..Default::default()
+            },
+        )?;
+        tdg_rust::db::crud::add_edge(
+            conn,
+            &NewEdge {
+                source_id: b.id.clone(),
+                target_id: c.id.clone(),
+                edge_type: "DECOMPOSES_TO".to_string(),
+                ..Default::default()
+            },
+        )?;
 
         let paths = tdg_rust::db::crud::pathfind(conn, &a.id, &c.id, 5, 100)?;
         assert!(!paths.is_empty());
         assert_eq!(paths[0].len(), 3); // a → b → c
 
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
 }

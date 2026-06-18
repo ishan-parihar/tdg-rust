@@ -4,4 +4,4 @@ pub mod pool;
 pub mod schema;
 
 pub use pool::ConnectionPool;
-pub use schema::{init_schema, init_fts, run_migrations};
+pub use schema::{init_fts, init_schema, run_migrations};

@@ -1,10 +1,10 @@
-use std::collections::HashMap;
-use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
 use crate::db::crud;
 use crate::error::TdgResult;
 use crate::models::{NewEdge, NewNode, Node, NodeQuery};
 use crate::schema::{CatalystType, DigestionStatus};
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DigestionEvent {
@@ -39,49 +39,62 @@ impl<'a> DigestionEngine<'a> {
         catalyst_type: &CatalystType,
         description: &str,
     ) -> TdgResult<Node> {
-        let obs = crud::add_node(self.conn, &NewNode {
-            node_type: "observation".to_string(),
-            name: format!("{} observation", catalyst_type),
-            description: Some(description.to_string()),
-            properties: Some(serde_json::json!({
-                "catalyst_type": catalyst_type.to_string(),
-                "status": DigestionStatus::Raw.to_string(),
-            })),
-            quadrants: None,
-            drives: None,
-            lifecycle_state: None,
-            teleological_level: Some("T4".to_string()),
-            developmental_stage: None,
-            confidence: Some(0.5),
-            source: Some("digestion".to_string()),
-            parent_ids: None,
-            agent_id: None,
-        })?;
+        let obs = crud::add_node(
+            self.conn,
+            &NewNode {
+                node_type: "observation".to_string(),
+                name: format!("{} observation", catalyst_type),
+                description: Some(description.to_string()),
+                properties: Some(serde_json::json!({
+                    "catalyst_type": catalyst_type.to_string(),
+                    "status": DigestionStatus::Raw.to_string(),
+                })),
+                quadrants: None,
+                drives: None,
+                lifecycle_state: None,
+                teleological_level: Some("T4".to_string()),
+                developmental_stage: None,
+                confidence: Some(0.5),
+                source: Some("digestion".to_string()),
+                parent_ids: None,
+                agent_id: None,
+            },
+        )?;
 
-        crud::add_edge(self.conn, &NewEdge {
-            source_id: obs.id.clone(),
-            target_id: source_node_id.to_string(),
-            edge_type: "EVIDENCES".to_string(),
-            weight: None,
-            properties: None,
-            agent_id: Some("digestion".to_string()),
-        })?;
+        crud::add_edge(
+            self.conn,
+            &NewEdge {
+                source_id: obs.id.clone(),
+                target_id: source_node_id.to_string(),
+                edge_type: "EVIDENCES".to_string(),
+                weight: None,
+                properties: None,
+                agent_id: Some("digestion".to_string()),
+            },
+        )?;
 
         Ok(obs)
     }
 
     pub fn check_upward_cascade(&self) -> TdgResult<Vec<Node>> {
-        let observations = crud::query_nodes(self.conn, &NodeQuery {
-            node_type: Some("observation".to_string()),
-            limit: Some(10000),
-            ..Default::default()
-        })?;
+        let observations = crud::query_nodes(
+            self.conn,
+            &NodeQuery {
+                node_type: Some("observation".to_string()),
+                limit: Some(10000),
+                ..Default::default()
+            },
+        )?;
 
         let mut by_source: HashMap<String, Vec<&Node>> = HashMap::new();
         for obs in &observations {
-            let edges = crud::get_edges(self.conn, Some(&obs.id), None, Some("EVIDENCES"), None, 100)?;
+            let edges =
+                crud::get_edges(self.conn, Some(&obs.id), None, Some("EVIDENCES"), None, 100)?;
             if let Some(first) = edges.first() {
-                by_source.entry(first.target_id.clone()).or_default().push(obs);
+                by_source
+                    .entry(first.target_id.clone())
+                    .or_default()
+                    .push(obs);
             }
         }
 
@@ -89,37 +102,44 @@ impl<'a> DigestionEngine<'a> {
         for (source_id, obs_list) in &by_source {
             if obs_list.len() >= self.min_similar_for_hypothesis {
                 let parent_ids: Vec<String> = obs_list.iter().map(|o| o.id.clone()).collect();
-                let h = crud::add_node(self.conn, &NewNode {
-                    node_type: "hypothesis".to_string(),
-                    name: format!("Hypothesis from {} observations", obs_list.len()),
-                    description: Some(format!(
-                        "Pattern detected: {} observations from source {}",
-                        obs_list.len(), source_id
-                    )),
-                    properties: Some(serde_json::json!({
-                        "observation_count": obs_list.len(),
-                        "source_node": source_id,
-                    })),
-                    quadrants: None,
-                    drives: None,
-                    lifecycle_state: None,
-                    teleological_level: Some("T3".to_string()),
-                    developmental_stage: None,
-                    confidence: Some(0.3),
-                    source: Some("digestion_cascade".to_string()),
-                    parent_ids: Some(parent_ids),
-                    agent_id: None,
-                })?;
+                let h = crud::add_node(
+                    self.conn,
+                    &NewNode {
+                        node_type: "hypothesis".to_string(),
+                        name: format!("Hypothesis from {} observations", obs_list.len()),
+                        description: Some(format!(
+                            "Pattern detected: {} observations from source {}",
+                            obs_list.len(),
+                            source_id
+                        )),
+                        properties: Some(serde_json::json!({
+                            "observation_count": obs_list.len(),
+                            "source_node": source_id,
+                        })),
+                        quadrants: None,
+                        drives: None,
+                        lifecycle_state: None,
+                        teleological_level: Some("T3".to_string()),
+                        developmental_stage: None,
+                        confidence: Some(0.3),
+                        source: Some("digestion_cascade".to_string()),
+                        parent_ids: Some(parent_ids),
+                        agent_id: None,
+                    },
+                )?;
 
                 for obs in obs_list {
-                    crud::add_edge(self.conn, &NewEdge {
-                        source_id: h.id.clone(),
-                        target_id: obs.id.clone(),
-                        edge_type: "SUPPORTS".to_string(),
-                        weight: None,
-                        properties: None,
-                        agent_id: Some("digestion".to_string()),
-                    })?;
+                    crud::add_edge(
+                        self.conn,
+                        &NewEdge {
+                            source_id: h.id.clone(),
+                            target_id: obs.id.clone(),
+                            edge_type: "SUPPORTS".to_string(),
+                            weight: None,
+                            properties: None,
+                            agent_id: Some("digestion".to_string()),
+                        },
+                    )?;
                 }
 
                 hypotheses.push(h);
@@ -138,30 +158,36 @@ impl<'a> DigestionEngine<'a> {
             ));
         }
 
-        let cap = crud::add_node(self.conn, &NewNode {
-            node_type: "capability".to_string(),
-            name: format!("Capability from: {}", hyp.name),
-            description: Some(hyp.description.clone()),
-            properties: Some(hyp.properties.clone()),
-            quadrants: Some(hyp.quadrants.clone()),
-            drives: Some(hyp.drives.clone()),
-            lifecycle_state: None,
-            teleological_level: Some("T3".to_string()),
-            developmental_stage: None,
-            confidence: Some(hyp.confidence),
-            source: Some("digestion_promotion".to_string()),
-            parent_ids: Some(vec![hypothesis_id.to_string()]),
-            agent_id: None,
-        })?;
+        let cap = crud::add_node(
+            self.conn,
+            &NewNode {
+                node_type: "capability".to_string(),
+                name: format!("Capability from: {}", hyp.name),
+                description: Some(hyp.description.clone()),
+                properties: Some(hyp.properties.clone()),
+                quadrants: Some(hyp.quadrants.clone()),
+                drives: Some(hyp.drives.clone()),
+                lifecycle_state: None,
+                teleological_level: Some("T3".to_string()),
+                developmental_stage: None,
+                confidence: Some(hyp.confidence),
+                source: Some("digestion_promotion".to_string()),
+                parent_ids: Some(vec![hypothesis_id.to_string()]),
+                agent_id: None,
+            },
+        )?;
 
-        crud::add_edge(self.conn, &NewEdge {
-            source_id: cap.id.clone(),
-            target_id: hypothesis_id.to_string(),
-            edge_type: "PROMOTES_TO".to_string(),
-            weight: None,
-            properties: None,
-            agent_id: Some("digestion".to_string()),
-        })?;
+        crud::add_edge(
+            self.conn,
+            &NewEdge {
+                source_id: cap.id.clone(),
+                target_id: hypothesis_id.to_string(),
+                edge_type: "PROMOTES_TO".to_string(),
+                weight: None,
+                properties: None,
+                agent_id: Some("digestion".to_string()),
+            },
+        )?;
 
         Ok(cap)
     }
@@ -169,11 +195,14 @@ impl<'a> DigestionEngine<'a> {
     pub fn process_digestion_cycle(&self) -> TdgResult<Vec<DigestionEvent>> {
         let mut events = Vec::new();
 
-        let observations = crud::query_nodes(self.conn, &NodeQuery {
-            node_type: Some("observation".to_string()),
-            limit: Some(10000),
-            ..Default::default()
-        })?;
+        let observations = crud::query_nodes(
+            self.conn,
+            &NodeQuery {
+                node_type: Some("observation".to_string()),
+                limit: Some(10000),
+                ..Default::default()
+            },
+        )?;
         let mut by_catalyst: HashMap<String, Vec<&Node>> = HashMap::new();
         for obs in &observations {
             if let Some(props) = obs.properties.as_object() {
@@ -186,38 +215,45 @@ impl<'a> DigestionEngine<'a> {
         for (ct_str, obs_list) in &by_catalyst {
             if obs_list.len() >= self.min_similar_for_hypothesis {
                 let parent_ids: Vec<String> = obs_list.iter().map(|o| o.id.clone()).collect();
-                let h = crud::add_node(self.conn, &NewNode {
-                    node_type: "hypothesis".to_string(),
-                    name: format!("Hypothesis: {} {}s", obs_list.len(), ct_str),
-                    description: Some(format!(
-                        "Pattern: {} observations of type {}",
-                        obs_list.len(), ct_str
-                    )),
-                    properties: Some(serde_json::json!({
-                        "catalyst_type": ct_str,
-                        "observation_count": obs_list.len(),
-                    })),
-                    quadrants: None,
-                    drives: None,
-                    lifecycle_state: None,
-                    teleological_level: Some("T3".to_string()),
-                    developmental_stage: None,
-                    confidence: Some(0.3),
-                    source: Some("digestion_cycle".to_string()),
-                    parent_ids: Some(parent_ids),
-                    agent_id: None,
-                })?;
+                let h = crud::add_node(
+                    self.conn,
+                    &NewNode {
+                        node_type: "hypothesis".to_string(),
+                        name: format!("Hypothesis: {} {}s", obs_list.len(), ct_str),
+                        description: Some(format!(
+                            "Pattern: {} observations of type {}",
+                            obs_list.len(),
+                            ct_str
+                        )),
+                        properties: Some(serde_json::json!({
+                            "catalyst_type": ct_str,
+                            "observation_count": obs_list.len(),
+                        })),
+                        quadrants: None,
+                        drives: None,
+                        lifecycle_state: None,
+                        teleological_level: Some("T3".to_string()),
+                        developmental_stage: None,
+                        confidence: Some(0.3),
+                        source: Some("digestion_cycle".to_string()),
+                        parent_ids: Some(parent_ids),
+                        agent_id: None,
+                    },
+                )?;
 
                 let mut new_edges = 0;
                 for obs in obs_list {
-                    crud::add_edge(self.conn, &NewEdge {
-                        source_id: h.id.clone(),
-                        target_id: obs.id.clone(),
-                        edge_type: "SUPPORTS".to_string(),
-                        weight: None,
-                        properties: None,
-                        agent_id: Some("digestion".to_string()),
-                    })?;
+                    crud::add_edge(
+                        self.conn,
+                        &NewEdge {
+                            source_id: h.id.clone(),
+                            target_id: obs.id.clone(),
+                            edge_type: "SUPPORTS".to_string(),
+                            weight: None,
+                            properties: None,
+                            agent_id: Some("digestion".to_string()),
+                        },
+                    )?;
                     new_edges += 1;
                 }
 
@@ -256,21 +292,25 @@ mod tests {
     }
 
     fn create_source(conn: &Connection) -> Node {
-        crud::add_node(conn, &NewNode {
-            node_type: "action".to_string(),
-            name: "Source Action".to_string(),
-            description: None,
-            properties: None,
-            quadrants: None,
-            drives: None,
-            lifecycle_state: None,
-            teleological_level: None,
-            developmental_stage: None,
-            confidence: None,
-            source: None,
-            parent_ids: None,
-            agent_id: None,
-        }).unwrap()
+        crud::add_node(
+            conn,
+            &NewNode {
+                node_type: "action".to_string(),
+                name: "Source Action".to_string(),
+                description: None,
+                properties: None,
+                quadrants: None,
+                drives: None,
+                lifecycle_state: None,
+                teleological_level: None,
+                developmental_stage: None,
+                confidence: None,
+                source: None,
+                parent_ids: None,
+                agent_id: None,
+            },
+        )
+        .unwrap()
     }
 
     #[test]
@@ -279,16 +319,19 @@ mod tests {
         let engine = DigestionEngine::new(&conn);
         let source = create_source(&conn);
 
-        let obs = engine.digest_catalyst(
-            &source.id,
-            &CatalystType::ExternalSuccess,
-            "Something good happened",
-        ).unwrap();
+        let obs = engine
+            .digest_catalyst(
+                &source.id,
+                &CatalystType::ExternalSuccess,
+                "Something good happened",
+            )
+            .unwrap();
 
         assert_eq!(obs.node_type, "observation");
         assert_eq!(obs.teleological_level.as_deref(), Some("T4"));
 
-        let edges = crud::get_edges(&conn, Some(&obs.id), None, Some("EVIDENCES"), None, 10).unwrap();
+        let edges =
+            crud::get_edges(&conn, Some(&obs.id), None, Some("EVIDENCES"), None, 10).unwrap();
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].target_id, source.id);
     }
@@ -300,11 +343,13 @@ mod tests {
         let source = create_source(&conn);
 
         for i in 0..3 {
-            engine.digest_catalyst(
-                &source.id,
-                &CatalystType::ExternalSuccess,
-                &format!("Observation {}", i),
-            ).unwrap();
+            engine
+                .digest_catalyst(
+                    &source.id,
+                    &CatalystType::ExternalSuccess,
+                    &format!("Observation {}", i),
+                )
+                .unwrap();
         }
 
         let hypotheses = engine.check_upward_cascade().unwrap();
@@ -320,13 +365,22 @@ mod tests {
         let source = create_source(&conn);
 
         for i in 0..3 {
-            engine.digest_catalyst(&source.id, &CatalystType::ExternalSuccess, &format!("Obs {}", i)).unwrap();
+            engine
+                .digest_catalyst(
+                    &source.id,
+                    &CatalystType::ExternalSuccess,
+                    &format!("Obs {}", i),
+                )
+                .unwrap();
         }
         let hypotheses = engine.check_upward_cascade().unwrap();
-        let cap = engine.promote_hypothesis_to_capability(&hypotheses[0].id).unwrap();
+        let cap = engine
+            .promote_hypothesis_to_capability(&hypotheses[0].id)
+            .unwrap();
 
         assert_eq!(cap.node_type, "capability");
-        let edges = crud::get_edges(&conn, Some(&cap.id), None, Some("PROMOTES_TO"), None, 10).unwrap();
+        let edges =
+            crud::get_edges(&conn, Some(&cap.id), None, Some("PROMOTES_TO"), None, 10).unwrap();
         assert_eq!(edges.len(), 1);
     }
 
@@ -337,7 +391,13 @@ mod tests {
         let source = create_source(&conn);
 
         for i in 0..5 {
-            engine.digest_catalyst(&source.id, &CatalystType::InternalDiscovery, &format!("Discovery {}", i)).unwrap();
+            engine
+                .digest_catalyst(
+                    &source.id,
+                    &CatalystType::InternalDiscovery,
+                    &format!("Discovery {}", i),
+                )
+                .unwrap();
         }
 
         let events = engine.process_digestion_cycle().unwrap();

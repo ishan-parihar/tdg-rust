@@ -38,10 +38,26 @@ pub struct ProjectState {
 /// Default phases for a project.
 fn default_phases() -> Vec<ProjectPhase> {
     vec![
-        ProjectPhase { name: "planning".to_string(), description: "Define scope and approach".to_string(), status: "pending".to_string() },
-        ProjectPhase { name: "implementation".to_string(), description: "Build the core functionality".to_string(), status: "pending".to_string() },
-        ProjectPhase { name: "testing".to_string(), description: "Validate correctness".to_string(), status: "pending".to_string() },
-        ProjectPhase { name: "deployment".to_string(), description: "Ship to production".to_string(), status: "pending".to_string() },
+        ProjectPhase {
+            name: "planning".to_string(),
+            description: "Define scope and approach".to_string(),
+            status: "pending".to_string(),
+        },
+        ProjectPhase {
+            name: "implementation".to_string(),
+            description: "Build the core functionality".to_string(),
+            status: "pending".to_string(),
+        },
+        ProjectPhase {
+            name: "testing".to_string(),
+            description: "Validate correctness".to_string(),
+            status: "pending".to_string(),
+        },
+        ProjectPhase {
+            name: "deployment".to_string(),
+            description: "Ship to production".to_string(),
+            status: "pending".to_string(),
+        },
     ]
 }
 
@@ -91,11 +107,9 @@ impl ProjectTracker {
 
     /// Advance to the next phase.
     pub fn advance_phase(&mut self, project_id: &str) -> TdgResult<&Project> {
-        let project = self
-            .state
-            .projects
-            .get_mut(project_id)
-            .ok_or_else(|| crate::error::TdgError::Custom(format!("Project {project_id} not found")))?;
+        let project = self.state.projects.get_mut(project_id).ok_or_else(|| {
+            crate::error::TdgError::Custom(format!("Project {project_id} not found"))
+        })?;
 
         // Mark current phase as completed
         if project.current_phase < project.phases.len() {
@@ -116,16 +130,10 @@ impl ProjectTracker {
     }
 
     /// Update the status of the current phase.
-    pub fn update_phase_status(
-        &mut self,
-        project_id: &str,
-        status: &str,
-    ) -> TdgResult<&Project> {
-        let project = self
-            .state
-            .projects
-            .get_mut(project_id)
-            .ok_or_else(|| crate::error::TdgError::Custom(format!("Project {project_id} not found")))?;
+    pub fn update_phase_status(&mut self, project_id: &str, status: &str) -> TdgResult<&Project> {
+        let project = self.state.projects.get_mut(project_id).ok_or_else(|| {
+            crate::error::TdgError::Custom(format!("Project {project_id} not found"))
+        })?;
 
         if project.current_phase < project.phases.len() {
             project.phases[project.current_phase].status = status.to_string();
@@ -137,11 +145,9 @@ impl ProjectTracker {
 
     /// Mark a project as deferred.
     pub fn mark_deferred(&mut self, project_id: &str) -> TdgResult<&Project> {
-        let project = self
-            .state
-            .projects
-            .get_mut(project_id)
-            .ok_or_else(|| crate::error::TdgError::Custom(format!("Project {project_id} not found")))?;
+        let project = self.state.projects.get_mut(project_id).ok_or_else(|| {
+            crate::error::TdgError::Custom(format!("Project {project_id} not found"))
+        })?;
 
         project.status = "deferred".to_string();
         project.updated_at = crate::db::crud::now_iso();
@@ -193,6 +199,12 @@ impl ProjectTracker {
     }
 }
 
+impl Default for ProjectTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,7 +212,11 @@ mod tests {
     #[test]
     fn create_and_advance_project() {
         let mut tracker = ProjectTracker::new();
-        let id = tracker.create_project("Test Project", None).unwrap().id.clone();
+        let id = tracker
+            .create_project("Test Project", None)
+            .unwrap()
+            .id
+            .clone();
         {
             let project = tracker.get_status(&id).unwrap();
             assert_eq!(project.name, "Test Project");
@@ -217,9 +233,18 @@ mod tests {
     #[test]
     fn complete_project() {
         let mut tracker = ProjectTracker::new();
-        let id = tracker.create_project("Short Project", Some(vec![
-            ProjectPhase { name: "do".to_string(), description: "Do it".to_string(), status: "pending".to_string() },
-        ])).unwrap().id.clone();
+        let id = tracker
+            .create_project(
+                "Short Project",
+                Some(vec![ProjectPhase {
+                    name: "do".to_string(),
+                    description: "Do it".to_string(),
+                    status: "pending".to_string(),
+                }]),
+            )
+            .unwrap()
+            .id
+            .clone();
 
         let project = tracker.advance_phase(&id).unwrap();
         assert_eq!(project.status, "completed");
