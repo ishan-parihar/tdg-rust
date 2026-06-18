@@ -62,6 +62,7 @@ impl Config {
             .merge(Env::prefixed("TDG_").split("__"))
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn load() -> Result<Self, ConfigError> {
         let mut config: Config = Self::figment().extract()?;
 

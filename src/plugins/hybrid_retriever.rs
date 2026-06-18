@@ -407,7 +407,7 @@ impl Default for HybridRetriever {
 }
 
 fn decode_f32_vec(blob: &[u8]) -> Result<Vec<f32>, ()> {
-    if blob.len() % 4 != 0 {
+    if !blob.len().is_multiple_of(4) {
         return Err(());
     }
     let chunks = blob.chunks_exact(4);

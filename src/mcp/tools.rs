@@ -18,6 +18,9 @@ use crate::config::Config;
 use crate::db::ConnectionPool;
 use crate::graph_projection::GraphProjection;
 use crate::mind::state::MindStateManager;
+
+/// Drive scores: (positive_pole, negative_pole, net_score) per node.
+type DriveScores = HashMap<String, (Vec<f64>, Vec<f64>, Vec<f64>)>;
 use crate::models::{NewEdge, NewNode, NodeQuery};
 
 use super::MAX_BULK_NODES;
@@ -1150,7 +1153,7 @@ impl TdgServer {
         if params.detail.unwrap_or(false) {
             // drive scores (eros, agape, agency, communion)
             let drive_keys = ["eros", "agape", "agency", "communion"];
-            let mut drives: std::collections::HashMap<String, (Vec<f64>, Vec<f64>, Vec<f64>)> =
+            let mut drives: DriveScores =
                 drive_keys.iter().map(|k| (k.to_string(), (Vec::new(), Vec::new(), Vec::new()))).collect();
 
             if let Ok(mut stmt) = conn.prepare("SELECT properties_json FROM nodes WHERE valid_to IS NULL AND properties_json NOT IN ('{}', '')") {
@@ -1158,14 +1161,14 @@ impl TdgServer {
                     for row in rows.flatten() {
                         if let Ok(props) = serde_json::from_str::<serde_json::Value>(&row) {
                             for dk in &drive_keys {
-                                let pos = props.get(&format!("{}_positive_pole", dk))
-                                    .or_else(|| props.get(&format!("{}.positive_pole", dk)))
+                                let pos = props.get(format!("{}_positive_pole", dk))
+                                    .or_else(|| props.get(format!("{}.positive_pole", dk)))
                                     .and_then(|v| v.as_f64());
-                                let neg = props.get(&format!("{}_negative_pole", dk))
-                                    .or_else(|| props.get(&format!("{}.negative_pole", dk)))
+                                let neg = props.get(format!("{}_negative_pole", dk))
+                                    .or_else(|| props.get(format!("{}.negative_pole", dk)))
                                     .and_then(|v| v.as_f64());
-                                let net = props.get(&format!("{}_net_score", dk))
-                                    .or_else(|| props.get(&format!("{}.net_score", dk)))
+                                let net = props.get(format!("{}_net_score", dk))
+                                    .or_else(|| props.get(format!("{}.net_score", dk)))
                                     .and_then(|v| v.as_f64());
                                 if let Some(p) = pos { if let Some(v) = drives.get_mut(*dk) { v.0.push(p); } }
                                 if let Some(n) = neg { if let Some(v) = drives.get_mut(*dk) { v.1.push(n); } }
@@ -1212,7 +1215,7 @@ impl TdgServer {
                 "5": "Rational", "6": "Pluralistic", "7": "Integral", "8": "Harvest"
             });
             let ns = (cs + 1).min(8);
-            let ns_name = sn_names.get(&ns.to_string()).and_then(|v| v.as_str()).unwrap_or("Unknown");
+            let ns_name = sn_names.get(ns.to_string()).and_then(|v| v.as_str()).unwrap_or("Unknown");
             let req = (stages.len() + 5).max(10) as f64;
             let prog = (stages.len() as f64 / req * 100.0).min(100.0) as i64;
             result["stage_trajectory"] = json!({
@@ -1605,10 +1608,8 @@ impl TdgServer {
                 })
                 .map_err(mcp_err)?;
             let mut map = std::collections::HashMap::new();
-            for row in rows {
-                if let Ok((t, c)) = row {
-                    map.insert(t, c);
-                }
+            for row in rows.flatten() {
+                map.insert(row.0, row.1);
             }
             map
         };

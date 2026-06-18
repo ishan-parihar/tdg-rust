@@ -82,7 +82,7 @@ pub fn unbind(c: &Array1<f64>, r: &Array1<f64>) -> Array1<f64> {
     for (c, r) in c_c.iter_mut().zip(r_c.iter()) {
         let mag_sq = r.re * r.re + r.im * r.im;
         if mag_sq > 1e-10 {
-            *c = *c / *r;
+            *c /= *r;
         } else {
             *c = Complex::new(0.0, 0.0);
         }
