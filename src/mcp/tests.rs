@@ -537,4 +537,91 @@ mod tool_tests {
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(v.get("status").is_some());
     }
+
+    #[test]
+    fn reflect_pattern_fallback_with_focus_topics() {
+        let env = TestEnv::new();
+        let server = env.server();
+
+        env.pool.with_connection(|conn| {
+            for (name, desc) in vec![
+                ("Rust async runtime", "Tokio runtime with epoll for async I/O"),
+                ("Garden planning", "Planning the vegetable garden for summer"),
+                ("Rust borrow checker", "Understanding lifetime annotations in Rust"),
+                ("Grocery shopping", "Weekly grocery list and meal prep"),
+                ("Rust trait objects", "dyn Trait vs generics for dynamic dispatch"),
+            ]
+            .into_iter()
+            {
+                let _ = crate::db::crud::add_node(
+                    conn,
+                    &crate::models::NewNode {
+                        node_type: "observation".into(),
+                        name: name.into(),
+                        description: Some(desc.into()),
+                        ..Default::default()
+                    },
+                );
+            }
+            let _ = crate::db::crud::add_node(
+                conn,
+                &crate::models::NewNode {
+                    node_type: "people".into(),
+                    name: "Alice".into(),
+                    ..Default::default()
+                },
+            );
+            Ok(())
+        })
+        .unwrap();
+
+        let params = ReflectParams {
+            turns: Some(50),
+            focus_topics: Some("rust".into()),
+            status_only: None,
+        };
+        let result = rt()
+            .block_on(server.tdg_reflect(Parameters(params)))
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+
+        assert_eq!(v["status"], "ok");
+        assert_eq!(v["method"], "pattern");
+
+        let insights = v["insights"].as_array().unwrap();
+        assert!(!insights.is_empty());
+
+        let synthesis_nodes = v["synthesis_nodes"].as_array().unwrap();
+        assert!(
+            !synthesis_nodes.is_empty(),
+            "pattern fallback should create synthesis nodes"
+        );
+
+        let insights_text: String = insights.iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            insights_text.contains("rust") || insights_text.contains("Rust"),
+            "focus topic 'rust' should appear in insights: {}",
+            insights_text
+        );
+    }
+
+    #[test]
+    fn reflect_empty_graph_returns_error() {
+        let env = TestEnv::new();
+        let server = env.server();
+        let params = ReflectParams {
+            turns: Some(10),
+            focus_topics: Some("anything".into()),
+            status_only: None,
+        };
+        let result = rt()
+            .block_on(server.tdg_reflect(Parameters(params)))
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(v["status"], "error");
+        assert!(v["error"].as_str().unwrap().contains("No graph context"));
+    }
 }

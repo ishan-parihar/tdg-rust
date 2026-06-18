@@ -1530,7 +1530,7 @@ impl TdgServer {
         }
 
         let conn = get_conn(&self.pool)?;
-        let turns = params.turns.unwrap_or(50).min(200) as i64;
+        let turns = params.turns.unwrap_or(50).min(200);
         let status_only = params.status_only.unwrap_or(false);
         let focus_topics: Vec<String> = params
             .focus_topics
@@ -1616,6 +1616,21 @@ impl TdgServer {
         // Unique entity names
         let entity_names: Vec<String> = people.iter().map(|p| p.name.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
 
+        // ── Focus topics filtering ─────────────────────────────────
+        let observations = if !focus_topics.is_empty() {
+            let mut scored: Vec<(i32, _)> = observations.into_iter().map(|n| {
+                let haystack = format!("{} {}", n.name, n.description).to_lowercase();
+                let score = focus_topics.iter()
+                    .filter(|t| haystack.contains(&t.to_lowercase()))
+                    .count() as i32;
+                (score, n)
+            }).collect();
+            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            scored.into_iter().take(turns as usize).map(|(_, n)| n).collect()
+        } else {
+            observations
+        };
+
         if observations.is_empty() && telos.is_empty() {
             return Ok(serde_json::to_string(&json!({
                 "status": "error",
@@ -1649,6 +1664,7 @@ impl TdgServer {
             "edges": edge_count,
             "total_nodes": total_nodes,
             "node_types": type_dist,
+            "focus_topics": focus_topics,
         });
         let context_str = serde_json::to_string_pretty(&context_map).unwrap_or_default();
 
@@ -1717,7 +1733,7 @@ Do NOT include any text outside the JSON block."#
         }
 
         // ── Fallback: pattern-based synthesis ─────────────────────
-        let pattern_result = pattern_synthesis(&context_map, total_nodes, edge_count);
+        let pattern_result = pattern_synthesis(&conn, &context_map, total_nodes, edge_count, &focus_topics);
         let synthesis_nodes = store_synthesis(&conn, &pattern_result, "pattern", total_nodes);
 
         Ok(serde_json::to_string(&json!({
@@ -2125,7 +2141,13 @@ fn normalize_synthesis_json(data: Value) -> Option<Value> {
     }))
 }
 
-fn pattern_synthesis(context: &Value, total_nodes: i64, edge_count: i64) -> Value {
+fn pattern_synthesis(
+    conn: &rusqlite::Connection,
+    context: &Value,
+    total_nodes: i64,
+    edge_count: i64,
+    focus_topics: &[String],
+) -> Value {
     let mut insights: Vec<String> = Vec::new();
     let mut patterns: Vec<String> = Vec::new();
     let mut questions: Vec<String> = Vec::new();
@@ -2137,6 +2159,7 @@ fn pattern_synthesis(context: &Value, total_nodes: i64, edge_count: i64) -> Valu
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
 
+    // ── Basic node type analysis ────────────────────────────────
     if let Some(types) = node_types {
         let total: i64 = types.values().filter_map(|v| v.as_i64()).sum();
         let mut sorted: Vec<_> = types.iter().collect();
@@ -2163,6 +2186,7 @@ fn pattern_synthesis(context: &Value, total_nodes: i64, edge_count: i64) -> Valu
         insights.push("No recent observation activity detected.".to_string());
     }
 
+    // ── Entity analysis ─────────────────────────────────────────
     if let Some(ent_arr) = entities {
         let names: Vec<&str> = ent_arr.iter().filter_map(|v| v.as_str()).collect();
         if !names.is_empty() {
@@ -2176,6 +2200,7 @@ fn pattern_synthesis(context: &Value, total_nodes: i64, edge_count: i64) -> Valu
         }
     }
 
+    // ── Edge density analysis ───────────────────────────────────
     if obs_count > 0 && edge_count > 0 {
         let density = (edge_count as f64) / (obs_count as f64);
         let density_rounded = (density * 100.0).round() / 100.0;
@@ -2199,6 +2224,152 @@ fn pattern_synthesis(context: &Value, total_nodes: i64, edge_count: i64) -> Valu
         }
     }
 
+    // ── Entity relationship analysis ────────────────────────────
+    if let Some(ent_arr) = entities {
+        let names: Vec<&str> = ent_arr.iter().filter_map(|v| v.as_str()).collect();
+        if names.len() >= 2 {
+            // Query edges between entity-adjacent nodes to find co-occurrence
+            let rel_query = r#"
+                SELECT e.edge_type, COUNT(*) as cnt
+                FROM edges e
+                JOIN nodes ns ON e.source_id = ns.id
+                JOIN nodes nt ON e.target_id = nt.id
+                WHERE e.valid_to IS NULL
+                  AND (ns.node_type = 'people' OR nt.node_type = 'people')
+                GROUP BY e.edge_type
+                ORDER BY cnt DESC
+                LIMIT 5
+            "#;
+            if let Ok(mut stmt) = conn.prepare(rel_query) {
+                if let Ok(rows) = stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                }) {
+                    let rel_types: Vec<String> = rows
+                        .filter_map(|r| r.ok())
+                        .map(|(et, cnt)| format!("{}({})", et, cnt))
+                        .collect();
+                    if !rel_types.is_empty() {
+                        patterns.push(format!(
+                            "Entity relationship patterns: {}.",
+                            rel_types.join(", ")
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Temporal pattern detection ──────────────────────────────
+    {
+        let temporal_query = r#"
+            SELECT
+                created_at,
+                node_type
+            FROM nodes
+            WHERE valid_to IS NULL
+            ORDER BY created_at DESC
+            LIMIT 100
+        "#;
+        if let Ok(mut stmt) = conn.prepare(temporal_query) {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            }) {
+                let entries: Vec<(String, String)> = rows.filter_map(|r| r.ok()).collect();
+                if entries.len() >= 10 {
+                    // Check for burst activity (many nodes on same day)
+                    let mut day_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+                    for (ts, _) in &entries {
+                        let day = ts.chars().take(10).collect::<String>();
+                        *day_counts.entry(day).or_insert(0) += 1;
+                    }
+                    if let Some((peak_day, peak_count)) = day_counts.iter().max_by_key(|(_, c)| *c) {
+                        if *peak_count >= 5 {
+                            patterns.push(format!(
+                                "Temporal burst: {} nodes created on {} — indicates concentrated activity.",
+                                peak_count, peak_day
+                            ));
+                        }
+                    }
+                    // Check for type clustering over time
+                    let mut type_order: Vec<String> = entries.iter().map(|(_, t)| t.clone()).collect();
+                    type_order.dedup();
+                    if type_order.len() <= 3 && entries.len() >= 10 {
+                        patterns.push(format!(
+                            "Recent activity concentrated in {} types: {} — suggests focused work phase.",
+                            type_order.len(),
+                            type_order.join(", ")
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Drive state analysis ────────────────────────────────────
+    {
+        let drive_query = r#"
+            SELECT drives FROM nodes
+            WHERE valid_to IS NULL
+              AND drives IS NOT NULL
+              AND drives != '{}'
+            LIMIT 20
+        "#;
+        if let Ok(mut stmt) = conn.prepare(drive_query) {
+            if let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) {
+                let drive_entries: Vec<String> = rows.filter_map(|r| r.ok()).collect();
+                let mut drive_sum: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+                let mut drive_count = 0i64;
+                for raw in &drive_entries {
+                    if let Ok(val) = serde_json::from_str::<Value>(raw) {
+                        if let Some(obj) = val.as_object() {
+                            drive_count += 1;
+                            for (k, v) in obj {
+                                if let Some(f) = v.as_f64() {
+                                    *drive_sum.entry(k.clone()).or_insert(0.0) += f;
+                                }
+                            }
+                        }
+                    }
+                }
+                if drive_count > 0 && !drive_sum.is_empty() {
+                    let mut avg_drives: Vec<(String, f64)> = drive_sum.iter()
+                        .map(|(k, v)| (k.clone(), v / drive_count as f64))
+                        .collect();
+                    avg_drives.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    let top_drives: Vec<String> = avg_drives.iter().take(3)
+                        .map(|(k, v)| format!("{}({:.2})", k, v))
+                        .collect();
+                    insights.push(format!(
+                        "Active drive dimensions across {} nodes: {}.",
+                        drive_count, top_drives.join(", ")
+                    ));
+                    // Flag depleted drives
+                    let depleted: Vec<&String> = avg_drives.iter()
+                        .filter(|(_, v)| *v < 0.2)
+                        .map(|(k, _)| k)
+                        .collect();
+                    if !depleted.is_empty() {
+                        let depleted_names: Vec<&str> = depleted.iter().map(|s| s.as_str()).collect();
+                        questions.push(format!(
+                            "Depleted drive dimensions ({}) may need attention — what actions could restore them?",
+                            depleted_names.join(", ")
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Focus topics ────────────────────────────────────────────
+    if !focus_topics.is_empty() {
+        let topic_list = focus_topics.join(", ");
+        insights.push(format!("Synthesis focused on: {}.", topic_list));
+        for topic in focus_topics.iter().take(3) {
+            questions.push(format!("What patterns emerge specifically around '{}'?", topic));
+        }
+    }
+
+    // ── Open questions ──────────────────────────────────────────
     if let Some(ent_arr) = entities {
         let count = ent_arr.len();
         if count > 0 {

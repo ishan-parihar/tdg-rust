@@ -1,0 +1,16 @@
+services:
+  tdg:
+    build: .
+    container_name: tdg-rust
+    ports:
+      - "3000:3000"
+    volumes:
+      - tdg-data:/data
+    environment:
+      - TDG_HOME=/data
+      - TDG_DB_PATH=/data/graph.db
+    restart: unless-stopped
+
+volumes:
+  tdg-data:
+    driver: local
