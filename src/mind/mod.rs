@@ -14,6 +14,7 @@
 pub mod consolidation_engine;
 pub mod data_loader;
 pub mod diagnostic;
+pub mod embedding;
 pub mod feeling;
 pub mod injector;
 pub mod metrics;
