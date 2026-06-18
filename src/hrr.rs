@@ -4,6 +4,30 @@ use rand::Rng;
 /// Dimension of HRR phase vectors.
 pub const HRR_DIM: usize = 1024;
 
+// ── Role Constants ───────────────────────────────────────────────────
+// Used as category labels for probe/unbind operations on memory banks.
+
+/// Probe: what entity does this content relate to
+pub const ROLE_ENTITY: &str = "entity";
+/// Related: structural adjacency
+pub const ROLE_ATOM: &str = "atom";
+/// Reason: reasoning over entities
+pub const ROLE_MEM: &str = "mem";
+/// Memory bank super-vector
+pub const ROLE_BANK: &str = "bank";
+
+/// Estimate signal-to-noise ratio for N stored vectors.
+///
+/// SNR ≈ sqrt(dim) / sqrt(N)
+///
+/// Returns `f64::INFINITY` when count is 0.
+pub fn snr_estimate(count: usize, dim: usize) -> f64 {
+    if count == 0 {
+        return f64::INFINITY;
+    }
+    (dim as f64).sqrt() / (count as f64).sqrt()
+}
+
 /// Phase-encode a scalar value into a 1024-dim circular permutation vector.
 pub fn phase_encode(value: f64, dim: usize) -> Array1<f64> {
     let mut rng = rand::thread_rng();

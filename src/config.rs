@@ -115,6 +115,28 @@ impl Config {
             .join("model_quantized.onnx")
     }
 
+    /// Repository root: two levels up from this source file's directory.
+    ///
+    /// Mirrors Python `TDGConfig.repo_root`: `Path(__file__).resolve().parent.parent`.
+    /// In Rust we approximate this by walking up from `CARGO_MANIFEST_DIR`.
+    pub fn repo_root() -> PathBuf {
+        // CARGO_MANIFEST_DIR points to the crate root (tdg-rust/)
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// Read a JSON config file and replace `{REPO_ROOT}` placeholders with the actual repo root.
+    ///
+    /// Mirrors Python `resolve_config_json()` from `core/config.py`.
+    pub fn resolve_config_json(path: &std::path::Path) -> anyhow::Result<serde_json::Value> {
+        let content = std::fs::read_to_string(path)?;
+        let repo = Self::repo_root()
+            .to_string_lossy()
+            .into_owned();
+        let resolved = content.replace("{REPO_ROOT}", &repo);
+        let value: serde_json::Value = serde_json::from_str(&resolved)?;
+        Ok(value)
+    }
+
     /// Ensure all required directories exist.
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
         for dir in [
