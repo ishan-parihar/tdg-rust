@@ -5,14 +5,23 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
+
+use ndarray::Array1;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::schemars::JsonSchema;
 use rmcp::{tool, tool_router, ErrorData as McpError};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use uuid::Uuid;
 
+use petgraph::algo::page_rank;
+
+use crate::config::Config;
 use crate::db::ConnectionPool;
+use crate::graph_projection::GraphProjection;
+use crate::mind::state::MindStateManager;
 use crate::models::{NewEdge, NewNode, NodeQuery};
 
 use super::MAX_BULK_NODES;
@@ -223,6 +232,224 @@ pub struct ReflectParams {
     pub status_only: Option<bool>,
 }
 
+// ─── Trust & Health Params ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetTrustParams {
+    #[schemars(description = "Agent name to query trust for")]
+    pub agent_name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AdjustTrustParams {
+    #[schemars(description = "Agent name to adjust")]
+    pub agent_name: String,
+    #[schemars(description = "Trust delta (positive or negative)")]
+    pub delta: f64,
+    #[schemars(description = "Optional reason for adjustment")]
+    pub reason: Option<String>,
+    #[schemars(description = "Optional source of adjustment")]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct HealthCheckParams {
+    #[schemars(description = "Service name")]
+    pub service: String,
+    #[schemars(description = "Latency in milliseconds")]
+    pub latency_ms: f64,
+    #[schemars(description = "Whether the check succeeded")]
+    pub success: bool,
+    #[schemars(description = "Optional error message")]
+    pub error_message: Option<String>,
+    #[schemars(description = "Optional JSON metadata")]
+    pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SystemHealthParams {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GraphStatsParams {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SaveMindStateParams {
+    #[schemars(description = "Optional session ID to associate with the saved state")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LoadMindStateParams {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetProjectContextParams {
+    #[schemars(description = "Project context string to persist")]
+    pub context: String,
+}
+
+// ─── In-Memory Trust Store ─────────────────────────────────────────────────
+
+/// Per-agent trust entry stored in the in-memory TrustStore.
+#[derive(Debug, Clone)]
+struct TrustEntry {
+    score: f64,
+    updated_at: String,
+    source: Option<String>,
+    reason: Option<String>,
+}
+
+/// Thread-safe in-memory trust store that maps agent names to trust scores.
+///
+/// Default trust score for a new agent is 0.5. Scores are clamped to 0.0–1.0.
+struct TrustStore {
+    entries: Mutex<HashMap<String, TrustEntry>>,
+}
+
+impl TrustStore {
+    fn new() -> Self {
+        Self {
+            entries: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn set_trust(&self, agent_name: &str, score: f64) {
+        let mut entries = self.entries.lock().expect("trust store lock");
+        entries.insert(
+            agent_name.to_string(),
+            TrustEntry {
+                score: score.clamp(0.0, 1.0),
+                updated_at: crate::db::crud::now_iso(),
+                source: None,
+                reason: None,
+            },
+        );
+    }
+
+    fn get_trust(&self, agent_name: &str) -> Option<TrustEntry> {
+        let entries = self.entries.lock().expect("trust store lock");
+        entries.get(agent_name).cloned()
+    }
+
+    fn adjust_trust(
+        &self,
+        agent_name: &str,
+        delta: f64,
+        reason: Option<String>,
+        source: Option<String>,
+    ) -> f64 {
+        let mut entries = self.entries.lock().expect("trust store lock");
+        let now = crate::db::crud::now_iso();
+        let entry = entries.entry(agent_name.to_string()).or_insert(TrustEntry {
+            score: 0.5,
+            updated_at: now.clone(),
+            source: None,
+            reason: None,
+        });
+        entry.score = (entry.score + delta).clamp(0.0, 1.0);
+        entry.updated_at = now;
+        if let Some(r) = reason {
+            entry.reason = Some(r);
+        }
+        if let Some(s) = source {
+            entry.source = Some(s);
+        }
+        entry.score
+    }
+}
+
+// ─── In-Memory Health Monitor ──────────────────────────────────────────────
+
+/// A single health check record.
+#[derive(Debug, Clone)]
+struct HealthCheckRecord {
+    service: String,
+    latency_ms: f64,
+    success: bool,
+    error_message: Option<String>,
+    metadata: Option<Value>,
+    timestamp: String,
+}
+
+/// Thread-safe in-memory health monitor that records service health checks
+/// and tracks circuit breaker status per service.
+struct HealthMonitor {
+    checks: Mutex<Vec<HealthCheckRecord>>,
+    breakers: Mutex<HashMap<String, crate::circuit_breaker::CircuitBreaker>>,
+}
+
+impl HealthMonitor {
+    fn new() -> Self {
+        Self {
+            checks: Mutex::new(Vec::new()),
+            breakers: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn record_health_check(
+        &self,
+        service: &str,
+        latency_ms: f64,
+        success: bool,
+        error_message: Option<String>,
+        metadata: Option<Value>,
+    ) {
+        let mut checks = self.checks.lock().expect("health checks lock");
+        checks.push(HealthCheckRecord {
+            service: service.to_string(),
+            latency_ms,
+            success,
+            error_message,
+            metadata,
+            timestamp: crate::db::crud::now_iso(),
+        });
+        // Update circuit breaker
+        if let Ok(mut breakers) = self.breakers.lock() {
+            let cb = breakers
+                .entry(service.to_string())
+                .or_insert_with(crate::circuit_breaker::CircuitBreaker::new);
+            if success {
+                cb.record_success();
+            } else {
+                cb.record_failure();
+            }
+        }
+    }
+
+    fn get_health_summary(&self) -> Value {
+        let checks = self.checks.lock().expect("health checks lock");
+        let total = checks.len();
+        if total == 0 {
+            return json!({
+                "total_checks": 0,
+                "success_rate": 0.0,
+                "avg_latency_ms": 0.0,
+            });
+        }
+        let successes = checks.iter().filter(|c| c.success).count();
+        let total_latency: f64 = checks.iter().map(|c| c.latency_ms).sum();
+        json!({
+            "total_checks": total,
+            "success_rate": successes as f64 / total as f64,
+            "avg_latency_ms": total_latency / total as f64,
+        })
+    }
+
+    fn get_circuit_breaker_status(&self) -> Value {
+        let breakers = self.breakers.lock().expect("circuit breaker lock");
+        let statuses: Vec<Value> = breakers
+            .iter()
+            .map(|(service, cb)| {
+                json!({
+                    "service": service,
+                    "state": format!("{:?}", cb.state()),
+                    "failure_count": cb.failure_count(),
+                })
+            })
+            .collect();
+        json!({"circuit_breakers": statuses})
+    }
+}
+
 // ─── Helper to get a connection ──────────────────────────────────────────────
 
 fn get_conn(pool: &ConnectionPool) -> Result<rusqlite::Connection, McpError> {
@@ -239,13 +466,21 @@ fn mcp_err(e: impl std::fmt::Display) -> McpError {
 #[derive(Clone)]
 pub struct TdgServer {
     pub pool: Arc<ConnectionPool>,
+    pub trust_store: Arc<TrustStore>,
+    pub health_monitor: Arc<HealthMonitor>,
+    pub mind_state_manager: Arc<MindStateManager>,
 }
 
 #[tool_router(server_handler)]
 impl TdgServer {
     pub fn new(pool: ConnectionPool) -> Self {
+        let config = Config::from_env();
+        let mind_state_manager = Arc::new(MindStateManager::new(config));
         Self {
             pool: Arc::new(pool),
+            trust_store: Arc::new(TrustStore::new()),
+            health_monitor: Arc::new(HealthMonitor::new()),
+            mind_state_manager,
         }
     }
 
@@ -903,5 +1138,217 @@ impl TdgServer {
             )
             .unwrap_or_default()),
         }
+    }
+
+    // ─── Trust Tools ────────────────────────────────────────────────────────
+
+    #[tool(description = "Get the trust score and metadata for a specific agent")]
+    pub(crate) async fn tdg_get_trust(
+        &self,
+        Parameters(params): Parameters<GetTrustParams>,
+    ) -> Result<String, McpError> {
+        match self.trust_store.get_trust(&params.agent_name) {
+            Some(entry) => Ok(serde_json::to_string(&json!({
+                "agent_name": params.agent_name,
+                "score": entry.score,
+                "updated_at": entry.updated_at,
+                "source": entry.source,
+                "reason": entry.reason,
+            }))
+            .unwrap_or_default()),
+            None => Ok(serde_json::to_string(&json!({
+                "agent_name": params.agent_name,
+                "score": 0.5,
+                "note": "No trust record found; returning default score 0.5",
+            }))
+            .unwrap_or_default()),
+        }
+    }
+
+    #[tool(description = "Adjust an agent's trust score by a delta with optional reason and source")]
+    pub(crate) async fn tdg_adjust_trust(
+        &self,
+        Parameters(params): Parameters<AdjustTrustParams>,
+    ) -> Result<String, McpError> {
+        let new_score = self.trust_store.adjust_trust(
+            &params.agent_name,
+            params.delta,
+            params.reason,
+            params.source,
+        );
+        Ok(serde_json::to_string(&json!({
+            "agent_name": params.agent_name,
+            "new_score": new_score,
+        }))
+        .unwrap_or_default())
+    }
+
+    // ─── Health Tools ───────────────────────────────────────────────────────
+
+    #[tool(description = "Record a health check result for a service")]
+    pub(crate) async fn tdg_health_check(
+        &self,
+        Parameters(params): Parameters<HealthCheckParams>,
+    ) -> Result<String, McpError> {
+        self.health_monitor.record_health_check(
+            &params.service,
+            params.latency_ms,
+            params.success,
+            params.error_message,
+            params.metadata,
+        );
+        Ok(serde_json::to_string(&json!({
+            "status": "recorded",
+            "service": params.service,
+            "success": params.success,
+        }))
+        .unwrap_or_default())
+    }
+
+    #[tool(description = "Get overall system health summary including circuit breaker status")]
+    pub(crate) async fn tdg_system_health(
+        &self,
+        Parameters(_params): Parameters<SystemHealthParams>,
+    ) -> Result<String, McpError> {
+        let summary = self.health_monitor.get_health_summary();
+        let cb_status = self.health_monitor.get_circuit_breaker_status();
+        let result = json!({
+            "health": summary,
+            "circuit_breakers": cb_status,
+        });
+        Ok(serde_json::to_string(&result).unwrap_or_default())
+    }
+
+    #[tool(description = "Get graph statistics: node/edge counts, average degree, density, top PageRank hubs")]
+    pub(crate) async fn tdg_graph_stats(
+        &self,
+        Parameters(_params): Parameters<GraphStatsParams>,
+    ) -> Result<String, McpError> {
+        let conn = get_conn(&self.pool)?;
+        let node_count = crate::db::crud::count_nodes(&conn, None).map_err(mcp_err)?;
+        let edge_count = crate::db::crud::count_edges(&conn, None).map_err(mcp_err)?;
+        let avg_degree = if node_count > 0 {
+            (edge_count as f64 * 2.0) / node_count as f64
+        } else {
+            0.0
+        };
+        let density = if node_count > 1 {
+            edge_count as f64 / (node_count as f64 * (node_count as f64 - 1.0))
+        } else {
+            0.0
+        };
+        // PageRank for top hubs
+        let top_hubs: Vec<Value> = if node_count > 0 && edge_count > 0 {
+            match GraphProjection::build(&conn) {
+                Ok(proj) => {
+                    let ranks = page_rank(&proj.graph, 0.85_f64, 100);
+                    let mut ranked: Vec<(String, f64)> = proj
+                        .node_map
+                        .iter()
+                        .map(|(id, idx)| (id.clone(), ranks[idx.index()]))
+                        .collect();
+                    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    ranked
+                        .into_iter()
+                        .take(5)
+                        .map(|(id, score)| json!({"node_id": id, "rank": score}))
+                        .collect()
+                }
+                Err(_) => vec![],
+            }
+        } else {
+            vec![]
+        };
+        Ok(serde_json::to_string(&json!({
+            "node_count": node_count,
+            "edge_count": edge_count,
+            "average_degree": avg_degree,
+            "density": density,
+            "top_hubs": top_hubs,
+        }))
+        .unwrap_or_default())
+    }
+
+    // ─── Mind State Persistence Tools ──────────────────────────────────────────
+
+    #[tool(description = "Save the current mind state to disk. Optionally specify a session ID to associate.")]
+    pub(crate) async fn tdg_save_mind_state(
+        &self,
+        Parameters(params): Parameters<SaveMindStateParams>,
+    ) -> Result<String, McpError> {
+        if let Some(ref session_id) = params.session_id {
+            if !session_id.is_empty() {
+                self.mind_state_manager
+                    .update(|state| {
+                        state.session_id = session_id.clone();
+                    })
+                    .map_err(mcp_err)?;
+            }
+        }
+        self.mind_state_manager.persist().map_err(mcp_err)?;
+        let state = self.mind_state_manager.get_state();
+        Ok(serde_json::to_string(&json!({
+            "status": "saved",
+            "session_id": state.session_id,
+            "version": state.version,
+        }))
+        .unwrap_or_default())
+    }
+
+    #[tool(description = "Load mind state from disk and return a summary of the loaded data")]
+    pub(crate) async fn tdg_load_mind_state(
+        &self,
+        Parameters(_params): Parameters<LoadMindStateParams>,
+    ) -> Result<String, McpError> {
+        let state = self.mind_state_manager.get_state();
+        Ok(serde_json::to_string(&json!({
+            "session_id": state.session_id,
+            "agent_name": state.agent_name,
+            "active_plan": state.active_plan,
+            "trust_score": state.trust_score,
+            "working_memory_count": state.working_memory.len(),
+            "version": state.version,
+            "last_updated": state.last_updated.to_rfc3339(),
+            "metrics": {
+                "tasks_completed": state.metrics.tasks_completed,
+                "tasks_failed": state.metrics.tasks_failed,
+                "avg_response_time_ms": state.metrics.avg_response_time_ms,
+            },
+        }))
+        .unwrap_or_default())
+    }
+
+    #[tool(description = "Get the current project context string")]
+    pub(crate) async fn tdg_get_project_context(
+        &self,
+    ) -> Result<String, McpError> {
+        let context = self
+            .mind_state_manager
+            .recall("project_context")
+            .map(|item| item.value)
+            .unwrap_or_default();
+        Ok(serde_json::to_string(&json!({
+            "project_context": context,
+        }))
+        .unwrap_or_default())
+    }
+
+    #[tool(description = "Set the project context string and persist to disk")]
+    pub(crate) async fn tdg_set_project_context(
+        &self,
+        Parameters(params): Parameters<SetProjectContextParams>,
+    ) -> Result<String, McpError> {
+        if params.context.is_empty() {
+            return Err(McpError::invalid_params("context is required", None));
+        }
+        self.mind_state_manager
+            .remember("project_context", &params.context, None)
+            .map_err(mcp_err)?;
+        self.mind_state_manager.persist().map_err(mcp_err)?;
+        Ok(serde_json::to_string(&json!({
+            "status": "saved",
+            "project_context": params.context,
+        }))
+        .unwrap_or_default())
     }
 }

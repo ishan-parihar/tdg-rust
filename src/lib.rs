@@ -18,6 +18,7 @@ pub mod grammar;
 pub mod graph_projection;
 pub mod hrr;
 pub mod knowledge;
+pub mod llm;
 pub mod mcp;
 pub mod mind;
 pub mod models;

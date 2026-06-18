@@ -6,6 +6,12 @@ Cargo.lock
 .env
 .DS_Store
 
+# Agent session internals
+.contexty/
+.hive/
+.memsearch/
+.sisyphus/
+
 
 # Added by cargo
 #
