@@ -3,11 +3,12 @@
 //! Ported from Python `circuit_breaker.py` (285 lines).
 
 use std::collections::VecDeque;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 
-use crate::error::TdgResult;
+use crate::error::{TdgError, TdgResult};
 use crate::models::{NewNode, Node};
 
 /// Circuit breaker states.
@@ -19,6 +20,15 @@ pub enum CircuitState {
     Open,
     /// Testing if service recovered. One request allowed.
     HalfOpen,
+}
+
+// ─── Global Circuit Breaker ─────────────────────────────────────────────────
+
+static GLOBAL_CIRCUIT_BREAKER: OnceLock<Mutex<CircuitBreaker>> = OnceLock::new();
+
+/// Access the global circuit breaker instance.
+pub fn global_circuit_breaker() -> &'static Mutex<CircuitBreaker> {
+    GLOBAL_CIRCUIT_BREAKER.get_or_init(|| Mutex::new(CircuitBreaker::new()))
 }
 
 /// Circuit breaker with threshold and cooldown.
@@ -133,6 +143,16 @@ impl CircuitBreaker {
     /// Get current failure count.
     pub fn failure_count(&self) -> u32 {
         self.failure_count
+    }
+
+    /// Check if writes are allowed. Returns error when circuit is open.
+    pub fn check_before_write(&self) -> TdgResult<()> {
+        if self.state() == CircuitState::Open {
+            return Err(TdgError::CircuitBreakerTripped {
+                threshold: self.threshold as usize,
+            });
+        }
+        Ok(())
     }
 }
 

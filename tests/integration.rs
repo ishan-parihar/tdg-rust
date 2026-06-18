@@ -618,3 +618,30 @@ fn integration_pathfind() {
     })
     .unwrap();
 }
+
+// ─── Health Check Persistence ────────────────────────────────────────────────
+
+#[test]
+fn integration_health_check_crud() {
+    let pool = make_pool();
+    pool.with_connection(|conn| {
+        tdg_rust::db::crud::record_health_check(conn, "api-gateway", 42.5, true, None)?;
+        tdg_rust::db::crud::record_health_check(conn, "api-gateway", 120.0, false, Some("timeout"))?;
+        tdg_rust::db::crud::record_health_check(conn, "db", 5.0, true, None)?;
+
+        let summary = tdg_rust::db::crud::get_health_summary(conn)?;
+        assert_eq!(summary["total_checks"], 3);
+        assert!(summary["success_rate"].as_f64().unwrap() > 0.6);
+        assert!(summary["avg_latency_ms"].as_f64().unwrap() > 0.0);
+
+        let recent = tdg_rust::db::crud::get_recent_health_checks(conn, None, 10)?;
+        assert_eq!(recent.len(), 3);
+
+        let filtered = tdg_rust::db::crud::get_recent_health_checks(conn, Some("db"), 10)?;
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0]["service"], "db");
+
+        Ok(())
+    })
+    .unwrap();
+}

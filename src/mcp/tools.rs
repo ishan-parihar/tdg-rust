@@ -296,36 +296,73 @@ struct TrustEntry {
     reason: Option<String>,
 }
 
-/// Thread-safe in-memory trust store that maps agent names to trust scores.
+/// Thread-safe trust store backed by SQLite with an in-memory write-through cache.
 ///
 /// Default trust score for a new agent is 0.5. Scores are clamped to 0.0–1.0.
 pub struct TrustStore {
     entries: Mutex<HashMap<String, TrustEntry>>,
+    pool: Arc<ConnectionPool>,
 }
 
 impl TrustStore {
-    fn new() -> Self {
+    fn new(pool: Arc<ConnectionPool>) -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
+            pool,
         }
     }
 
-    fn set_trust(&self, agent_name: &str, score: f64) {
-        let mut entries = self.entries.lock().expect("trust store lock");
+    fn set_trust(&self, agent_name: &str, score: f64, reason: Option<String>) -> Result<(), McpError> {
+        let score = score.clamp(0.0, 1.0);
+        let now = crate::db::crud::now_iso();
+
+        if let Ok(conn) = self.pool.get_connection() {
+            let _ = crate::db::crud::set_trust(
+                &conn,
+                agent_name,
+                score,
+                reason.as_deref(),
+            );
+        }
+
+        let mut entries = self.entries.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
         entries.insert(
             agent_name.to_string(),
             TrustEntry {
-                score: score.clamp(0.0, 1.0),
-                updated_at: crate::db::crud::now_iso(),
+                score,
+                updated_at: now,
                 source: None,
-                reason: None,
+                reason,
             },
         );
+        Ok(())
     }
 
-    fn get_trust(&self, agent_name: &str) -> Option<TrustEntry> {
-        let entries = self.entries.lock().expect("trust store lock");
-        entries.get(agent_name).cloned()
+    fn get_trust(&self, agent_name: &str) -> Result<Option<TrustEntry>, McpError> {
+        {
+            let entries = self.entries.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
+            if let Some(entry) = entries.get(agent_name) {
+                return Ok(Some(entry.clone()));
+            }
+        }
+
+        if let Ok(conn) = self.pool.get_connection() {
+            if let Ok(score) = crate::db::crud::get_trust(&conn, agent_name) {
+                if (score - 0.5).abs() > f64::EPSILON || has_trust_record(&conn, agent_name) {
+                    let entry = TrustEntry {
+                        score,
+                        updated_at: crate::db::crud::now_iso(),
+                        source: None,
+                        reason: None,
+                    };
+                    let mut entries = self.entries.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
+                    entries.insert(agent_name.to_string(), entry.clone());
+                    return Ok(Some(entry));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     fn adjust_trust(
@@ -334,16 +371,28 @@ impl TrustStore {
         delta: f64,
         reason: Option<String>,
         source: Option<String>,
-    ) -> f64 {
-        let mut entries = self.entries.lock().expect("trust store lock");
+    ) -> Result<f64, McpError> {
+        let current = self.get_trust(agent_name)?.map(|e| e.score).unwrap_or(0.5);
+        let new_score = (current + delta).clamp(0.0, 1.0);
         let now = crate::db::crud::now_iso();
+
+        if let Ok(conn) = self.pool.get_connection() {
+            let _ = crate::db::crud::set_trust(
+                &conn,
+                agent_name,
+                new_score,
+                reason.as_deref(),
+            );
+        }
+
+        let mut entries = self.entries.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
         let entry = entries.entry(agent_name.to_string()).or_insert(TrustEntry {
             score: 0.5,
             updated_at: now.clone(),
             source: None,
             reason: None,
         });
-        entry.score = (entry.score + delta).clamp(0.0, 1.0);
+        entry.score = new_score;
         entry.updated_at = now;
         if let Some(r) = reason {
             entry.reason = Some(r);
@@ -351,8 +400,18 @@ impl TrustStore {
         if let Some(s) = source {
             entry.source = Some(s);
         }
-        entry.score
+        Ok(entry.score)
     }
+}
+
+fn has_trust_record(conn: &rusqlite::Connection, agent_name: &str) -> bool {
+    conn.query_row(
+        "SELECT COUNT(*) FROM trust_scores WHERE agent_id = ?1",
+        rusqlite::params![agent_name],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|c| c > 0)
+    .unwrap_or(false)
 }
 
 // ─── In-Memory Health Monitor ──────────────────────────────────────────────
@@ -369,17 +428,19 @@ struct HealthCheckRecord {
 }
 
 /// Thread-safe in-memory health monitor that records service health checks
-/// and tracks circuit breaker status per service.
+/// and tracks circuit breaker status per service. Write-through cache to SQLite.
 pub struct HealthMonitor {
     checks: Mutex<Vec<HealthCheckRecord>>,
     breakers: Mutex<HashMap<String, crate::circuit_breaker::CircuitBreaker>>,
+    pool: Arc<ConnectionPool>,
 }
 
 impl HealthMonitor {
-    fn new() -> Self {
+    fn new(pool: Arc<ConnectionPool>) -> Self {
         Self {
             checks: Mutex::new(Vec::new()),
             breakers: Mutex::new(HashMap::new()),
+            pool,
         }
     }
 
@@ -390,16 +451,31 @@ impl HealthMonitor {
         success: bool,
         error_message: Option<String>,
         metadata: Option<Value>,
-    ) {
-        let mut checks = self.checks.lock().expect("health checks lock");
-        checks.push(HealthCheckRecord {
-            service: service.to_string(),
-            latency_ms,
-            success,
-            error_message,
-            metadata,
-            timestamp: crate::db::crud::now_iso(),
-        });
+    ) -> Result<(), McpError> {
+        // Write to in-memory cache
+        {
+            let mut checks = self.checks.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
+            checks.push(HealthCheckRecord {
+                service: service.to_string(),
+                latency_ms,
+                success,
+                error_message: error_message.clone(),
+                metadata: metadata.clone(),
+                timestamp: crate::db::crud::now_iso(),
+            });
+        }
+
+        // Persist to SQLite (best-effort)
+        if let Ok(conn) = self.pool.get_connection() {
+            let _ = crate::db::crud::record_health_check(
+                &conn,
+                service,
+                latency_ms,
+                success,
+                error_message.as_deref(),
+            );
+        }
+
         // Update circuit breaker
         if let Ok(mut breakers) = self.breakers.lock() {
             let cb = breakers
@@ -411,29 +487,46 @@ impl HealthMonitor {
                 cb.record_failure();
             }
         }
+        Ok(())
     }
 
-    fn get_health_summary(&self) -> Value {
-        let checks = self.checks.lock().expect("health checks lock");
+    fn get_health_summary(&self) -> Result<Value, McpError> {
+        // Read from SQLite for accurate persistence-backed summary
+        if let Ok(conn) = self.pool.get_connection() {
+            if let Ok(summary) = crate::db::crud::get_health_summary(&conn) {
+                return Ok(summary);
+            }
+        }
+        // Fallback to in-memory cache
+        let checks = self.checks.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
         let total = checks.len();
         if total == 0 {
-            return json!({
+            return Ok(json!({
                 "total_checks": 0,
                 "success_rate": 0.0,
                 "avg_latency_ms": 0.0,
-            });
+            }));
         }
         let successes = checks.iter().filter(|c| c.success).count();
         let total_latency: f64 = checks.iter().map(|c| c.latency_ms).sum();
-        json!({
+        Ok(json!({
             "total_checks": total,
             "success_rate": successes as f64 / total as f64,
             "avg_latency_ms": total_latency / total as f64,
-        })
+        }))
     }
 
-    fn get_circuit_breaker_status(&self) -> Value {
-        let breakers = self.breakers.lock().expect("circuit breaker lock");
+    fn get_recent_health_checks(&self, service: Option<&str>, limit: i64) -> Value {
+        if let Ok(conn) = self.pool.get_connection() {
+            if let Ok(checks) = crate::db::crud::get_recent_health_checks(&conn, service, limit) {
+                return json!({"checks": checks, "total": checks.len()});
+            }
+        }
+        json!({"checks": [], "total": 0})
+    }
+
+    fn get_circuit_breaker_status(&self) -> Result<Value, McpError> {
+        let breakers = self.breakers.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
         let statuses: Vec<Value> = breakers
             .iter()
             .map(|(service, cb)| {
@@ -444,7 +537,7 @@ impl HealthMonitor {
                 })
             })
             .collect();
-        json!({"circuit_breakers": statuses})
+        Ok(json!({"circuit_breakers": statuses}))
     }
 }
 
@@ -476,10 +569,11 @@ impl TdgServer {
         let config = Config::from_env();
         let lean = config.lean;
         let mind_state_manager = Arc::new(MindStateManager::new(config));
+        let pool = Arc::new(pool);
         Self {
-            pool: Arc::new(pool),
-            trust_store: Arc::new(TrustStore::new()),
-            health_monitor: Arc::new(HealthMonitor::new()),
+            pool: pool.clone(),
+            trust_store: Arc::new(TrustStore::new(pool.clone())),
+            health_monitor: Arc::new(HealthMonitor::new(pool)),
             mind_state_manager,
             lean,
         }
@@ -1073,23 +1167,23 @@ impl TdgServer {
                                 let net = props.get(&format!("{}_net_score", dk))
                                     .or_else(|| props.get(&format!("{}.net_score", dk)))
                                     .and_then(|v| v.as_f64());
-                                if let Some(p) = pos { drives.get_mut(*dk).unwrap().0.push(p); }
-                                if let Some(n) = neg { drives.get_mut(*dk).unwrap().1.push(n); }
-                                if let Some(nt) = net { drives.get_mut(*dk).unwrap().2.push(nt); }
+                                if let Some(p) = pos { if let Some(v) = drives.get_mut(*dk) { v.0.push(p); } }
+                                if let Some(n) = neg { if let Some(v) = drives.get_mut(*dk) { v.1.push(n); } }
+                                if let Some(nt) = net { if let Some(v) = drives.get_mut(*dk) { v.2.push(nt); } }
                             }
                         }
                     }
                 }
             }
 
-            let drive_scores: serde_json::Map<String, serde_json::Value> = drive_keys.iter().map(|dk| {
-                let (p, n, net) = drives.get(*dk).unwrap();
-                (dk.to_string(), json!({
+            let drive_scores: serde_json::Map<String, serde_json::Value> = drive_keys.iter().filter_map(|dk| {
+                let (p, n, net) = drives.get(*dk)?;
+                Some((dk.to_string(), json!({
                     "avg_positive": if p.is_empty() { 0.0 } else { (p.iter().sum::<f64>() / p.len() as f64 * 100.0).round() / 100.0 },
                     "avg_negative": if n.is_empty() { 0.0 } else { (n.iter().sum::<f64>() / n.len() as f64 * 100.0).round() / 100.0 },
                     "avg_net": if net.is_empty() { 0.0 } else { (net.iter().sum::<f64>() / net.len() as f64 * 100.0).round() / 100.0 },
                     "nodes_with_data": p.len(),
-                }))
+                })))
             }).collect();
             result["drive_scores"] = json!(drive_scores);
 
@@ -1651,8 +1745,9 @@ Do NOT include any text outside the JSON block."#
         if self.lean_guard()? {
             return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
         }
-        match self.trust_store.get_trust(&params.agent_name) {
-            Some(entry) => Ok(serde_json::to_string(&json!({
+        let ts: &TrustStore = &self.trust_store;
+        match ts.get_trust(&params.agent_name) {
+            Ok(Some(entry)) => Ok(serde_json::to_string(&json!({
                 "agent_name": params.agent_name,
                 "score": entry.score,
                 "updated_at": entry.updated_at,
@@ -1660,12 +1755,13 @@ Do NOT include any text outside the JSON block."#
                 "reason": entry.reason,
             }))
             .unwrap_or_default()),
-            None => Ok(serde_json::to_string(&json!({
+            Ok(None) => Ok(serde_json::to_string(&json!({
                 "agent_name": params.agent_name,
                 "score": 0.5,
                 "note": "No trust record found; returning default score 0.5",
             }))
             .unwrap_or_default()),
+            Err(e) => Err(e),
         }
     }
 
@@ -1682,7 +1778,7 @@ Do NOT include any text outside the JSON block."#
             params.delta,
             params.reason,
             params.source,
-        );
+        )?;
         Ok(serde_json::to_string(&json!({
             "agent_name": params.agent_name,
             "new_score": new_score,
@@ -1706,7 +1802,7 @@ Do NOT include any text outside the JSON block."#
             params.success,
             params.error_message,
             params.metadata,
-        );
+        )?;
         Ok(serde_json::to_string(&json!({
             "status": "recorded",
             "service": params.service,
@@ -1723,8 +1819,8 @@ Do NOT include any text outside the JSON block."#
         if self.lean_guard()? {
             return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
         }
-        let summary = self.health_monitor.get_health_summary();
-        let cb_status = self.health_monitor.get_circuit_breaker_status();
+        let summary = self.health_monitor.get_health_summary()?;
+        let cb_status = self.health_monitor.get_circuit_breaker_status()?;
         let result = json!({
             "health": summary,
             "circuit_breakers": cb_status,

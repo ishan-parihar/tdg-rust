@@ -1,8 +1,12 @@
 use std::collections::HashMap;
+use std::path::Path;
+use std::time::Duration;
 
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
+use crate::circuit_breaker::global_circuit_breaker;
+use crate::db::write_guard::WriteGuard;
 use crate::error::{TdgError, TdgResult};
 use crate::models::{Edge, NewEdge, NewNode, Node, NodeQuery};
 
@@ -11,6 +15,36 @@ pub const MAX_NODES: usize = 100_000;
 
 /// Maximum number of edges allowed in the graph.
 pub const MAX_EDGES: usize = 500_000;
+
+fn check_circuit_breaker() -> TdgResult<()> {
+    global_circuit_breaker()
+        .lock()
+        .map_err(|_| TdgError::Custom("Circuit breaker lock poisoned".to_string()))?
+        .check_before_write()
+}
+
+fn record_write_success() {
+    if let Ok(mut cb) = global_circuit_breaker().lock() {
+        cb.record_success();
+    }
+}
+
+fn record_write_failure() {
+    if let Ok(mut cb) = global_circuit_breaker().lock() {
+        cb.record_failure();
+    }
+}
+
+fn acquire_write_guard(conn: &Connection) -> TdgResult<Option<WriteGuard>> {
+    let path_str = match conn.path() {
+        Some(p) if !p.is_empty() => p,
+        _ => return Ok(None),
+    };
+    let db_path = Path::new(path_str);
+    let guard = WriteGuard::acquire(db_path, Duration::from_secs(5))
+        .map_err(|e| TdgError::FileLock(e.to_string()))?;
+    Ok(Some(guard))
+}
 
 /// Generate a node ID: "n" + 12 hex chars from UUID v4.
 fn gen_node_id() -> String {
@@ -35,6 +69,9 @@ pub(crate) fn now_iso() -> String {
 
 /// Create a new node. Returns the created node.
 pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
+    check_circuit_breaker()?;
+    let _guard = acquire_write_guard(conn)?;
+
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0))?;
     if count as usize >= MAX_NODES {
         return Err(TdgError::GraphSizeLimit(format!(
@@ -80,7 +117,7 @@ pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
     // Compute agent_path from parent_ids
     let agent_path = compute_agent_path(conn, &parent_ids)?;
 
-    conn.execute(
+    let result = conn.execute(
         "INSERT INTO nodes (id, node_type, name, description, properties_json, quadrants_json,
          drives_json, lifecycle_state, teleological_level, developmental_stage, confidence,
          source, parent_ids, agent_path, created_at, updated_at, valid_from, agent_id)
@@ -105,11 +142,20 @@ pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
             now,
             agent_id,
         ],
-    )?;
+    );
 
-    get_node(conn, &id)?.ok_or_else(|| {
-        crate::error::TdgError::Custom("Failed to retrieve created node".to_string())
-    })
+    match result {
+        Ok(_) => {
+            record_write_success();
+            get_node(conn, &id)?.ok_or_else(|| {
+                crate::error::TdgError::Custom("Failed to retrieve created node".to_string())
+            })
+        }
+        Err(e) => {
+            record_write_failure();
+            Err(e.into())
+        }
+    }
 }
 
 /// Get a single node by ID. Returns `None` if not found or soft-deleted.
@@ -159,6 +205,8 @@ pub fn update_node(
     if updates.is_empty() {
         return get_node(conn, node_id);
     }
+
+    let _guard = acquire_write_guard(conn)?;
 
     let now = now_iso();
     let mut set_clauses = Vec::new();
@@ -212,31 +260,53 @@ pub fn update_node(
     let mut stmt = conn.prepare(&sql)?;
     let params_ref: Vec<&dyn rusqlite::types::ToSql> =
         param_values.iter().map(|p| p.as_ref()).collect();
-    stmt.execute(params_ref.as_slice())?;
 
-    get_node(conn, node_id)
+    match stmt.execute(params_ref.as_slice()) {
+        Ok(_) => {
+            record_write_success();
+            get_node(conn, node_id)
+        }
+        Err(e) => {
+            record_write_failure();
+            Err(e.into())
+        }
+    }
 }
 
 /// Soft-delete a node (set valid_to).
 pub fn delete_node(conn: &Connection, node_id: &str) -> TdgResult<bool> {
+    check_circuit_breaker()?;
+    let _guard = acquire_write_guard(conn)?;
+
     let now = now_iso();
-    let affected = conn.execute(
+    let result = conn.execute(
         "UPDATE nodes SET valid_to = ?1 WHERE id = ?2 AND valid_to IS NULL",
         params![now, node_id],
-    )?;
+    );
 
-    if affected > 0 {
-        conn.execute(
-            "UPDATE edges SET valid_to = ?1 WHERE (source_id = ?2 OR target_id = ?2) AND valid_to IS NULL",
-            params![now, node_id],
-        )?;
+    match result {
+        Ok(affected) => {
+            if affected > 0 {
+                conn.execute(
+                    "UPDATE edges SET valid_to = ?1 WHERE (source_id = ?2 OR target_id = ?2) AND valid_to IS NULL",
+                    params![now, node_id],
+                )?;
+            }
+            record_write_success();
+            Ok(affected > 0)
+        }
+        Err(e) => {
+            record_write_failure();
+            Err(e.into())
+        }
     }
-
-    Ok(affected > 0)
 }
 
 /// Hard-delete a node (actually remove from DB).
 pub fn hard_delete_node(conn: &Connection, node_id: &str) -> TdgResult<bool> {
+    check_circuit_breaker()?;
+    let _guard = acquire_write_guard(conn)?;
+
     conn.execute(
         "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
         params![node_id],
@@ -245,14 +315,26 @@ pub fn hard_delete_node(conn: &Connection, node_id: &str) -> TdgResult<bool> {
         "DELETE FROM embeddings WHERE node_id = ?1",
         params![node_id],
     )?;
-    let affected = conn.execute("DELETE FROM nodes WHERE id = ?1", params![node_id])?;
-    Ok(affected > 0)
+
+    match conn.execute("DELETE FROM nodes WHERE id = ?1", params![node_id]) {
+        Ok(affected) => {
+            record_write_success();
+            Ok(affected > 0)
+        }
+        Err(e) => {
+            record_write_failure();
+            Err(e.into())
+        }
+    }
 }
 
 // ─── Edge CRUD ───────────────────────────────────────────────────────────────
 
 /// Create a new edge. Returns the created edge.
 pub fn add_edge(conn: &Connection, new: &NewEdge) -> TdgResult<Edge> {
+    check_circuit_breaker()?;
+    let _guard = acquire_write_guard(conn)?;
+
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM edges WHERE valid_to IS NULL", [], |r| r.get(0))?;
     if count as usize >= MAX_EDGES {
         return Err(TdgError::GraphSizeLimit(format!(
@@ -270,7 +352,7 @@ pub fn add_edge(conn: &Connection, new: &NewEdge) -> TdgResult<Edge> {
         .unwrap_or_else(|| "{}".to_string());
     let agent_id = new.agent_id.clone();
 
-    conn.execute(
+    let result = conn.execute(
         "INSERT INTO edges (id, source_id, target_id, edge_type, weight, properties_json,
          valid_from, created_at, agent_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -285,16 +367,25 @@ pub fn add_edge(conn: &Connection, new: &NewEdge) -> TdgResult<Edge> {
             now,
             agent_id,
         ],
-    )?;
+    );
 
-    // Auto-update parent_ids if DECOMPOSES_TO edge
-    if new.edge_type == "DECOMPOSES_TO" {
-        update_parent_ids_on_decompose(conn, &new.target_id)?;
+    match result {
+        Ok(_) => {
+            // Auto-update parent_ids if DECOMPOSES_TO edge
+            if new.edge_type == "DECOMPOSES_TO" {
+                update_parent_ids_on_decompose(conn, &new.target_id)?;
+            }
+
+            record_write_success();
+            get_edge(conn, &id)?.ok_or_else(|| {
+                crate::error::TdgError::Custom("Failed to retrieve created edge".to_string())
+            })
+        }
+        Err(e) => {
+            record_write_failure();
+            Err(e.into())
+        }
     }
-
-    get_edge(conn, &id)?.ok_or_else(|| {
-        crate::error::TdgError::Custom("Failed to retrieve created edge".to_string())
-    })
 }
 
 /// Get a single edge by ID.
@@ -372,12 +463,23 @@ pub fn get_edges(
 
 /// Soft-delete an edge.
 pub fn delete_edge(conn: &Connection, edge_id: &str) -> TdgResult<bool> {
+    check_circuit_breaker()?;
+    let _guard = acquire_write_guard(conn)?;
+
     let now = now_iso();
-    let affected = conn.execute(
+    match conn.execute(
         "UPDATE edges SET valid_to = ?1 WHERE id = ?2 AND valid_to IS NULL",
         params![now, edge_id],
-    )?;
-    Ok(affected > 0)
+    ) {
+        Ok(affected) => {
+            record_write_success();
+            Ok(affected > 0)
+        }
+        Err(e) => {
+            record_write_failure();
+            Err(e.into())
+        }
+    }
 }
 
 /// Update edge weight and/or properties.
@@ -387,6 +489,9 @@ pub fn update_edge(
     weight: Option<f64>,
     properties: Option<&serde_json::Value>,
 ) -> TdgResult<Option<Edge>> {
+    check_circuit_breaker()?;
+    let _guard = acquire_write_guard(conn)?;
+
     let now = now_iso();
     let mut set_clauses = vec!["updated_at = ?1".to_string()];
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now)];
@@ -416,15 +521,25 @@ pub fn update_edge(
     let all_params: Vec<&dyn rusqlite::types::ToSql> =
         param_values.iter().map(|p| p.as_ref()).collect();
 
-    stmt.execute(all_params.as_slice())?;
-
-    get_edge(conn, edge_id)
+    match stmt.execute(all_params.as_slice()) {
+        Ok(_) => {
+            record_write_success();
+            get_edge(conn, edge_id)
+        }
+        Err(e) => {
+            record_write_failure();
+            Err(e.into())
+        }
+    }
 }
 
 // ─── Batch Operations ────────────────────────────────────────────────────────
 
 /// Batch-insert nodes in a single transaction. Returns created nodes.
 pub fn add_nodes_batch(conn: &Connection, nodes: &[NewNode]) -> TdgResult<Vec<Node>> {
+    check_circuit_breaker()?;
+    let _guard = acquire_write_guard(conn)?;
+
     let tx = conn.unchecked_transaction()?;
     let now = now_iso();
     let mut ids = Vec::new();
@@ -491,7 +606,13 @@ pub fn add_nodes_batch(conn: &Connection, nodes: &[NewNode]) -> TdgResult<Vec<No
         ids.push(id);
     }
 
-    tx.commit()?;
+    match tx.commit() {
+        Ok(_) => {}
+        Err(e) => {
+            record_write_failure();
+            return Err(e.into());
+        }
+    }
 
     for id in &ids {
         if let Some(node) = get_node_including_deleted(conn, id)? {
@@ -505,6 +626,8 @@ pub fn add_nodes_batch(conn: &Connection, nodes: &[NewNode]) -> TdgResult<Vec<No
         }
     }
 
+    record_write_success();
+
     // Return created nodes by ID
     let mut result = Vec::new();
     for id in &ids {
@@ -517,6 +640,9 @@ pub fn add_nodes_batch(conn: &Connection, nodes: &[NewNode]) -> TdgResult<Vec<No
 
 /// Batch-insert edges in a single transaction.
 pub fn add_edges_batch(conn: &Connection, edges: &[NewEdge]) -> TdgResult<Vec<Edge>> {
+    check_circuit_breaker()?;
+    let _guard = acquire_write_guard(conn)?;
+
     let tx = conn.unchecked_transaction()?;
     let now = now_iso();
     let mut ids = Vec::new();
@@ -551,7 +677,15 @@ pub fn add_edges_batch(conn: &Connection, edges: &[NewEdge]) -> TdgResult<Vec<Ed
         ids.push(id);
     }
 
-    tx.commit()?;
+    match tx.commit() {
+        Ok(_) => {}
+        Err(e) => {
+            record_write_failure();
+            return Err(e.into());
+        }
+    }
+
+    record_write_success();
 
     let mut result = Vec::new();
     for id in &ids {
@@ -609,17 +743,124 @@ pub fn record_event(
     target_id: Option<&str>,
     payload: Option<&serde_json::Value>,
 ) -> TdgResult<String> {
+    check_circuit_breaker()?;
+    let _guard = acquire_write_guard(conn)?;
+
     let event_id = Uuid::new_v4().as_simple().to_string();
     let now = now_iso();
     let payload_str = payload.map(|p| p.to_string());
 
-    conn.execute(
+    match conn.execute(
         "INSERT INTO events (event_id, event_action, timestamp, node_id, source_id, target_id, payload)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![event_id, event_action, now, node_id, source_id, target_id, payload_str],
+    ) {
+        Ok(_) => {
+            record_write_success();
+            Ok(event_id)
+        }
+        Err(e) => {
+            record_write_failure();
+            Err(e.into())
+        }
+    }
+}
+
+// ─── Health Check CRUD ─────────────────────────────────────────────────────
+
+/// Record a health check result in the database.
+pub fn record_health_check(
+    conn: &Connection,
+    service: &str,
+    latency_ms: f64,
+    success: bool,
+    error_message: Option<&str>,
+) -> TdgResult<()> {
+    let _guard = acquire_write_guard(conn)?;
+
+    let now = now_iso();
+    conn.execute(
+        "INSERT INTO health_checks (service, latency_ms, success, error_message, timestamp)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![service, latency_ms, success as i32, error_message, now],
+    )?;
+    Ok(())
+}
+
+/// Get overall health summary: total checks, success rate, average latency.
+pub fn get_health_summary(conn: &Connection) -> TdgResult<serde_json::Value> {
+    let row = conn.query_row(
+        "SELECT COUNT(*) as total,
+                COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as successes,
+                COALESCE(AVG(latency_ms), 0.0) as avg_latency
+         FROM health_checks",
+        [],
+        |row| {
+            let total: i64 = row.get(0)?;
+            let successes: i64 = row.get(1)?;
+            let avg_latency: f64 = row.get(2)?;
+            Ok((total, successes, avg_latency))
+        },
     )?;
 
-    Ok(event_id)
+    let (total, successes, avg_latency) = row;
+    let success_rate = if total > 0 {
+        successes as f64 / total as f64
+    } else {
+        0.0
+    };
+
+    Ok(serde_json::json!({
+        "total_checks": total,
+        "success_rate": success_rate,
+        "avg_latency_ms": avg_latency,
+    }))
+}
+
+/// Get recent health checks, optionally filtered by service name.
+pub fn get_recent_health_checks(
+    conn: &Connection,
+    service: Option<&str>,
+    limit: i64,
+) -> TdgResult<Vec<serde_json::Value>> {
+    let limit = limit.min(100);
+
+    let mut stmt = conn.prepare(
+        "SELECT service, latency_ms, success, error_message, metadata, timestamp
+         FROM health_checks
+         ORDER BY timestamp DESC LIMIT ?1",
+    )?;
+
+    let rows = if let Some(svc) = service {
+        let mut stmt_filtered = conn.prepare(
+            "SELECT service, latency_ms, success, error_message, metadata, timestamp
+             FROM health_checks WHERE service = ?1
+             ORDER BY timestamp DESC LIMIT ?2",
+        )?;
+        let mapped = stmt_filtered.query_map(params![svc, limit], |row| {
+            health_check_row_to_json(row)
+        })?;
+        mapped.filter_map(|r| r.ok()).collect::<Vec<_>>()
+    } else {
+        let mapped = stmt.query_map(params![limit], |row| {
+            health_check_row_to_json(row)
+        })?;
+        mapped.filter_map(|r| r.ok()).collect::<Vec<_>>()
+    };
+
+    Ok(rows)
+}
+
+fn health_check_row_to_json(row: &rusqlite::Row<'_>) -> rusqlite::Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "service": row.get::<_, String>(0)?,
+        "latency_ms": row.get::<_, f64>(1)?,
+        "success": row.get::<_, i32>(2)? != 0,
+        "error_message": row.get::<_, Option<String>>(3)?,
+        "metadata": row.get::<_, Option<String>>(4)?
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()),
+        "timestamp": row.get::<_, String>(5)?,
+    }))
 }
 
 // ─── Phase 3: Query Engine ──────────────────────────────────────────────────
@@ -1099,6 +1340,43 @@ pub fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+// ─── Trust CRUD ──────────────────────────────────────────────────────────────
+
+/// Set a trust score for an agent. Overwrites any existing score.
+pub fn set_trust(conn: &Connection, agent_id: &str, score: f64, reason: Option<&str>) -> TdgResult<()> {
+    let _guard = acquire_write_guard(conn)?;
+
+    let now = now_iso();
+    let score = score.clamp(0.0, 1.0);
+    conn.execute(
+        "INSERT OR REPLACE INTO trust_scores (agent_id, score, updated_at, reason)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![agent_id, score, now, reason],
+    )?;
+    Ok(())
+}
+
+/// Get the trust score for an agent. Returns 0.5 if not found.
+pub fn get_trust(conn: &Connection, agent_id: &str) -> TdgResult<f64> {
+    let score: f64 = conn
+        .query_row(
+            "SELECT score FROM trust_scores WHERE agent_id = ?1",
+            params![agent_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.5);
+    Ok(score)
+}
+
+/// Adjust an agent's trust score by a delta. Returns the new score.
+/// Creates a default entry (0.5) if the agent has no trust record.
+pub fn adjust_trust(conn: &Connection, agent_id: &str, delta: f64, reason: Option<&str>) -> TdgResult<f64> {
+    let current = get_trust(conn, agent_id)?;
+    let new_score = (current + delta).clamp(0.0, 1.0);
+    set_trust(conn, agent_id, new_score, reason)?;
+    Ok(new_score)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1396,5 +1674,44 @@ mod tests {
         for (a, b) in vec.iter().zip(recovered.iter()) {
             assert!((a - b).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn circuit_breaker_blocks_writes_when_open() {
+        use crate::circuit_breaker::{global_circuit_breaker, CircuitState};
+        use crate::error::TdgError;
+
+        {
+            let mut cb = global_circuit_breaker().lock().unwrap();
+            cb.reset();
+        }
+
+        let conn = setup_db();
+
+        // Write succeeds when CB is closed
+        let node = add_node(&conn, &make_node("telos", "Before-Trip")).unwrap();
+        assert!(!node.id.is_empty());
+
+        // Trip the circuit breaker
+        {
+            let mut cb = global_circuit_breaker().lock().unwrap();
+            cb.record_failure();
+            cb.record_failure();
+            cb.record_failure();
+            assert_eq!(cb.state(), CircuitState::Open);
+        }
+
+        // Write fails when CB is open — verified by error variant
+        let err = add_node(&conn, &make_node("action", "Blocked")).unwrap_err();
+        assert!(matches!(err, TdgError::CircuitBreakerTripped { .. }));
+
+        // Reset and verify recovery
+        {
+            let mut cb = global_circuit_breaker().lock().unwrap();
+            cb.reset();
+        }
+
+        let recovered = add_node(&conn, &make_node("action", "After-Reset")).unwrap();
+        assert_eq!(recovered.node_type, "action");
     }
 }

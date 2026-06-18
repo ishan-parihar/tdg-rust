@@ -170,6 +170,30 @@ CREATE INDEX IF NOT EXISTS idx_edges_source_target_valid ON edges(source_id, tar
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_events_action ON events(event_action);
 CREATE INDEX IF NOT EXISTS idx_events_node ON events(node_id);
+
+-- Health checks table
+CREATE TABLE IF NOT EXISTS health_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    service TEXT NOT NULL,
+    latency_ms REAL NOT NULL,
+    success INTEGER NOT NULL,
+    error_message TEXT,
+    metadata TEXT,
+    timestamp TEXT NOT NULL
+);
+
+-- Indexes for health_checks
+CREATE INDEX IF NOT EXISTS idx_health_checks_service ON health_checks(service);
+CREATE INDEX IF NOT EXISTS idx_health_checks_timestamp ON health_checks(timestamp);
+
+-- Trust scores table (per-agent trust persistence)
+CREATE TABLE IF NOT EXISTS trust_scores (
+    agent_id TEXT PRIMARY KEY,
+    score REAL NOT NULL DEFAULT 0.5,
+    updated_at TEXT NOT NULL,
+    source TEXT,
+    reason TEXT
+);
 "#;
 
 const FTS_SQL: &str = r#"
@@ -358,6 +382,7 @@ mod tests {
         assert!(tables.contains(&"embeddings".to_string()));
         assert!(tables.contains(&"events".to_string()));
         assert!(tables.contains(&"nodes_fts".to_string()));
+        assert!(tables.contains(&"health_checks".to_string()));
     }
 
     #[test]
