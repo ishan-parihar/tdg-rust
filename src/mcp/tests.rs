@@ -222,19 +222,19 @@ mod tool_tests {
             .block_on(server.tdg_connect(Parameters(params)))
             .unwrap();
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(v["edge_type"], "EVOLVES_INTO");
+        assert_eq!(v["edge_type"], "EVIDENCES");
     }
 
     #[test]
     fn connect_duplicate_detected() {
         let env = TestEnv::new();
-        let src = env.add_node("action", "A");
-        let tgt = env.add_node("action", "B");
+        let src = env.add_node("observation", "A");
+        let tgt = env.add_node("observation", "B");
         let server = env.server();
         let p = ConnectParams {
             source_id: src.clone(),
             target_id: tgt.clone(),
-            as_edge: Some("USES".into()),
+            as_edge: Some("SUPPORTS".into()),
             force: None,
         };
         rt().block_on(server.tdg_connect(Parameters(p))).unwrap();
@@ -242,7 +242,7 @@ mod tool_tests {
         let p2 = ConnectParams {
             source_id: src,
             target_id: tgt,
-            as_edge: Some("USES".into()),
+            as_edge: Some("SUPPORTS".into()),
             force: None,
         };
         let result = rt().block_on(server.tdg_connect(Parameters(p2))).unwrap();
@@ -329,8 +329,11 @@ mod tool_tests {
             .block_on(server.tdg_mind_state(Parameters(params)))
             .unwrap();
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert!(v.get("total_nodes").is_some());
-        assert!(v.get("by_type").is_some());
+        assert!(v.get("graph").is_some());
+        assert!(v["graph"].get("nodes").is_some());
+        assert!(v["graph"].get("edges").is_some());
+        assert!(v.get("observations").is_some());
+        assert!(v.get("quadrants").is_some());
     }
 
     // ── tdg_observe ───────────────────────────────────────────────────────
@@ -345,6 +348,7 @@ mod tool_tests {
             cycle: None,
             trust: None,
             entities: None,
+            trigger_digestion: None,
         };
         let result = rt()
             .block_on(server.tdg_observe(Parameters(params)))
@@ -363,6 +367,7 @@ mod tool_tests {
             cycle: None,
             trust: None,
             entities: None,
+            trigger_digestion: None,
         };
         assert!(rt()
             .block_on(server.tdg_observe(Parameters(params)))

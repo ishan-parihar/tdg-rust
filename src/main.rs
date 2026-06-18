@@ -1,23 +1,11 @@
 #![allow(dead_code)] // Binary uses library public API — dead_code warnings are for library consumers
 
-mod config;
-mod db;
-mod error;
-mod flow;
-mod hrr;
-mod knowledge;
-mod mcp;
-mod mind;
-mod models;
-mod ops;
-mod plugins;
-mod scripts;
-mod validation;
-
 use clap::{Parser, Subcommand};
 
-use config::Config;
-use db::{init_fts, init_schema, run_migrations, ConnectionPool};
+use tdg_rust::config::Config;
+use tdg_rust::db::{init_fts, init_schema, run_migrations, ConnectionPool};
+use tdg_rust::scripts;
+use tdg_rust::mcp::server;
 
 #[derive(Parser)]
 #[command(
@@ -267,9 +255,9 @@ fn main() -> anyhow::Result<()> {
             // Use stdio transport by default (for AI integration)
             // If port is non-default (not 3000), use HTTP transport
             if port != 3000 {
-                rt.block_on(mcp::server::serve_http(pool, port))?;
+                rt.block_on(server::serve_http(pool, port))?;
             } else {
-                rt.block_on(mcp::server::serve_stdio(pool))?;
+                rt.block_on(server::serve_stdio(pool))?;
             }
         }
     }
