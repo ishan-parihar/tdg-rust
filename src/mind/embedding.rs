@@ -67,7 +67,7 @@ pub struct EmbeddingResult {
 #[cfg(feature = "onnx")]
 mod onnx_impl {
     use super::*;
-    use anyhow::{Context, Result};
+    use crate::error::{TdgError, TdgResult};
     use ndarray::{Array1, Array2, Axis};
     use ort::session::Session;
     use tokenizers::Tokenizer;
@@ -90,21 +90,27 @@ mod onnx_impl {
     /// Load configuration from `config/embeddings.json`.
     ///
     /// Resolves `{REPO_ROOT}` placeholders using the crate's repo root.
-    pub fn load_config(config_path: &Path) -> Result<EmbeddingConfig> {
-        let content = std::fs::read_to_string(config_path)
-            .with_context(|| format!("Failed to read embeddings config: {}", config_path.display()))?;
+    pub fn load_config(config_path: &Path) -> TdgResult<EmbeddingConfig> {
+        let content = std::fs::read_to_string(config_path).map_err(|e| {
+            TdgError::Custom(format!(
+                "Failed to read embeddings config {}: {e}",
+                config_path.display()
+            ))
+        })?;
         let repo_root = crate::config::Config::repo_root();
         let resolved = content.replace("{REPO_ROOT}", &repo_root.to_string_lossy());
-        let config: EmbeddingConfig =
-            serde_json::from_str(&resolved).context("Failed to parse embeddings config")?;
+        let config: EmbeddingConfig = serde_json::from_str(&resolved)
+            .map_err(|e| TdgError::Custom(format!("Failed to parse embeddings config: {e}")))?;
         Ok(config)
     }
 
     /// Initialize the embedding engine with an explicit config.
     ///
     /// Loads the ONNX model and tokenizer, caching them globally.
-    pub fn init(config: EmbeddingConfig) -> Result<()> {
-        let mut cache = get_cache().lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
+    pub fn init(config: EmbeddingConfig) -> TdgResult<()> {
+        let mut cache = get_cache()
+            .lock()
+            .map_err(|e| TdgError::Custom(format!("Lock poisoned: {e}")))?;
 
         // Already loaded with same config?
         if let Some(ref cached) = *cache {
@@ -115,14 +121,17 @@ mod onnx_impl {
 
         // Load tokenizer
         let tokenizer = Tokenizer::from_file(&config.tokenizer_path)
-            .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {e}"))?;
+            .map_err(|e| TdgError::Custom(format!("Failed to load tokenizer: {e}")))?;
 
         // Load ONNX session
-        let session = Session::builder()?
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)?
-            .with_intra_threads(4)?
+        let session = Session::builder()
+            .map_err(|e| TdgError::Custom(format!("ONNX session builder: {e}")))?
+            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
+            .map_err(|e| TdgError::Custom(format!("ONNX optimization config: {e}")))?
+            .with_intra_threads(4)
+            .map_err(|e| TdgError::Custom(format!("ONNX thread config: {e}")))?
             .commit_from_file(&config.model_path)
-            .context("Failed to load ONNX model")?;
+            .map_err(|e| TdgError::Custom(format!("Failed to load ONNX model: {e}")))?;
 
         *cache = Some(CachedModel {
             session,
@@ -135,28 +144,30 @@ mod onnx_impl {
     /// Embed a single text string → 384-dim float32 vector.
     ///
     /// Steps: tokenize → ONNX inference → mean pooling → L2 normalize.
-    pub fn embed(text: &str) -> Result<EmbeddingResult> {
-        let mut cache = get_cache().lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {e}"))?;
-        let cached = cache
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("Embedding engine not initialized. Call init() first."))?;
+    pub fn embed(text: &str) -> TdgResult<EmbeddingResult> {
+        let mut cache = get_cache()
+            .lock()
+            .map_err(|e| TdgError::Custom(format!("Lock poisoned: {e}")))?;
+        let cached = cache.as_mut().ok_or_else(|| {
+            TdgError::Custom("Embedding engine not initialized. Call init() first.".into())
+        })?;
 
         // Configure tokenizer for this encoding
         let mut tok = cached.tokenizer.clone();
         tok.enable_truncation(cached.config.max_length)
-            .map_err(|e| anyhow::anyhow!("Truncation config failed: {e}"))?;
+            .map_err(|e| TdgError::Custom(format!("Truncation config failed: {e}")))?;
         tok.enable_padding(
             tokenizers::PaddingParams::default()
                 .with_length(cached.config.max_length)
                 .with_pad_id(DEFAULT_PAD_ID as u32)
                 .with_strategy(tokenizers::PaddingStrategy::Fixed),
         )
-        .map_err(|e| anyhow::anyhow!("Padding config failed: {e}"))?;
+        .map_err(|e| TdgError::Custom(format!("Padding config failed: {e}")))?;
 
         // Tokenize
         let encoding = tok
             .encode(text, true)
-            .map_err(|e| anyhow::anyhow!("Tokenization failed: {e}"))?;
+            .map_err(|e| TdgError::Custom(format!("Tokenization failed: {e}")))?;
 
         let seq_len = encoding.len();
         let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
@@ -167,23 +178,26 @@ mod onnx_impl {
 
         // Build tensors: shape [1, seq_len]
         let input_ids_tensor = Array2::from_shape_vec((1, seq_len), input_ids)
-            .map_err(|e| anyhow::anyhow!("input_ids tensor error: {e}"))?;
+            .map_err(|e| TdgError::Custom(format!("input_ids tensor error: {e}")))?;
         let attention_mask_tensor = Array2::from_shape_vec((1, seq_len), attention_mask)
-            .map_err(|e| anyhow::anyhow!("attention_mask tensor error: {e}"))?;
+            .map_err(|e| TdgError::Custom(format!("attention_mask tensor error: {e}")))?;
         let token_type_ids_tensor = Array2::from_shape_vec((1, seq_len), token_type_ids)
-            .map_err(|e| anyhow::anyhow!("token_type_ids tensor error: {e}"))?;
+            .map_err(|e| TdgError::Custom(format!("token_type_ids tensor error: {e}")))?;
 
         // Run ONNX inference
-        let outputs = cached.session.run(ort::inputs![
-            "input_ids" => input_ids_tensor,
-            "attention_mask" => attention_mask_tensor,
-            "token_type_ids" => token_type_ids_tensor,
-        ])?;
+        let outputs = cached
+            .session
+            .run(ort::inputs![
+                "input_ids" => input_ids_tensor,
+                "attention_mask" => attention_mask_tensor,
+                "token_type_ids" => token_type_ids_tensor,
+            ])
+            .map_err(|e| TdgError::Custom(format!("ONNX inference failed: {e}")))?;
 
         // Extract token embeddings: shape [1, seq_len, hidden_dim]
         let token_embeddings = outputs["last_hidden_state"]
             .try_extract_tensor::<f32>()
-            .context("Failed to extract last_hidden_state")?;
+            .map_err(|e| TdgError::Custom(format!("Failed to extract last_hidden_state: {e}")))?;
 
         // Mean pooling: average over non-padding tokens
         let hidden_dim = token_embeddings.shape()[2];
@@ -221,7 +235,7 @@ mod onnx_impl {
     }
 
     /// Embed a batch of texts → list of 384-dim vectors.
-    pub fn embed_batch(texts: &[&str]) -> Result<Vec<EmbeddingResult>> {
+    pub fn embed_batch(texts: &[&str]) -> TdgResult<Vec<EmbeddingResult>> {
         texts.iter().map(|t| embed(t)).collect()
     }
 
@@ -253,25 +267,34 @@ mod onnx_impl {
 #[cfg(not(feature = "onnx"))]
 pub mod onnx_impl {
     use super::*;
+    use crate::error::{TdgError, TdgResult};
 
     /// Stub: returns error when ONNX feature is disabled.
-    pub fn load_config(_config_path: &Path) -> anyhow::Result<EmbeddingConfig> {
-        anyhow::bail!("ONNX feature not enabled. Enable with `--features onnx`.")
+    pub fn load_config(_config_path: &Path) -> TdgResult<EmbeddingConfig> {
+        Err(TdgError::Custom(
+            "ONNX feature not enabled. Enable with `--features onnx`.".into(),
+        ))
     }
 
     /// Stub: returns error when ONNX feature is disabled.
-    pub fn init(_config: EmbeddingConfig) -> anyhow::Result<()> {
-        anyhow::bail!("ONNX feature not enabled. Enable with `--features onnx`.")
+    pub fn init(_config: EmbeddingConfig) -> TdgResult<()> {
+        Err(TdgError::Custom(
+            "ONNX feature not enabled. Enable with `--features onnx`.".into(),
+        ))
     }
 
     /// Stub: returns error when ONNX feature is disabled.
-    pub fn embed(_text: &str) -> anyhow::Result<EmbeddingResult> {
-        anyhow::bail!("ONNX feature not enabled. Enable with `--features onnx`.")
+    pub fn embed(_text: &str) -> TdgResult<EmbeddingResult> {
+        Err(TdgError::Custom(
+            "ONNX feature not enabled. Enable with `--features onnx`.".into(),
+        ))
     }
 
     /// Stub: returns error when ONNX feature is disabled.
-    pub fn embed_batch(_texts: &[&str]) -> anyhow::Result<Vec<EmbeddingResult>> {
-        anyhow::bail!("ONNX feature not enabled. Enable with `--features onnx`.")
+    pub fn embed_batch(_texts: &[&str]) -> TdgResult<Vec<EmbeddingResult>> {
+        Err(TdgError::Custom(
+            "ONNX feature not enabled. Enable with `--features onnx`.".into(),
+        ))
     }
 
     /// Cosine similarity between two vectors (works without ONNX).

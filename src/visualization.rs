@@ -1,15 +1,13 @@
-use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::graph::DiGraph;
 use petgraph::visit::{IntoNodeReferences, EdgeRef};
 use petgraph::dot::{Dot, Config};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 
 /// D3.js force-directed graph JSON export.
 pub mod d3_json {
     use super::*;
 
-    /// Export graph as D3.js-compatible JSON value.
-    pub fn export(graph: &DiGraph<String, String>, _node_map: &HashMap<String, NodeIndex>) -> Value {
+    pub fn export(graph: &DiGraph<String, String>) -> Value {
         let nodes: Vec<Value> = graph.node_references()
             .map(|(idx, weight)| {
                 json!({
@@ -37,9 +35,8 @@ pub mod d3_json {
         })
     }
 
-    /// Export graph as pretty-printed D3.js JSON string.
-    pub fn export_string(graph: &DiGraph<String, String>, node_map: &HashMap<String, NodeIndex>) -> String {
-        serde_json::to_string_pretty(&export(graph, node_map)).unwrap()
+    pub fn export_string(graph: &DiGraph<String, String>) -> String {
+        serde_json::to_string_pretty(&export(graph)).expect("D3 JSON serialization failed")
     }
 }
 
@@ -56,7 +53,8 @@ pub mod dot_export {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petgraph::graph::DiGraph;
+    use petgraph::graph::{DiGraph, NodeIndex};
+    use std::collections::HashMap;
 
     fn build_test_graph() -> (DiGraph<String, String>, HashMap<String, NodeIndex>) {
         let mut graph = DiGraph::new();
@@ -75,16 +73,15 @@ mod tests {
     #[test]
     fn d3_json_empty_graph() {
         let graph: DiGraph<String, String> = DiGraph::new();
-        let node_map = HashMap::new();
-        let val = d3_json::export(&graph, &node_map);
+        let val = d3_json::export(&graph);
         assert_eq!(val["nodes"], json!([]));
         assert_eq!(val["links"], json!([]));
     }
 
     #[test]
     fn d3_json_with_data() {
-        let (graph, node_map) = build_test_graph();
-        let val = d3_json::export(&graph, &node_map);
+        let (graph, _node_map) = build_test_graph();
+        let val = d3_json::export(&graph);
 
         assert_eq!(val["nodes"].as_array().unwrap().len(), 2);
         assert_eq!(val["links"].as_array().unwrap().len(), 1);
@@ -97,8 +94,8 @@ mod tests {
 
     #[test]
     fn d3_json_round_trip() {
-        let (graph, node_map) = build_test_graph();
-        let s = d3_json::export_string(&graph, &node_map);
+        let (graph, _node_map) = build_test_graph();
+        let s = d3_json::export_string(&graph);
         let parsed: Value = serde_json::from_str(&s).unwrap();
         assert_eq!(parsed["nodes"].as_array().unwrap().len(), 2);
         assert_eq!(parsed["links"].as_array().unwrap().len(), 1);

@@ -5,6 +5,7 @@ use rusqlite::Connection;
 use std::collections::HashMap;
 
 use crate::db::crud;
+use crate::error::TdgResult;
 
 /// In-memory graph projection built from SQLite tables.
 pub struct GraphProjection {
@@ -14,7 +15,7 @@ pub struct GraphProjection {
 
 impl GraphProjection {
     /// Build projection from all active nodes and edges.
-    pub fn build(conn: &Connection) -> Result<Self, String> {
+    pub fn build(conn: &Connection) -> TdgResult<Self> {
         let mut graph = DiGraph::new();
         let mut node_map = HashMap::new();
 
@@ -25,16 +26,14 @@ impl GraphProjection {
                 limit: Some(100000),
                 ..Default::default()
             },
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
 
         for node in &nodes {
             let idx = graph.add_node(node.id.clone());
             node_map.insert(node.id.clone(), idx);
         }
 
-        let edges =
-            crud::get_edges(conn, None, None, None, None, 100000).map_err(|e| e.to_string())?;
+        let edges = crud::get_edges(conn, None, None, None, None, 100000)?;
 
         for edge in &edges {
             if let (Some(&src), Some(&tgt)) =
@@ -108,6 +107,11 @@ impl GraphProjection {
         crate::graph_algorithms::graph_density(&self.graph)
     }
 
+    /// Community detection via Leiden algorithm.
+    pub fn leiden_communities(&self) -> HashMap<String, usize> {
+        crate::graph_algorithms::community::leiden_communities(&self.graph)
+    }
+
     /// Get all neighbors of a node.
     pub fn neighbors(&self, node_id: &str) -> Vec<String> {
         if let Some(&idx) = self.node_map.get(node_id) {
@@ -121,11 +125,11 @@ impl GraphProjection {
     }
 
     pub fn to_d3_json(&self) -> serde_json::Value {
-        crate::visualization::d3_json::export(&self.graph, &self.node_map)
+        crate::visualization::d3_json::export(&self.graph)
     }
 
     pub fn to_d3_string(&self) -> String {
-        crate::visualization::d3_json::export_string(&self.graph, &self.node_map)
+        crate::visualization::d3_json::export_string(&self.graph)
     }
 
     pub fn to_dot(&self) -> String {

@@ -109,21 +109,25 @@ impl EventJournal {
         file.write_all(line.as_bytes()).map_err(TdgError::Io)?;
 
         // Append to in-memory cache
-        self.events.lock().unwrap().push(entry);
+        self.events
+            .lock()
+            .map_err(|e| TdgError::Custom(format!("Lock poisoned: {e}")))?
+            .push(entry);
 
         Ok(event_id)
     }
 
     /// Count of events in journal.
     pub fn count(&self) -> usize {
-        self.events.lock().unwrap().len()
+        // ponytail: into_inner() recovers from poison — data is still valid
+        self.events.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Get the last event ID.
     pub fn last_event_id(&self) -> Option<String> {
         self.events
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .last()
             .map(|e| e.event_id.clone())
     }
@@ -134,7 +138,7 @@ impl EventJournal {
         after_event_id: Option<&str>,
         limit: Option<usize>,
     ) -> Vec<JournalEntry> {
-        let events = self.events.lock().unwrap();
+        let events = self.events.lock().unwrap_or_else(|e| e.into_inner());
         let start = if let Some(aid) = after_event_id {
             events
                 .iter()
@@ -155,7 +159,7 @@ impl EventJournal {
     pub fn stream_up_to(&self, timestamp: &str) -> Vec<JournalEntry> {
         self.events
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .filter(|e| e.timestamp.as_str() <= timestamp)
             .cloned()
@@ -183,7 +187,10 @@ impl EventJournal {
         }
         fs::copy(backup, &self.path)?;
         let events = Self::load_from_disk(&self.path)?;
-        *self.events.lock().unwrap() = events;
+        *self
+            .events
+            .lock()
+            .map_err(|e| TdgError::Custom(format!("Lock poisoned: {e}")))? = events;
         Ok(())
     }
 }

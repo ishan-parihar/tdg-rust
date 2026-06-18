@@ -367,10 +367,331 @@ fn parse_entry_name(name: &str) -> (String, String) {
     }
 }
 
-/// Find the vector for a node by its ID inside an already-built bank.
+    /// Find the vector for a node by its ID inside an already-built bank.
 fn find_node_vector(bank: &HrrMemoryBank, node_id: &str) -> Option<Array1<f64>> {
     bank.entries()
         .iter()
         .find(|(name, _)| parse_entry_name(name).0 == node_id)
         .map(|(_, vec)| vec.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{init_schema, run_migrations, ConnectionPool};
+    use crate::hrr;
+    use ndarray::Array1;
+
+    // ── Helper: set up a temp-file pool with schema ──────────────────
+    fn setup_pool() -> (ConnectionPool, tempfile::NamedTempFile) {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let pool = ConnectionPool::new(&path, 5, 30000).unwrap();
+        // Initialize schema on a direct connection
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        init_schema(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+        drop(conn);
+        (pool, tmp)
+    }
+
+    // ── Helper: insert a node + embedding into the DB via pool ───────
+    fn insert_node_with_embedding(
+        pool: &ConnectionPool,
+        node_id: &str,
+        name: &str,
+        node_type: &str,
+        vector: &Array1<f64>,
+    ) {
+        pool.with_connection(|conn| {
+            conn.execute(
+                "INSERT INTO nodes (id, name, node_type, description, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, datetime('now'), datetime('now'))",
+                rusqlite::params![node_id, name, node_type, format!("desc for {name}")],
+            )?;
+            let blob: Vec<u8> = vector.iter().flat_map(|v| (*v as f32).to_le_bytes()).collect();
+            conn.execute(
+                "INSERT INTO embeddings (node_id, vector, model, updated_at) VALUES (?1, ?2, 'test', datetime('now'))",
+                rusqlite::params![node_id, blob],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // ── Helper: insert an edge ───────────────────────────────────────
+    fn insert_edge(pool: &ConnectionPool, src: &str, tgt: &str, edge_type: &str) {
+        pool.with_connection(|conn| {
+            conn.execute(
+                "INSERT INTO edges (id, source_id, target_id, edge_type, created_at) VALUES (?1, ?2, ?3, ?4, datetime('now'))",
+                rusqlite::params![format!("{src}-{tgt}"), src, tgt, edge_type],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    // ── parse_entry_name ─────────────────────────────────────────────
+
+    #[test]
+    fn parse_entry_name_with_delimiter() {
+        let (id, label) = parse_entry_name("abc-123||Test Node");
+        assert_eq!(id, "abc-123");
+        assert_eq!(label, "Test Node");
+    }
+
+    #[test]
+    fn parse_entry_name_without_delimiter() {
+        let (id, label) = parse_entry_name("bare-id");
+        assert_eq!(id, "bare-id");
+        assert_eq!(label, "");
+    }
+
+    #[test]
+    fn parse_entry_name_empty() {
+        let (id, label) = parse_entry_name("");
+        assert_eq!(id, "");
+        assert_eq!(label, "");
+    }
+
+    #[test]
+    fn parse_entry_name_multiple_delimiters() {
+        let (id, label) = parse_entry_name("a||b||c");
+        assert_eq!(id, "a");
+        assert_eq!(label, "b||c");
+    }
+
+    // ── blob_to_hrr_vector ──────────────────────────────────────────
+
+    #[test]
+    fn blob_to_hrr_vector_roundtrip() {
+        let original: Vec<f32> = vec![1.0, -0.5, 0.0, 3.14];
+        let blob: Vec<u8> = original.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let vec = blob_to_hrr_vector(&blob);
+        assert_eq!(vec.len(), 4);
+        for (got, expected) in vec.iter().zip(original.iter()) {
+            assert!((got - *expected as f64).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn blob_to_hrr_vector_full_dim() {
+        let f32_vec: Vec<f32> = (0..HRR_DIM as i32).map(|i| i as f32 * 0.01).collect();
+        let blob: Vec<u8> = f32_vec.iter().flat_map(|v| v.to_le_bytes()).collect();
+        assert_eq!(blob.len(), HRR_DIM * 4);
+        let vec = blob_to_hrr_vector(&blob);
+        assert_eq!(vec.len(), HRR_DIM);
+    }
+
+    // ── text_to_hrr determinism ──────────────────────────────────────
+
+    #[test]
+    fn text_to_hrr_deterministic() {
+        let v1 = HrrRetriever::text_to_hrr("hello world");
+        let v2 = HrrRetriever::text_to_hrr("hello world");
+        assert_eq!(v1.len(), HRR_DIM);
+        assert_eq!(v2.len(), HRR_DIM);
+        for (a, b) in v1.iter().zip(v2.iter()) {
+            assert!((a - b).abs() < 1e-15);
+        }
+    }
+
+    #[test]
+    fn text_to_hrr_different_inputs_differ() {
+        let v1 = HrrRetriever::text_to_hrr("alpha");
+        let v2 = HrrRetriever::text_to_hrr("beta");
+        let sim = hrr::cosine_similarity(&v1, &v2);
+        // Orthogonal-ish: score should be small (not identical)
+        assert!(sim.abs() < 0.15, "similarity {sim} too high for different inputs");
+    }
+
+    #[test]
+    fn text_to_hrr_normalized() {
+        let v = HrrRetriever::text_to_hrr("test");
+        let norm = v.mapv(|x| x * x).sum().sqrt();
+        assert!((norm - 1.0).abs() < 1e-10, "norm should be ~1.0, got {norm}");
+    }
+
+    // ── find_node_vector ─────────────────────────────────────────────
+
+    #[test]
+    fn find_node_vector_found() {
+        let mut bank = HrrMemoryBank::new();
+        let v = Array1::from_vec((0..HRR_DIM).map(|i| i as f64).collect::<Vec<_>>());
+        bank.store("node1||Label A".to_string(), v.clone());
+        let found = find_node_vector(&bank, "node1");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap(), v);
+    }
+
+    #[test]
+    fn find_node_vector_not_found() {
+        let bank = HrrMemoryBank::new();
+        assert!(find_node_vector(&bank, "nonexistent").is_none());
+    }
+
+    // ── HrrRetriever construction ───────────────────────────────────
+
+    #[test]
+    fn retriever_new_succeeds() {
+        let (pool, _tmp) = setup_pool();
+        let _retriever = HrrRetriever::new(pool);
+        // Just verify it compiles and runs
+    }
+
+    // ── probe with empty bank ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn probe_empty_bank_returns_empty() {
+        let (pool, _tmp) = setup_pool();
+        let retriever = HrrRetriever::new(pool);
+        let results = retriever.probe("anything", 10).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    // ── probe with nodes ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn probe_returns_sorted_results() {
+        let (pool, _tmp) = setup_pool();
+        let v1 = hrr::normalize(&HrrRetriever::text_to_hrr("machine learning"));
+        let v2 = hrr::normalize(&HrrRetriever::text_to_hrr("deep learning"));
+        insert_node_with_embedding(&pool, "n1", "ML", "concept", &v1);
+        insert_node_with_embedding(&pool, "n2", "DL", "concept", &v2);
+
+        let retriever = HrrRetriever::new(pool);
+        let results = retriever.probe("machine learning", 10).await.unwrap();
+        assert_eq!(results.len(), 2);
+        // Scores should be in descending order
+        assert!(results[0].score >= results[1].score);
+    }
+
+    #[tokio::test]
+    async fn probe_respects_top_k() {
+        let (pool, _tmp) = setup_pool();
+        for i in 0..5 {
+            let v = hrr::normalize(&HrrRetriever::text_to_hrr(&format!("concept_{i}")));
+            insert_node_with_embedding(&pool, &format!("n{i}"), &format!("C{i}"), "concept", &v);
+        }
+        let retriever = HrrRetriever::new(pool);
+        let results = retriever.probe("concept", 3).await.unwrap();
+        assert!(results.len() <= 3);
+    }
+
+    // ── reason ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn reason_excludes_input_nodes() {
+        let (pool, _tmp) = setup_pool();
+        let v1 = hrr::normalize(&HrrRetriever::text_to_hrr("node_a"));
+        let v2 = hrr::normalize(&HrrRetriever::text_to_hrr("node_b"));
+        let v3 = hrr::normalize(&HrrRetriever::text_to_hrr("node_c"));
+        insert_node_with_embedding(&pool, "a", "A", "concept", &v1);
+        insert_node_with_embedding(&pool, "b", "B", "concept", &v2);
+        insert_node_with_embedding(&pool, "c", "C", "concept", &v3);
+
+        let retriever = HrrRetriever::new(pool);
+        let results = retriever.reason("a", "b", 10).await.unwrap();
+        assert!(!results.iter().any(|r| r.node_id == "a"));
+        assert!(!results.iter().any(|r| r.node_id == "b"));
+    }
+
+    #[tokio::test]
+    async fn reason_missing_node_returns_empty() {
+        let (pool, _tmp) = setup_pool();
+        let v = hrr::normalize(&HrrRetriever::text_to_hrr("only_node"));
+        insert_node_with_embedding(&pool, "n1", "N1", "concept", &v);
+
+        let retriever = HrrRetriever::new(pool);
+        let results = retriever.reason("n1", "nonexistent", 10).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    // ── contradict ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn contradict_excludes_self() {
+        let (pool, _tmp) = setup_pool();
+        let v1 = hrr::normalize(&HrrRetriever::text_to_hrr("statement_a"));
+        let v2 = hrr::normalize(&HrrRetriever::text_to_hrr("statement_b"));
+        insert_node_with_embedding(&pool, "a", "A", "claim", &v1);
+        insert_node_with_embedding(&pool, "b", "B", "claim", &v2);
+
+        let retriever = HrrRetriever::new(pool);
+        let results = retriever.contradict("a", 10).await.unwrap();
+        assert!(!results.iter().any(|r| r.node_id == "a"));
+    }
+
+    #[tokio::test]
+    async fn contradict_missing_node_returns_empty() {
+        let (pool, _tmp) = setup_pool();
+        let retriever = HrrRetriever::new(pool);
+        let results = retriever.contradict("nonexistent", 10).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    // ── related ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn related_no_edges_returns_empty() {
+        let (pool, _tmp) = setup_pool();
+        let v = hrr::normalize(&HrrRetriever::text_to_hrr("isolated"));
+        insert_node_with_embedding(&pool, "n1", "N1", "concept", &v);
+        // No edges inserted
+
+        let retriever = HrrRetriever::new(pool);
+        let results = retriever.related("n1", 10).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn related_with_edges_returns_connected_nodes() {
+        let (pool, _tmp) = setup_pool();
+        let v1 = hrr::normalize(&HrrRetriever::text_to_hrr("source_node"));
+        let v2 = hrr::normalize(&HrrRetriever::text_to_hrr("target_node"));
+        insert_node_with_embedding(&pool, "src", "Source", "concept", &v1);
+        insert_node_with_embedding(&pool, "tgt", "Target", "concept", &v2);
+        insert_edge(&pool, "src", "tgt", "relates_to");
+
+        let retriever = HrrRetriever::new(pool);
+        let results = retriever.related("src", 10).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].node_id, "tgt");
+        assert_eq!(results[0].edge_type, "relates_to");
+    }
+
+    // ── snapshot test for ProbedNode debug format ────────────────────
+
+    #[test]
+    fn snapshot_probed_node_debug() {
+        let node = ProbedNode {
+            node_id: "abc-123".to_string(),
+            label: "Test Node".to_string(),
+            score: 0.8765,
+        };
+        insta::assert_debug_snapshot!(node, @r###"
+        ProbedNode {
+            node_id: "abc-123",
+            label: "Test Node",
+            score: 0.8765,
+        }
+        "###);
+    }
+
+    #[test]
+    fn snapshot_related_node_debug() {
+        let node = RelatedNode {
+            node_id: "n42".to_string(),
+            label: "Connected".to_string(),
+            score: 0.42,
+            edge_type: "depends_on".to_string(),
+        };
+        insta::assert_debug_snapshot!(node, @r###"
+        RelatedNode {
+            node_id: "n42",
+            label: "Connected",
+            score: 0.42,
+            edge_type: "depends_on",
+        }
+        "###);
+    }
 }

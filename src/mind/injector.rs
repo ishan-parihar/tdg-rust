@@ -225,6 +225,10 @@ pub fn write_mind_state_file(
 mod tests {
     use super::*;
     use crate::db::{init_schema, run_migrations};
+    use crate::mind::sections::{
+        generate_pulse_section, generate_revenue_urgency_section, generate_sensory_field,
+        query_sqlite_constraints, query_sqlite_skills,
+    };
     use rusqlite::Connection;
 
     fn setup() -> Connection {
@@ -232,6 +236,18 @@ mod tests {
         init_schema(&conn).unwrap();
         run_migrations(&conn).unwrap();
         conn
+    }
+
+    fn insert_node(conn: &Connection, id: &str, name: &str, node_type: &str) {
+        conn.execute(
+            "INSERT INTO nodes (id, name, node_type, description, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, datetime('now'), datetime('now'))",
+            rusqlite::params![id, name, node_type, format!("desc for {name}")],
+        )
+        .unwrap();
+    }
+
+    fn make_cfg(tmp: &tempfile::NamedTempFile) -> Config {
+        Config::with_db_path(tmp.path().to_path_buf())
     }
 
     #[test]
@@ -277,5 +293,212 @@ mod tests {
         write_mind_state_file(&conn, &cfg, "test prompt", &report, &terrain).unwrap();
         let state_path = cfg.state_dir.join("tdg-mind-state.json");
         assert!(state_path.exists());
+    }
+
+    #[test]
+    fn generate_prompt_with_populated_graph() {
+        let conn = setup();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let cfg = make_cfg(&tmp);
+
+        insert_node(&conn, "n1", "Alpha", "concept");
+        insert_node(&conn, "n2", "Beta", "person");
+        insert_node(&conn, "n3", "Gamma", "concept");
+
+        let prompt = generate_prompt(&conn, &cfg).unwrap();
+        assert!(prompt.contains("## 🌐 Terrain Context"));
+        assert!(prompt.contains("## 📋 Task Stack"));
+        assert!(prompt.contains("## 🧭 Instruction"));
+        assert!(prompt.contains("Active Skills"));
+    }
+
+    #[test]
+    fn generate_prompt_contains_sensory_field() {
+        let conn = setup();
+        let cfg = Config::with_db_path(
+            tempfile::NamedTempFile::new()
+                .unwrap()
+                .into_temp_path()
+                .to_path_buf(),
+        );
+        let prompt = generate_prompt(&conn, &cfg).unwrap();
+        assert!(prompt.contains("Sensory Field"));
+        assert!(prompt.contains("## 🌐 Sensory Field"));
+    }
+
+    #[test]
+    fn generate_prompt_non_lean_shows_events() {
+        let conn = setup();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let cfg = make_cfg(&tmp);
+
+        insert_node(&conn, "n1", "Item", "task");
+
+        let prompt = generate_prompt(&conn, &cfg).unwrap();
+        assert!(!prompt.contains("LEAN MODE"));
+        assert!(prompt.contains("## 🧩 Active Skills"));
+    }
+
+    #[test]
+    fn generate_prompt_lean_no_recent_events() {
+        let conn = setup();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let mut cfg = make_cfg(&tmp);
+        cfg.lean = true;
+
+        let prompt = generate_prompt(&conn, &cfg).unwrap();
+        assert!(prompt.contains("LEAN MODE"));
+        assert!(prompt.contains("Instruction"));
+    }
+
+    #[test]
+    fn generate_prompt_task_stack_section() {
+        let conn = setup();
+        let cfg = Config::with_db_path(
+            tempfile::NamedTempFile::new()
+                .unwrap()
+                .into_temp_path()
+                .to_path_buf(),
+        );
+        let prompt = generate_prompt(&conn, &cfg).unwrap();
+        assert!(prompt.contains("## 📋 Task Stack"));
+        assert!(prompt.contains("Working memory"));
+    }
+
+    #[test]
+    fn write_mind_state_file_json_valid() {
+        let conn = setup();
+        let cfg = Config::with_db_path(
+            tempfile::NamedTempFile::new()
+                .unwrap()
+                .into_temp_path()
+                .to_path_buf(),
+        );
+        let terrain = json!({"active_nodes_by_type": {"concept": 3}});
+        let report = json!({"pattern_flags": ["flag1"]});
+        write_mind_state_file(&conn, &cfg, "my prompt", &report, &terrain).unwrap();
+
+        let state_path = cfg.state_dir.join("tdg-mind-state.json");
+        let content = std::fs::read_to_string(&state_path).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(parsed["_generator"], "injector_rust_v1");
+        assert_eq!(parsed["lean_mode"], false);
+        assert!(parsed["generated_at"].is_string());
+    }
+
+    #[test]
+    fn write_mind_state_file_lean_mode() {
+        let conn = setup();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let cfg = Config::with_db_path(tmp.path().to_path_buf());
+        let terrain = json!({"active_nodes_by_type": {}});
+        let report = json!({"pattern_flags": []});
+
+        write_mind_state_file(&conn, &cfg, "lean prompt", &report, &terrain).unwrap();
+        let state_path = cfg.state_dir.join("tdg-mind-state.json");
+        let content = std::fs::read_to_string(&state_path).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["_generator"], "injector_rust_v1");
+        assert!(parsed["lean_mode"].is_boolean());
+    }
+
+    #[test]
+    fn sections_pulse_empty_graph() {
+        let conn = setup();
+        let pulse = generate_pulse_section(&conn);
+        assert!(pulse.is_empty());
+    }
+
+    #[test]
+    fn sections_pulse_populated_graph() {
+        let conn = setup();
+        insert_node(&conn, "n1", "A", "concept");
+        insert_node(&conn, "n2", "B", "concept");
+        insert_node(&conn, "n3", "C", "person");
+
+        let pulse = generate_pulse_section(&conn);
+        assert!(pulse.contains("Pulse"));
+        assert!(pulse.contains("3 total nodes"));
+    }
+
+    #[test]
+    fn sections_revenue_urgency() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let cfg = make_cfg(&tmp);
+        let section = generate_revenue_urgency_section(&cfg);
+        assert!(section.contains("Revenue Urgency"));
+        assert!(section.contains("Progress"));
+        assert!(section.contains("Recommendation"));
+    }
+
+    #[test]
+    fn sections_sensory_field() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let cfg = make_cfg(&tmp);
+        let field = generate_sensory_field(&cfg);
+        assert!(!field.is_empty());
+    }
+
+    #[test]
+    fn sections_query_skills_empty() {
+        let conn = setup();
+        let skills = query_sqlite_skills(&conn);
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn sections_query_constraints_empty() {
+        let conn = setup();
+        let constraints = query_sqlite_constraints(&conn);
+        assert!(constraints.is_empty());
+    }
+
+    #[test]
+    fn generate_prompt_instruction_section() {
+        let conn = setup();
+        let cfg = Config::with_db_path(
+            tempfile::NamedTempFile::new()
+                .unwrap()
+                .into_temp_path()
+                .to_path_buf(),
+        );
+        let prompt = generate_prompt(&conn, &cfg).unwrap();
+        assert!(prompt.contains("## 🧭 Instruction"));
+        assert!(prompt.contains("Read the terrain context first"));
+        assert!(prompt.contains("RUN post-execution audit"));
+        assert!(prompt.contains("navigator"));
+    }
+
+    #[test]
+    fn generate_prompt_skill_section_empty() {
+        let conn = setup();
+        let cfg = Config::with_db_path(
+            tempfile::NamedTempFile::new()
+                .unwrap()
+                .into_temp_path()
+                .to_path_buf(),
+        );
+        let prompt = generate_prompt(&conn, &cfg).unwrap();
+        assert!(prompt.contains("No terrain-connected skills found."));
+    }
+
+    #[test]
+    fn write_mind_state_file_includes_prompt_length() {
+        let conn = setup();
+        let cfg = Config::with_db_path(
+            tempfile::NamedTempFile::new()
+                .unwrap()
+                .into_temp_path()
+                .to_path_buf(),
+        );
+        let terrain = json!({});
+        let report = json!({"pattern_flags": []});
+        write_mind_state_file(&conn, &cfg, "short", &report, &terrain).unwrap();
+
+        let state_path = cfg.state_dir.join("tdg-mind-state.json");
+        let content = std::fs::read_to_string(&state_path).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["_prompt_length"], 5);
     }
 }

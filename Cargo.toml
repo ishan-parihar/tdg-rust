@@ -69,6 +69,7 @@ tempfile = "3"
 # Graph algorithms
 petgraph = { version = "0.8", features = ["serde-1"] }
 rustworkx-core = "0.17"
+leiden-rs = "0.8"
 
 # MCP protocol
 rmcp = { version = "1.7.0", features = ["server", "schemars", "transport-io", "transport-streamable-http-server"] }
@@ -89,6 +90,7 @@ tokio-test = "0.4.5"
 proptest = "1"
 mockall = "0.14"
 fake = { version = "3", features = ["derive", "chrono", "uuid"] }
+insta = { version = "1.48", features = ["json", "yaml", "redactions"] }
 
 [[bench]]
 name = "critical_paths"

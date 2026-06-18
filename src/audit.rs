@@ -1,4 +1,5 @@
 use crate::db::crud;
+use crate::error::TdgResult;
 use crate::models::*;
 use crate::telearchy::*;
 use rusqlite::Connection;
@@ -76,7 +77,7 @@ impl AnomalyRegistry {
         }
     }
 
-    pub fn record(&self, a: &Anomaly) -> Result<(), String> {
+    pub fn record(&self, a: &Anomaly) -> TdgResult<()> {
         let mut reg = self.read();
         let key = format!("{}:{}", a.anomaly_type, a.node_id.as_deref().unwrap_or(""));
 
@@ -165,15 +166,12 @@ impl AnomalyRegistry {
             .unwrap_or(serde_json::json!({"recent": [], "chronic": [], "updated": ""}))
     }
 
-    fn write(&self, data: &serde_json::Value) -> Result<(), String> {
+    fn write(&self, data: &serde_json::Value) -> TdgResult<()> {
         if let Some(parent) = Path::new(&self.path).parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            fs::create_dir_all(parent)?;
         }
-        fs::write(
-            &self.path,
-            serde_json::to_string_pretty(data).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())
+        fs::write(&self.path, serde_json::to_string_pretty(data)?)?;
+        Ok(())
     }
 }
 
@@ -216,7 +214,7 @@ impl<'a> AuditEngine<'a> {
         }
     }
 
-    pub fn integrity_report(&self) -> Result<serde_json::Value, String> {
+    pub fn integrity_report(&self) -> TdgResult<serde_json::Value> {
         let mut anomalies = Vec::new();
         let valid_nt: std::collections::HashSet<&str> = NODE_TYPES.iter().copied().collect();
         let valid_et: std::collections::HashSet<&str> = EDGE_TYPES.iter().copied().collect();
@@ -229,8 +227,7 @@ impl<'a> AuditEngine<'a> {
                 limit: Some(100000),
                 ..Default::default()
             },
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
 
         for node in &nodes {
             let ls = &node.lifecycle_state;
@@ -335,14 +332,11 @@ impl<'a> AuditEngine<'a> {
         }
 
         // Check edges for dangling references
-        let edges = crud::get_edges(self.conn, None, None, None, None, 100000)
-            .map_err(|e| e.to_string())?;
+        let edges = crud::get_edges(self.conn, None, None, None, None, 100000)?;
 
         for edge in &edges {
             // Check source exists
-            if crud::get_node(self.conn, &edge.source_id)
-                .map_err(|e| e.to_string())?
-                .is_none()
+            if crud::get_node(self.conn, &edge.source_id)?.is_none()
             {
                 anomalies.push(Anomaly::new(
                     &format!("dangling_src_{}", &edge.id[..8]),
@@ -358,9 +352,7 @@ impl<'a> AuditEngine<'a> {
             }
 
             // Check target exists
-            if crud::get_node(self.conn, &edge.target_id)
-                .map_err(|e| e.to_string())?
-                .is_none()
+            if crud::get_node(self.conn, &edge.target_id)?.is_none()
             {
                 anomalies.push(Anomaly::new(
                     &format!("dangling_tgt_{}", &edge.id[..8]),
@@ -429,9 +421,9 @@ impl<'a> AuditEngine<'a> {
     }
 
     /// 2. Polarity report — drive addiction/allergy/blind-spot distribution
-    pub fn polarity_report(&self) -> Result<serde_json::Value, String> {
-        let diag = crate::flow::diagnose_polarity(self.conn).map_err(|e| e.to_string())?;
-        let entropy = crate::flow::compute_graph_entropy(self.conn).map_err(|e| e.to_string())?;
+    pub fn polarity_report(&self) -> TdgResult<serde_json::Value> {
+        let diag = crate::flow::diagnose_polarity(self.conn)?;
+        let entropy = crate::flow::compute_graph_entropy(self.conn)?;
 
         Ok(serde_json::json!({
             "report_type": "polarity",
@@ -447,7 +439,7 @@ impl<'a> AuditEngine<'a> {
     }
 
     /// 3. Stage progression report — telos hierarchy health
-    pub fn stage_report(&self) -> Result<serde_json::Value, String> {
+    pub fn stage_report(&self) -> TdgResult<serde_json::Value> {
         let telos_nodes = crud::query_nodes(
             self.conn,
             &crate::models::NodeQuery {
@@ -455,17 +447,12 @@ impl<'a> AuditEngine<'a> {
                 limit: Some(1),
                 ..Default::default()
             },
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
 
         if let Some(root) = telos_nodes.first() {
             let engine = TelearchyEngine::new(self.conn);
-            let validation = engine
-                .validate_hierarchy(&root.id)
-                .map_err(|e| e.to_string())?;
-            let report = engine
-                .generate_telearchy_report(&root.id)
-                .map_err(|e| e.to_string())?;
+            let validation = engine.validate_hierarchy(&root.id)?;
+            let report = engine.generate_telearchy_report(&root.id)?;
 
             Ok(serde_json::json!({
                 "report_type": "stage_progression",
@@ -491,7 +478,7 @@ impl<'a> AuditEngine<'a> {
     }
 
     /// 4. Persistence consistency report
-    pub fn persistence_report(&self) -> Result<serde_json::Value, String> {
+    pub fn persistence_report(&self) -> TdgResult<serde_json::Value> {
         let event_count: i64 = self
             .conn
             .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))
@@ -516,7 +503,7 @@ impl<'a> AuditEngine<'a> {
     }
 
     /// 5. Capability health report
-    pub fn capability_report(&self) -> Result<serde_json::Value, String> {
+    pub fn capability_report(&self) -> TdgResult<serde_json::Value> {
         let caps = crud::query_nodes(
             self.conn,
             &NodeQuery {
@@ -524,8 +511,7 @@ impl<'a> AuditEngine<'a> {
                 limit: Some(100000),
                 ..Default::default()
             },
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
 
         let mut broken = 0;
         let mut unused = 0;
@@ -553,12 +539,10 @@ impl<'a> AuditEngine<'a> {
                 Some("DEPENDS_ON"),
                 None,
                 1000,
-            )
-            .map_err(|e| e.to_string())?;
+            )?;
 
             // Check what it enables (SUPPORTS/ENABLES/REALIZES outgoing)
-            let enables = crud::get_edges(self.conn, Some(&cap.id), None, None, None, 1000)
-                .map_err(|e| e.to_string())?
+            let enables = crud::get_edges(self.conn, Some(&cap.id), None, None, None, 1000)?
                 .iter()
                 .filter(|e| matches!(e.edge_type.as_str(), "SUPPORTS" | "ENABLES" | "REALIZES"))
                 .count();
@@ -604,7 +588,7 @@ impl<'a> AuditEngine<'a> {
     }
 
     /// Full audit bundle — all reports + overall health
-    pub fn full_audit_bundle(&self) -> Result<AuditBundle, String> {
+    pub fn full_audit_bundle(&self) -> TdgResult<AuditBundle> {
         let mut reports = HashMap::new();
         reports.insert("integrity".to_string(), self.integrity_report()?);
         reports.insert("polarity".to_string(), self.polarity_report()?);

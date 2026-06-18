@@ -107,7 +107,7 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Init => {
             tracing::info!("Initializing database at {}", config.db_path.display());
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             pool.with_connection(|conn| {
                 init_schema(conn)?;
                 init_fts(conn)?;
@@ -119,7 +119,7 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Migrate => {
             tracing::info!("Running migrations on {}", config.db_path.display());
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             pool.with_connection(|conn| {
                 init_schema(conn)?;
                 init_fts(conn)?;
@@ -131,13 +131,13 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Backup { output } => {
             tracing::info!("Backing up {} to {}", config.db_path.display(), output);
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             pool.backup(std::path::Path::new(&output))?;
             tracing::info!("Backup completed");
             pool.close();
         }
         Commands::Stats => {
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             pool.with_connection(|conn| {
                 let node_count: i64 = conn
                     .query_row("SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0))
@@ -157,8 +157,7 @@ fn main() -> anyhow::Result<()> {
 
                 // Count by type
                 let mut stmt = conn
-                    .prepare("SELECT node_type, COUNT(*) FROM nodes WHERE valid_to IS NULL GROUP BY node_type ORDER BY COUNT(*) DESC")
-                    .unwrap();
+                    .prepare("SELECT node_type, COUNT(*) FROM nodes WHERE valid_to IS NULL GROUP BY node_type ORDER BY COUNT(*) DESC")?;
                 let rows = stmt.query_map([], |row| {
                     let t: String = row.get(0)?;
                     let c: i64 = row.get(1)?;
@@ -174,31 +173,31 @@ fn main() -> anyhow::Result<()> {
         }
         // ── Phase 12: Scripts & Utilities ─────────────────────────────
         Commands::Audit => {
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             let result = pool.with_connection(scripts::audit)?;
             println!("{}", serde_json::to_string_pretty(&result)?);
             pool.close();
         }
         Commands::Check => {
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             let result = pool.with_connection(scripts::check)?;
             println!("{}", serde_json::to_string_pretty(&result)?);
             pool.close();
         }
         Commands::Unify => {
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             let result = pool.with_connection(scripts::unify)?;
             println!("{}", serde_json::to_string_pretty(&result)?);
             pool.close();
         }
         Commands::ReconcileConstraints => {
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             let result = pool.with_connection(scripts::reconcile_constraints)?;
             println!("{}", serde_json::to_string_pretty(&result)?);
             pool.close();
         }
         Commands::SyncSkills { dir } => {
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             let skills_dir =
                 dir.unwrap_or_else(|| config.skills_dir.to_str().unwrap_or("./skills").to_string());
             let result = pool.with_connection(|conn| scripts::sync_skills(conn, &skills_dir))?;
@@ -211,7 +210,7 @@ fn main() -> anyhow::Result<()> {
             trust,
             entities,
         } => {
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             let result = pool.with_connection(|conn| {
                 scripts::auto_capture(conn, &description, &quadrant, trust, entities.as_deref())
             })?;
@@ -223,7 +222,7 @@ fn main() -> anyhow::Result<()> {
             name,
             description,
         } => {
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             let result = pool.with_connection(|conn| {
                 scripts::create_node(conn, &node_type, &name, description.as_deref())
             })?;
@@ -231,20 +230,20 @@ fn main() -> anyhow::Result<()> {
             pool.close();
         }
         Commands::MaintenanceCheck => {
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             let result = pool.with_connection(scripts::maintenance_check)?;
             println!("{}", serde_json::to_string_pretty(&result)?);
             pool.close();
         }
         Commands::RepairOrphans => {
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             let result = pool.with_connection(scripts::repair_orphans)?;
             println!("{}", serde_json::to_string_pretty(&result)?);
             pool.close();
         }
         Commands::Serve { port } => {
             tracing::info!("Starting MCP server on port {port}");
-            let pool = ConnectionPool::new(config.db_path.to_str().unwrap(), 5, 30000)?;
+            let pool = ConnectionPool::new(config.db_path.to_str().ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?, 5, 30000)?;
             pool.with_connection(|conn| {
                 init_schema(conn)?;
                 init_fts(conn)?;

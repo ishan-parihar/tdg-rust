@@ -52,6 +52,60 @@ pub fn graph_density(graph: &DiGraph<String, String>) -> f64 {
     m / (n * (n - 1.0))
 }
 
+/// Community detection using the Leiden algorithm.
+pub mod community {
+    use leiden_rs::{GraphDataBuilder, Leiden, LeidenConfig};
+    use petgraph::graph::DiGraph;
+    use petgraph::visit::{EdgeRef, IntoNodeReferences};
+    use std::collections::HashMap;
+
+    /// Detect communities using the Leiden algorithm.
+    /// Returns a map from node label to community ID.
+    pub fn leiden_communities(graph: &DiGraph<String, String>) -> HashMap<String, usize> {
+        if graph.node_count() == 0 {
+            return HashMap::new();
+        }
+
+        let n = graph.node_count();
+        let mut builder = GraphDataBuilder::new(n);
+        builder = builder.directed();
+
+        // Build CSR from petgraph (edge weights are String, treat all as 1.0)
+        for edge in graph.edge_references() {
+            let _ = builder.add_edge(
+                edge.source().index(),
+                edge.target().index(),
+                1.0f64,
+            );
+        }
+
+        let graph_data = builder.build().expect("valid graph data from petgraph");
+        let result = Leiden::new(LeidenConfig::default())
+            .run(&graph_data)
+            .expect("leiden algorithm should succeed");
+
+        let mut communities = HashMap::new();
+        for (idx, node_weight) in graph.node_references() {
+            let community_id = result.partition.community_of(idx.index());
+            communities.insert(node_weight.clone(), community_id);
+        }
+
+        communities
+    }
+
+    /// Return the number of communities detected.
+    pub fn num_communities(graph: &DiGraph<String, String>) -> usize {
+        if graph.node_count() == 0 {
+            return 0;
+        }
+        leiden_communities(graph)
+            .values()
+            .copied()
+            .max()
+            .map_or(0, |m| m + 1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,5 +203,79 @@ mod tests {
         let mut g = DiGraph::new();
         g.add_node("A".into());
         assert_eq!(graph_density(&g), 0.0);
+    }
+
+    #[test]
+    fn community_empty_graph() {
+        let g: DiGraph<String, String> = DiGraph::new();
+        let communities = community::leiden_communities(&g);
+        assert!(communities.is_empty());
+    }
+
+    #[test]
+    fn community_chain_single_community() {
+        let g = chain(5);
+        let communities = community::leiden_communities(&g);
+        assert_eq!(communities.len(), 5, "all nodes should have a community");
+        let unique: std::collections::HashSet<_> = communities.values().copied().collect();
+        assert!(!unique.is_empty(), "should detect at least one community");
+    }
+
+    #[test]
+    fn community_star() {
+        let mut g = DiGraph::new();
+        g.add_node("center".into());
+        for i in 1..=5 {
+            g.add_node(format!("L{i}"));
+        }
+        let center = NodeIndex::new(0);
+        for i in 1..=5 {
+            g.add_edge(center, NodeIndex::new(i), "e".into());
+        }
+        let communities = community::leiden_communities(&g);
+        assert_eq!(communities.len(), 6);
+        let unique: std::collections::HashSet<_> = communities.values().copied().collect();
+        assert!(!unique.is_empty(), "should detect at least one community");
+    }
+
+    #[test]
+    fn community_disconnected_components() {
+        let mut g: DiGraph<String, String> = DiGraph::new();
+        g.add_node("A".into());
+        g.add_node("B".into());
+        g.add_node("C".into());
+        g.add_node("D".into());
+        g.add_edge(NodeIndex::new(0), NodeIndex::new(1), "e".into());
+        g.add_edge(NodeIndex::new(2), NodeIndex::new(3), "e".into());
+        let communities = community::leiden_communities(&g);
+        assert_eq!(
+            communities["A"], communities["B"],
+            "A and B should be same community"
+        );
+        assert_eq!(
+            communities["C"], communities["D"],
+            "C and D should be same community"
+        );
+        assert_ne!(
+            communities["A"], communities["C"],
+            "separate components should differ"
+        );
+    }
+
+    #[test]
+    fn num_communities_empty() {
+        let g: DiGraph<String, String> = DiGraph::new();
+        assert_eq!(community::num_communities(&g), 0);
+    }
+
+    #[test]
+    fn num_communities_disconnected() {
+        let mut g: DiGraph<String, String> = DiGraph::new();
+        g.add_node("A".into());
+        g.add_node("B".into());
+        g.add_node("C".into());
+        g.add_edge(NodeIndex::new(0), NodeIndex::new(1), "e".into());
+        let n = community::num_communities(&g);
+        assert!(n >= 2, "disconnected graph should have >= 2 communities, got {n}");
     }
 }
