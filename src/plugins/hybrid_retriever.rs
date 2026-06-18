@@ -27,6 +27,7 @@ pub struct RetrievalWeights {
     pub recency_weight: f64,
     pub term_overlap_weight: f64,
     pub type_boost_weight: f64,
+    pub embedding_weight: f64,
 }
 
 impl Default for RetrievalWeights {
@@ -37,20 +38,30 @@ impl Default for RetrievalWeights {
             recency_weight: 0.10,
             term_overlap_weight: 0.10,
             type_boost_weight: 0.15,
+            embedding_weight: 0.20,
         }
     }
 }
 
-/// Stop words for filtering.
+/// Stop words for filtering — expanded to match Python's 60+ word list.
 static STOP_WORDS: &[&str] = &[
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "have", "has", "had", "do", "does",
-    "did", "will", "would", "could", "should", "may", "might", "can", "to", "of", "in", "for",
-    "on", "with", "at", "by", "from", "as", "into", "and", "but", "or", "if", "it", "its", "this",
-    "that",
+    // Articles & pronouns
+    "the", "a", "an", "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us",
+    "them", "my", "your", "his", "its", "our", "their", "mine", "yours", "hers", "ours", "theirs",
+    // Verbs
+    "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
+    "will", "would", "could", "should", "may", "might", "can", "shall", "must", "need", "ought",
+    "used", "to", "of", "in", "for", "on", "with", "at", "by", "from", "as", "into", "through",
+    "during", "before", "after", "above", "below", "between", "out", "off", "over", "under",
+    // Conjunctions & prepositions
+    "again", "further", "then", "once", "here", "there", "when", "where", "why", "how", "all",
+    "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only",
+    "own", "same", "so", "than", "too", "very", "just", "because", "but", "and", "or", "if",
+    "while", "about", "against", "also",
 ];
 
-/// High-value node types for boosting.
-static HIGH_VALUE_TYPES: &[&str] = &["action", "telos", "skill", "hypothesis", "discovery"];
+/// High-value node types for boosting — matches Python's BOOSTED_TYPES.
+static HIGH_VALUE_TYPES: &[&str] = &["action", "telos", "skill", "tool", "product", "capability"];
 
 /// The Hybrid Retriever — combined FTS5 + trust + recency scoring.
 pub struct HybridRetriever {
@@ -73,7 +84,6 @@ impl HybridRetriever {
         }
     }
 
-    /// Hybrid search combining FTS5, trust, recency, and type boost.
     pub fn search(
         &self,
         conn: &Connection,
@@ -83,31 +93,27 @@ impl HybridRetriever {
     ) -> TdgResult<Vec<SearchResult>> {
         let limit = limit.min(50);
 
-        // Phase 1: FTS5 search
-        let mut results = self.fts_search(conn, query, limit * 2)?;
+        let fts_query = self.prepare_fts_query(query);
+        let mut results = self.fts_search(conn, &fts_query, limit * 2)?;
 
-        // Phase 2: LIKE fallback if FTS returns nothing
         if results.is_empty() {
             results = self.like_search(conn, query, limit * 2)?;
         }
 
-        // Phase 3: Type-filtered fallback
         if results.is_empty() {
             results = self.type_search(conn, node_type, limit)?;
         }
 
-        // Score and rank
+        let embedding_map = self.build_embedding_map(conn, &results);
+
         let query_tokens = self.tokenize(query);
         let mut scored: Vec<SearchResult> = results
             .into_iter()
             .map(|node| {
-                let fts_score = node.confidence; // Use confidence as FTS proxy
+                let fts_score = node.confidence;
                 let trust_score = node.confidence;
-
-                // Recency score (based on created_at age)
                 let recency = self.recency_score(&node.created_at);
 
-                // Term overlap
                 let node_tokens = self.tokenize(&format!("{} {}", node.name, node.description));
                 let overlap = query_tokens
                     .iter()
@@ -115,33 +121,39 @@ impl HybridRetriever {
                     .count() as f64
                     / query_tokens.len().max(1) as f64;
 
-                // Type boost
                 let type_boost = if HIGH_VALUE_TYPES.contains(&node.node_type.as_str()) {
                     0.15
                 } else {
                     0.0
                 };
 
+                let cosine = embedding_map.get(&node.id).copied().unwrap_or(0.0);
+
                 let total_score = self.weights.fts_weight * fts_score
                     + self.weights.trust_weight * trust_score
                     + self.weights.recency_weight * recency
                     + self.weights.term_overlap_weight * overlap
-                    + self.weights.type_boost_weight * type_boost;
+                    + self.weights.type_boost_weight * type_boost
+                    + self.weights.embedding_weight * cosine;
+
+                let method = if cosine > 0.0 {
+                    "hybrid+embedding"
+                } else {
+                    "hybrid"
+                };
 
                 SearchResult {
                     node,
                     score: total_score,
-                    method: "hybrid".to_string(),
+                    method: method.to_string(),
                 }
             })
             .filter(|r| r.node.confidence >= self.min_confidence)
             .collect();
 
-        // Deduplicate by node ID
         let mut seen = HashSet::new();
         scored.retain(|r| seen.insert(r.node.id.clone()));
 
-        // Sort by score descending
         scored.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -149,12 +161,61 @@ impl HybridRetriever {
         });
         scored.truncate(limit as usize);
 
-        // Record retrievals for trust tracking
         for result in &scored {
             let _ = record_retrieval(conn, &result.node.id);
         }
 
         Ok(scored)
+    }
+
+    fn build_embedding_map(
+        &self,
+        conn: &Connection,
+        nodes: &[Node],
+    ) -> std::collections::HashMap<String, f64> {
+        if nodes.is_empty() {
+            return std::collections::HashMap::new();
+        }
+
+        let query_vec = match self.get_query_embedding_stub(conn) {
+            Some(v) => v,
+            None => return std::collections::HashMap::new(),
+        };
+
+        let mut map = std::collections::HashMap::new();
+        let ids: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+        let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+        let sql = format!(
+            "SELECT node_id, embedding FROM embeddings WHERE node_id IN ({})",
+            placeholders.join(",")
+        );
+
+        if let Ok(mut stmt) = conn.prepare(&sql) {
+            let params_refs: Vec<Box<dyn rusqlite::types::ToSql>> =
+                ids.iter().map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>).collect();
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+                params_refs.iter().map(|p| p.as_ref()).collect();
+            if let Ok(rows) = stmt.query_map(&*param_refs, |row| {
+                let node_id: String = row.get(0)?;
+                let blob: Vec<u8> = row.get(1)?;
+                Ok((node_id, blob))
+            }) {
+                for row in rows.flatten() {
+                    if let Ok(vec) = decode_f32_vec(&row.1) {
+                        let sim = cosine_similarity(&query_vec, &vec);
+                        if sim > 0.0 {
+                            map.insert(row.0, sim as f64);
+                        }
+                    }
+                }
+            }
+        }
+
+        map
+    }
+
+    fn get_query_embedding_stub(&self, _conn: &Connection) -> Option<Vec<f32>> {
+        None
     }
 
     fn fts_search(&self, conn: &Connection, query: &str, limit: i64) -> TdgResult<Vec<Node>> {
@@ -262,11 +323,42 @@ impl HybridRetriever {
         Ok(nodes)
     }
 
+    /// Prepare FTS5 query: strip special chars, handle phrases, add wildcards.
+    fn prepare_fts_query(&self, query: &str) -> String {
+        let cleaned: String = query
+            .chars()
+            .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '_' || *c == '"')
+            .collect();
+        let meaningful = self.get_meaningful_terms(&cleaned);
+        if meaningful.is_empty() {
+            return query.to_string();
+        }
+        meaningful
+            .iter()
+            .map(|term| format!("\"{}\"*", term))
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    }
+
+    /// Extract meaningful terms (3+ chars, not stop words).
+    fn get_meaningful_terms(&self, text: &str) -> Vec<String> {
+        text.to_lowercase()
+            .split_whitespace()
+            .map(|w| {
+                let clean: String = w
+                    .chars()
+                    .filter(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                clean
+            })
+            .filter(|t| t.len() >= 3 && !STOP_WORDS.contains(&t.as_str()))
+            .collect()
+    }
+
     fn tokenize(&self, text: &str) -> Vec<String> {
         text.to_lowercase()
             .split_whitespace()
             .map(|w| {
-                // Strip common suffixes
                 let clean: String = w
                     .chars()
                     .filter(|c| c.is_alphanumeric() || *c == '_')
@@ -295,6 +387,30 @@ impl HybridRetriever {
 impl Default for HybridRetriever {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn decode_f32_vec(blob: &[u8]) -> Result<Vec<f32>, ()> {
+    if blob.len() % 4 != 0 {
+        return Err(());
+    }
+    let chunks = blob.chunks_exact(4);
+    Ok(chunks
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect())
+}
+
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let mag_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let mag_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if mag_a == 0.0 || mag_b == 0.0 {
+        0.0
+    } else {
+        dot / (mag_a * mag_b)
     }
 }
 
