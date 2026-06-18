@@ -10,7 +10,7 @@ use std::sync::atomic::AtomicUsize;
 use crate::config::Config;
 use crate::error::TdgResult;
 use crate::mind::data_loader::*;
-use crate::mind::diagnostic::DiagnosticEngine;
+use crate::mind::diagnostic::{load_diagnostic_thresholds, DiagnosticEngine};
 use crate::mind::feeling::{feeling_state_prompt, FeelingEngine};
 use crate::mind::sections::*;
 use crate::mind::terrain::{discover_skills_for_terrain, generate_terrain_context};
@@ -118,7 +118,8 @@ pub fn generate_prompt(conn: &Connection, cfg: &Config) -> TdgResult<String> {
     }
 
     if !lean {
-        let diag_engine = DiagnosticEngine::new();
+        let thresholds = load_diagnostic_thresholds(&cfg.diagnostic_thresholds_path());
+        let diag_engine = DiagnosticEngine::with_thresholds(thresholds);
         if let Ok(report) = diag_engine.analyze(conn, &[], &[]) {
             let diag_section = diag_engine.diagnostic_prompt_section(&report);
             if !diag_section.is_empty() {
@@ -238,8 +239,36 @@ pub fn write_mind_state_file(
     let skills = query_sqlite_skills(conn);
     let constraints = query_sqlite_constraints(conn);
 
+    let feeling_data = FeelingEngine::new()
+        .generate(conn, &[])
+        .map(|report| {
+            json!({
+                "energy_level": report.energy_level,
+                "dominant_drive": report.dominant_drive,
+                "dominant_quadrant": report.dominant_quadrant,
+                "feelings": report.feelings,
+                "blind_drives": report.blind_drives,
+                "pathological_drives": report.pathological_drives,
+                "stuck_warning": report.stuck_warning,
+                "summary": report.summary,
+            })
+        })
+        .unwrap_or_else(|_| json!({"error": "failed to generate feeling report"}));
+
+    let escalation_level = diagnostic_report
+        .get("escalation_level")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            DiagnosticEngine::new()
+                .analyze(conn, &[], &[])
+                .map(|r| r.escalation_level.as_str().to_string())
+                .unwrap_or_else(|_| "soft".to_string())
+        });
+
     let state = json!({
-        "feeling": format!("prompt_length={}", prompt.len()),
+        "feeling": feeling_data,
+        "escalation_level": escalation_level,
         "lean_mode": cfg.lean,
         "diagnostic": {
             "pattern_flags": diagnostic_report.get("pattern_flags"),
@@ -547,5 +576,39 @@ mod tests {
         let content = std::fs::read_to_string(&state_path).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["_prompt_length"], 5);
+    }
+
+    #[test]
+    fn write_mind_state_file_includes_feeling_and_escalation() {
+        let conn = setup();
+        let cfg = Config::with_db_path(
+            tempfile::NamedTempFile::new()
+                .unwrap()
+                .into_temp_path()
+                .to_path_buf(),
+        );
+        let terrain = json!({"active_nodes_by_type": {}});
+        let report = json!({"pattern_flags": []});
+        write_mind_state_file(&conn, &cfg, "test", &report, &terrain).unwrap();
+
+        let state_path = cfg.state_dir.join("tdg-mind-state.json");
+        let content = std::fs::read_to_string(&state_path).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+
+        let feeling = parsed.get("feeling").expect("feeling field missing");
+        assert!(feeling.is_object(), "feeling should be an object");
+        assert!(feeling.get("energy_level").is_some(), "missing energy_level");
+        assert!(feeling.get("dominant_drive").is_some(), "missing dominant_drive");
+        assert!(feeling.get("feelings").is_some(), "missing feelings list");
+        assert!(feeling.get("summary").is_some(), "missing summary");
+
+        let escalation = parsed.get("escalation_level").expect("escalation_level field missing");
+        assert!(escalation.is_string(), "escalation_level should be a string");
+        let level = escalation.as_str().unwrap();
+        assert!(
+            matches!(level, "soft" | "strong" | "mandatory"),
+            "invalid escalation_level: {}",
+            level
+        );
     }
 }

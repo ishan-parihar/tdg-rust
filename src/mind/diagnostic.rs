@@ -3,6 +3,7 @@
 //! Port of `core/mind/diagnostic_engine.py`.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -90,7 +91,7 @@ pub struct DiagnosticReport {
 }
 
 /// Threshold configuration for diagnostics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiagnosticThresholds {
     pub addiction_positive_min: f64,
     pub allergy_negative_min: f64,
@@ -115,6 +116,14 @@ impl Default for DiagnosticThresholds {
             quadrant_persistence_cycles: 4,
         }
     }
+}
+
+/// Load diagnostic thresholds from a YAML file, falling back to defaults if missing.
+pub fn load_diagnostic_thresholds(path: &Path) -> DiagnosticThresholds {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|content| serde_yaml::from_str(&content).ok())
+        .unwrap_or_default()
 }
 
 /// The Diagnostic Engine — retrospective dashboard for agent self-awareness.

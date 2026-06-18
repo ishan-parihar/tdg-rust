@@ -1,0 +1,19 @@
+# Diagnostic Thresholds
+# Governs the diagnostic engine's behavioral pattern analysis.
+# If this file is missing, built-in defaults are used.
+
+# Drive diagnosis thresholds (aggregate mean scores)
+addiction_positive_min: 7.0   # pos_avg > this -> addiction pattern
+allergy_negative_min: 5.0     # neg_avg > this -> allergy pattern
+
+# Blind spot detection
+blind_spot_pct: 10.0          # quadrant < this % -> blind spot
+
+# Drive persistence (consecutive cycles)
+drive_persistence_soft: 3
+drive_persistence_strong: 5
+drive_persistence_mandatory: 8
+
+# Quadrant imbalance
+quadrant_imbalance_pct: 40.0  # single quadrant > this % -> flag
+quadrant_persistence_cycles: 4 # same quadrant repeated N cycles -> warning

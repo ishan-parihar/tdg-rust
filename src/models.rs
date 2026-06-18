@@ -21,6 +21,10 @@ pub const NODE_TYPES: &[&str] = &[
     "event",
     "insight",
     "question",
+    // v4.1: Holonic types
+    "value",
+    "bond",
+    "narrative",
 ];
 
 /// Edge types allowed in the graph.
@@ -276,7 +280,7 @@ mod tests {
 
     #[test]
     fn node_types_count() {
-        assert_eq!(NODE_TYPES.len(), 18);
+        assert_eq!(NODE_TYPES.len(), 21);
     }
 
     #[test]

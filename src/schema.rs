@@ -260,6 +260,93 @@ impl std::str::FromStr for Quadrant {
     }
 }
 
+// ── NodeType (StrEnum in Python) ──
+
+/// The 21 node types in the TDG graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum NodeType {
+    Observation,
+    Telos,
+    Skill,
+    Capability,
+    Action,
+    People,
+    Artifact,
+    Hypothesis,
+    Constraint,
+    Discovery,
+    Project,
+    Trajectory,
+    Synthesis,
+    Being,
+    Communication,
+    Event,
+    Insight,
+    Question,
+    Value,
+    Bond,
+    Narrative,
+}
+
+impl std::fmt::Display for NodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Observation => "observation",
+            Self::Telos => "telos",
+            Self::Skill => "skill",
+            Self::Capability => "capability",
+            Self::Action => "action",
+            Self::People => "people",
+            Self::Artifact => "artifact",
+            Self::Hypothesis => "hypothesis",
+            Self::Constraint => "constraint",
+            Self::Discovery => "discovery",
+            Self::Project => "project",
+            Self::Trajectory => "trajectory",
+            Self::Synthesis => "synthesis",
+            Self::Being => "being",
+            Self::Communication => "communication",
+            Self::Event => "event",
+            Self::Insight => "insight",
+            Self::Question => "question",
+            Self::Value => "value",
+            Self::Bond => "bond",
+            Self::Narrative => "narrative",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl std::str::FromStr for NodeType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "observation" => Ok(Self::Observation),
+            "telos" => Ok(Self::Telos),
+            "skill" => Ok(Self::Skill),
+            "capability" => Ok(Self::Capability),
+            "action" => Ok(Self::Action),
+            "people" => Ok(Self::People),
+            "artifact" => Ok(Self::Artifact),
+            "hypothesis" => Ok(Self::Hypothesis),
+            "constraint" => Ok(Self::Constraint),
+            "discovery" => Ok(Self::Discovery),
+            "project" => Ok(Self::Project),
+            "trajectory" => Ok(Self::Trajectory),
+            "synthesis" => Ok(Self::Synthesis),
+            "being" => Ok(Self::Being),
+            "communication" => Ok(Self::Communication),
+            "event" => Ok(Self::Event),
+            "insight" => Ok(Self::Insight),
+            "question" => Ok(Self::Question),
+            "value" => Ok(Self::Value),
+            "bond" => Ok(Self::Bond),
+            "narrative" => Ok(Self::Narrative),
+            _ => Err(format!("Unknown node type: {}", s)),
+        }
+    }
+}
+
 // ── Constants ──
 
 /// Minimum evidence required to advance from each stage.
@@ -352,5 +439,20 @@ mod tests {
         let promos = tlevel_promotion_stage();
         assert_eq!(promos[&TelosLevel::T4], Stage::Survival);
         assert_eq!(promos[&TelosLevel::T0], Stage::Rational);
+    }
+
+    #[test]
+    fn test_node_type_v41_holonic_parse() {
+        let value: NodeType = "value".parse().unwrap();
+        assert_eq!(value, NodeType::Value);
+        assert_eq!(value.to_string(), "value");
+
+        let bond: NodeType = "bond".parse().unwrap();
+        assert_eq!(bond, NodeType::Bond);
+        assert_eq!(bond.to_string(), "bond");
+
+        let narrative: NodeType = "narrative".parse().unwrap();
+        assert_eq!(narrative, NodeType::Narrative);
+        assert_eq!(narrative.to_string(), "narrative");
     }
 }

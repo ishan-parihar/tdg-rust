@@ -51,15 +51,7 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     // Phase 3: Ensure events table exists
     conn.execute_batch(MIGRATE_EVENTS)?;
 
-    // Phase 4: Create event triggers
     conn.execute_batch(MIGRATE_TRIGGERS)?;
-
-    // Phase 5: Add event_data column and capture triggers
-    match conn.execute_batch(MIGRATE_EVENT_DATA) {
-        Ok(()) => {}
-        Err(_) => {} // Column already exists
-    }
-    conn.execute_batch(MIGRATE_CAPTURE_TRIGGERS)?;
 
     Ok(())
 }
@@ -326,37 +318,6 @@ CREATE TRIGGER IF NOT EXISTS edges_events_ad AFTER DELETE ON edges BEGIN
 END;
 "#;
 
-const MIGRATE_EVENT_DATA: &str = r#"
-ALTER TABLE events ADD COLUMN event_data TEXT;
-"#;
-
-const MIGRATE_CAPTURE_TRIGGERS: &str = r#"
-CREATE TRIGGER IF NOT EXISTS nodes_ai AFTER INSERT ON nodes BEGIN
-    INSERT INTO events (event_action, event_data, timestamp)
-    VALUES ('NODE_CREATED', json_object('id', NEW.id, 'node_type', NEW.node_type), datetime('now'));
-END;
-
-CREATE TRIGGER IF NOT EXISTS nodes_au AFTER UPDATE ON nodes BEGIN
-    INSERT INTO events (event_action, event_data, timestamp)
-    VALUES ('NODE_UPDATED', json_object('id', NEW.id, 'node_type', NEW.node_type), datetime('now'));
-END;
-
-CREATE TRIGGER IF NOT EXISTS nodes_ad AFTER DELETE ON nodes BEGIN
-    INSERT INTO events (event_action, event_data, timestamp)
-    VALUES ('NODE_DELETED', json_object('id', OLD.id, 'node_type', OLD.node_type), datetime('now'));
-END;
-
-CREATE TRIGGER IF NOT EXISTS edges_ai AFTER INSERT ON edges BEGIN
-    INSERT INTO events (event_action, event_data, timestamp)
-    VALUES ('EDGE_CREATED', json_object('id', NEW.id, 'source_id', NEW.source_id, 'target_id', NEW.target_id), datetime('now'));
-END;
-
-CREATE TRIGGER IF NOT EXISTS edges_ad AFTER DELETE ON edges BEGIN
-    INSERT INTO events (event_action, event_data, timestamp)
-    VALUES ('EDGE_DELETED', json_object('id', OLD.id, 'source_id', OLD.source_id, 'target_id', OLD.target_id), datetime('now'));
-END;
-"#;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn capture_trigger_populates_event_data_on_insert() {
+    fn trigger_populates_payload_on_insert() {
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
         init_fts(&conn).unwrap();
@@ -455,19 +416,19 @@ mod tests {
 
         let row: String = conn
             .query_row(
-                "SELECT event_data FROM events WHERE event_action = 'NODE_CREATED' AND event_data IS NOT NULL LIMIT 1",
+                "SELECT payload FROM events WHERE event_action = 'node_created' AND node_id = 'n_cap001' LIMIT 1",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
 
         let data: serde_json::Value = serde_json::from_str(&row).unwrap();
-        assert_eq!(data["id"].as_str().unwrap(), "n_cap001");
         assert_eq!(data["node_type"].as_str().unwrap(), "telos");
+        assert_eq!(data["name"].as_str().unwrap(), "Capture Test");
     }
 
     #[test]
-    fn capture_trigger_populates_event_data_on_update() {
+    fn trigger_populates_payload_on_update() {
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
         init_fts(&conn).unwrap();
@@ -487,18 +448,18 @@ mod tests {
 
         let row: String = conn
             .query_row(
-                "SELECT event_data FROM events WHERE event_action = 'NODE_UPDATED' AND event_data IS NOT NULL LIMIT 1",
+                "SELECT payload FROM events WHERE event_action = 'node_updated' AND node_id = 'n_upd001' LIMIT 1",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
 
         let data: serde_json::Value = serde_json::from_str(&row).unwrap();
-        assert_eq!(data["id"].as_str().unwrap(), "n_upd001");
+        assert_eq!(data["node_type"].as_str().unwrap(), "action");
     }
 
     #[test]
-    fn capture_trigger_populates_event_data_on_delete() {
+    fn trigger_populates_payload_on_delete() {
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
         init_fts(&conn).unwrap();
@@ -515,18 +476,18 @@ mod tests {
 
         let row: String = conn
             .query_row(
-                "SELECT event_data FROM events WHERE event_action = 'NODE_DELETED' AND event_data IS NOT NULL LIMIT 1",
+                "SELECT payload FROM events WHERE event_action = 'node_deleted' AND node_id = 'n_del001' LIMIT 1",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
 
         let data: serde_json::Value = serde_json::from_str(&row).unwrap();
-        assert_eq!(data["id"].as_str().unwrap(), "n_del001");
+        assert_eq!(data["node_type"].as_str().unwrap(), "observation");
     }
 
     #[test]
-    fn capture_trigger_populates_event_data_on_edge_insert() {
+    fn trigger_populates_payload_on_edge_insert() {
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
         init_fts(&conn).unwrap();
@@ -551,20 +512,18 @@ mod tests {
 
         let row: String = conn
             .query_row(
-                "SELECT event_data FROM events WHERE event_action = 'EDGE_CREATED' AND event_data IS NOT NULL LIMIT 1",
+                "SELECT payload FROM events WHERE event_action = 'edge_created' AND source_id = 'n_src01' LIMIT 1",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
 
         let data: serde_json::Value = serde_json::from_str(&row).unwrap();
-        assert_eq!(data["id"].as_str().unwrap(), "e_edge01");
-        assert_eq!(data["source_id"].as_str().unwrap(), "n_src01");
-        assert_eq!(data["target_id"].as_str().unwrap(), "n_tgt01");
+        assert_eq!(data["edge_type"].as_str().unwrap(), "ENABLES");
     }
 
     #[test]
-    fn capture_trigger_populates_event_data_on_edge_delete() {
+    fn trigger_populates_payload_on_edge_delete() {
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
         init_fts(&conn).unwrap();
@@ -592,13 +551,13 @@ mod tests {
 
         let row: String = conn
             .query_row(
-                "SELECT event_data FROM events WHERE event_action = 'EDGE_DELETED' AND event_data IS NOT NULL LIMIT 1",
+                "SELECT payload FROM events WHERE event_action = 'edge_deleted' AND source_id = 'n_s001' LIMIT 1",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
 
         let data: serde_json::Value = serde_json::from_str(&row).unwrap();
-        assert_eq!(data["id"].as_str().unwrap(), "e_del01");
+        assert_eq!(data["edge_type"].as_str().unwrap(), "ENABLES");
     }
 }
