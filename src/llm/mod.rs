@@ -1,16 +1,16 @@
-pub mod config;
-pub mod openai;
 pub mod anthropic;
-pub mod ollama;
+pub mod config;
 pub mod fallback;
+pub mod ollama;
+pub mod openai;
 
-use async_trait::async_trait;
 use crate::error::TdgResult;
+use async_trait::async_trait;
 
 /// LLM message for chat completions
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LlmMessage {
-    pub role: String,  // "system", "user", "assistant"
+    pub role: String, // "system", "user", "assistant"
     pub content: String,
 }
 

@@ -5,7 +5,7 @@ use std::time::Duration;
 use rusqlite::Connection;
 use tempfile::NamedTempFile;
 
-use tdg_rust::db::crud::{add_node, add_edge, get_node};
+use tdg_rust::db::crud::{add_edge, add_node, get_node};
 use tdg_rust::db::write_guard::WriteGuard;
 use tdg_rust::db::{init_fts, init_schema, run_migrations};
 use tdg_rust::models::{NewEdge, NewNode};
@@ -27,7 +27,10 @@ fn write_guard_prevents_concurrent_writes() {
 
     let guard1 = WriteGuard::acquire(&db_path, Duration::from_secs(5)).unwrap();
     let result = WriteGuard::acquire(&db_path, Duration::from_millis(50));
-    assert!(result.is_err(), "second acquire should timeout while first holds guard");
+    assert!(
+        result.is_err(),
+        "second acquire should timeout while first holds guard"
+    );
     drop(guard1);
 
     let guard2 = WriteGuard::acquire(&db_path, Duration::from_secs(5)).unwrap();
@@ -124,7 +127,7 @@ fn concurrent_writes_serialized() {
         handles.push(thread::spawn(move || {
             barrier.wait();
             let conn = Connection::open(&db).unwrap();
-    let node = add_node(
+            let node = add_node(
                 &conn,
                 &NewNode {
                     node_type: "action".to_string(),
@@ -153,7 +156,11 @@ fn concurrent_writes_serialized() {
 
     let conn = Connection::open(tmp.path()).unwrap();
     let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_eq!(count, 3, "parent + 2 concurrent child nodes");
 }

@@ -167,9 +167,9 @@ mod tests {
         let pool = ConnectionPool::new(path, 2, 30000).unwrap();
 
         pool.with_connection(|conn| {
-            let mode: String =
-                conn.query_row("PRAGMA journal_mode", [], |r| r.get(0))
-                    .unwrap();
+            let mode: String = conn
+                .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(mode, "wal");
             Ok(())
         })
@@ -185,9 +185,9 @@ mod tests {
         let pool = ConnectionPool::new(path, 2, 30000).unwrap();
 
         pool.with_connection(|conn| {
-            let fk: i32 =
-                conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0))
-                    .unwrap();
+            let fk: i32 = conn
+                .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(fk, 1);
             Ok(())
         })
@@ -203,9 +203,9 @@ mod tests {
         let pool = ConnectionPool::new(path, 2, 30000).unwrap();
 
         pool.with_connection(|conn| {
-            let sync_val: i32 =
-                conn.query_row("PRAGMA synchronous", [], |r| r.get(0))
-                    .unwrap();
+            let sync_val: i32 = conn
+                .query_row("PRAGMA synchronous", [], |r| r.get(0))
+                .unwrap();
             assert!(sync_val >= 0 && sync_val <= 2);
             Ok(())
         })
@@ -277,9 +277,8 @@ mod tests {
         let path = tmp.path().to_str().unwrap();
         let pool = ConnectionPool::new(path, 5, 30000).unwrap();
 
-        let result: Result<(), _> = pool.with_connection(|_| {
-            Err(crate::error::TdgError::Custom("test error".to_string()))
-        });
+        let result: Result<(), _> =
+            pool.with_connection(|_| Err(crate::error::TdgError::Custom("test error".to_string())));
         assert!(result.is_err());
 
         pool.close();
@@ -349,8 +348,7 @@ mod tests {
 
         let result: i32 = pool
             .with_connection(|conn| {
-                let val: i32 =
-                    conn.query_row("SELECT 42 + 1", [], |r| r.get(0))?;
+                let val: i32 = conn.query_row("SELECT 42 + 1", [], |r| r.get(0))?;
                 Ok(val)
             })
             .unwrap();
@@ -393,9 +391,9 @@ mod tests {
         let pool = ConnectionPool::new(path, 2, 5000).unwrap();
 
         pool.with_connection(|conn| {
-            let timeout: i32 =
-                conn.query_row("PRAGMA busy_timeout", [], |r| r.get(0))
-                    .unwrap();
+            let timeout: i32 = conn
+                .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(timeout, 5000);
             Ok(())
         })
@@ -411,9 +409,9 @@ mod tests {
         let pool = ConnectionPool::new(path, 2, 30000).unwrap();
 
         pool.with_connection(|conn| {
-            let cache: i32 =
-                conn.query_row("PRAGMA cache_size", [], |r| r.get(0))
-                    .unwrap();
+            let cache: i32 = conn
+                .query_row("PRAGMA cache_size", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(cache, -8000);
             Ok(())
         })

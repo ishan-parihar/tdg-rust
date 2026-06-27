@@ -119,7 +119,10 @@ impl MindStateManager {
 
     /// Return a snapshot of the current mind state.
     pub fn get_state(&self) -> MindState {
-        self.state.lock().expect("mind state mutex poisoned").clone()
+        self.state
+            .lock()
+            .expect("mind state mutex poisoned")
+            .clone()
     }
 
     /// Mutate the mind state inside a lock, then persist automatically.

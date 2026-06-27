@@ -72,11 +72,7 @@ pub mod community {
 
         // Build CSR from petgraph (edge weights are String, treat all as 1.0)
         for edge in graph.edge_references() {
-            let _ = builder.add_edge(
-                edge.source().index(),
-                edge.target().index(),
-                1.0f64,
-            );
+            let _ = builder.add_edge(edge.source().index(), edge.target().index(), 1.0f64);
         }
 
         let graph_data = builder.build().expect("valid graph data from petgraph");
@@ -276,6 +272,9 @@ mod tests {
         g.add_node("C".into());
         g.add_edge(NodeIndex::new(0), NodeIndex::new(1), "e".into());
         let n = community::num_communities(&g);
-        assert!(n >= 2, "disconnected graph should have >= 2 communities, got {n}");
+        assert!(
+            n >= 2,
+            "disconnected graph should have >= 2 communities, got {n}"
+        );
     }
 }

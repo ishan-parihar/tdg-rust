@@ -12,9 +12,9 @@ use crate::error::TdgResult;
 use crate::mind::data_loader::*;
 use crate::mind::diagnostic::{load_diagnostic_thresholds, DiagnosticEngine};
 use crate::mind::feeling::{feeling_state_prompt, FeelingEngine};
+use crate::mind::metrics::MetricsEngine;
 use crate::mind::sections::*;
 use crate::mind::terrain::{discover_skills_for_terrain, generate_terrain_context};
-use crate::mind::metrics::MetricsEngine;
 
 static WISDOM_CALL_COUNTER: AtomicUsize = AtomicUsize::new(0);
 const WISDOM_CADENCE: usize = 5;
@@ -597,13 +597,24 @@ mod tests {
 
         let feeling = parsed.get("feeling").expect("feeling field missing");
         assert!(feeling.is_object(), "feeling should be an object");
-        assert!(feeling.get("energy_level").is_some(), "missing energy_level");
-        assert!(feeling.get("dominant_drive").is_some(), "missing dominant_drive");
+        assert!(
+            feeling.get("energy_level").is_some(),
+            "missing energy_level"
+        );
+        assert!(
+            feeling.get("dominant_drive").is_some(),
+            "missing dominant_drive"
+        );
         assert!(feeling.get("feelings").is_some(), "missing feelings list");
         assert!(feeling.get("summary").is_some(), "missing summary");
 
-        let escalation = parsed.get("escalation_level").expect("escalation_level field missing");
-        assert!(escalation.is_string(), "escalation_level should be a string");
+        let escalation = parsed
+            .get("escalation_level")
+            .expect("escalation_level field missing");
+        assert!(
+            escalation.is_string(),
+            "escalation_level should be a string"
+        );
         let level = escalation.as_str().unwrap();
         assert!(
             matches!(level, "soft" | "strong" | "mandatory"),

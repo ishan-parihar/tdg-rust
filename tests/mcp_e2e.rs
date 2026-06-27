@@ -100,19 +100,31 @@ fn e2e_search_respects_limit() {
         .with_connection(|conn| tdg_rust::db::crud::search(conn, "unique_term", 3))
         .unwrap();
 
-    assert!(results.len() <= 3, "limit not respected: got {}", results.len());
+    assert!(
+        results.len() <= 3,
+        "limit not respected: got {}",
+        results.len()
+    );
 }
 
 #[test]
 fn e2e_search_fts5_stemming() {
     let pool = make_pool();
-    add_node_with_desc(&pool, "observation", "Running", "The runner was running fast");
+    add_node_with_desc(
+        &pool,
+        "observation",
+        "Running",
+        "The runner was running fast",
+    );
 
     let results = pool
         .with_connection(|conn| tdg_rust::db::crud::search(conn, "run", 10))
         .unwrap();
 
-    assert!(!results.is_empty(), "FTS5 stemming should match 'run' → 'running'");
+    assert!(
+        !results.is_empty(),
+        "FTS5 stemming should match 'run' → 'running'"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -324,14 +336,7 @@ fn e2e_create_auto_wires_blocks_edge() {
         .unwrap();
     let auto_edges = pool
         .with_connection(|conn| {
-            tdg_rust::db::crud::get_edges(
-                conn,
-                None,
-                Some(&action),
-                Some("BLOCKS"),
-                None,
-                10,
-            )
+            tdg_rust::db::crud::get_edges(conn, None, Some(&action), Some("BLOCKS"), None, 10)
         })
         .unwrap();
     assert!(
@@ -406,10 +411,7 @@ fn e2e_update_node_description() {
     let updated = pool
         .with_connection(|conn| {
             let mut updates = std::collections::HashMap::new();
-            updates.insert(
-                "description".to_string(),
-                json!("New detailed description"),
-            );
+            updates.insert("description".to_string(), json!("New detailed description"));
             tdg_rust::db::crud::update_node(conn, &id, &updates)
         })
         .unwrap()
@@ -444,10 +446,7 @@ fn e2e_update_node_parent_ids() {
 
     pool.with_connection(|conn| {
         let mut updates = std::collections::HashMap::new();
-        updates.insert(
-            "parent_ids".to_string(),
-            json!(vec![p1.clone()]),
-        );
+        updates.insert("parent_ids".to_string(), json!(vec![p1.clone()]));
         tdg_rust::db::crud::update_node(conn, &child, &updates)?;
         Ok(())
     })
@@ -609,14 +608,7 @@ fn e2e_connect_duplicate_edge_detection() {
 
     let existing = pool
         .with_connection(|conn| {
-            tdg_rust::db::crud::get_edges(
-                conn,
-                Some(&a),
-                Some(&b),
-                Some("EVIDENCES"),
-                None,
-                10,
-            )
+            tdg_rust::db::crud::get_edges(conn, Some(&a), Some(&b), Some("EVIDENCES"), None, 10)
         })
         .unwrap();
 
@@ -656,14 +648,7 @@ fn e2e_connect_force_overrides_duplicate() {
 
     let edges = pool
         .with_connection(|conn| {
-            tdg_rust::db::crud::get_edges(
-                conn,
-                Some(&a),
-                Some(&b),
-                Some("SUPPORTS"),
-                None,
-                10,
-            )
+            tdg_rust::db::crud::get_edges(conn, Some(&a), Some(&b), Some("SUPPORTS"), None, 10)
         })
         .unwrap();
 
@@ -755,14 +740,7 @@ fn e2e_observe_with_entity_wiring() {
 
     let mentions = pool
         .with_connection(|conn| {
-            tdg_rust::db::crud::get_edges(
-                conn,
-                Some(&obs.id),
-                None,
-                Some("MENTIONS"),
-                None,
-                10,
-            )
+            tdg_rust::db::crud::get_edges(conn, Some(&obs.id), None, Some("MENTIONS"), None, 10)
         })
         .unwrap();
 
@@ -1139,14 +1117,7 @@ fn e2e_reflect_store_sub_insight_nodes() {
 
     let synthesize_edges = pool
         .with_connection(|conn| {
-            tdg_rust::db::crud::get_edges(
-                conn,
-                None,
-                Some(&main.id),
-                Some("SYNTHESIZES"),
-                None,
-                10,
-            )
+            tdg_rust::db::crud::get_edges(conn, None, Some(&main.id), Some("SYNTHESIZES"), None, 10)
         })
         .unwrap();
 
@@ -1391,14 +1362,7 @@ fn e2e_event_logging_and_query() {
             None,
             Some(&json!({"type": "observation"})),
         )?;
-        tdg_rust::db::crud::record_event(
-            conn,
-            "node_searched",
-            Some(&node),
-            None,
-            None,
-            None,
-        )?;
+        tdg_rust::db::crud::record_event(conn, "node_searched", Some(&node), None, None, None)?;
         Ok(())
     })
     .unwrap();
@@ -1427,8 +1391,15 @@ fn e2e_event_logging_and_query() {
         })
         .unwrap();
 
-    assert!(events.len() >= 2, "should have at least 2 events, got {}", events.len());
-    let actions: Vec<&str> = events.iter().filter_map(|e| e["event_action"].as_str()).collect();
+    assert!(
+        events.len() >= 2,
+        "should have at least 2 events, got {}",
+        events.len()
+    );
+    let actions: Vec<&str> = events
+        .iter()
+        .filter_map(|e| e["event_action"].as_str())
+        .collect();
     assert!(actions.contains(&"node_created"));
     assert!(actions.contains(&"node_searched"));
 }
@@ -1555,11 +1526,12 @@ fn e2e_full_workflow() {
     assert_eq!(updated_action.lifecycle_state, "completed");
 
     let paths = pool
-        .with_connection(|conn| {
-            tdg_rust::db::crud::pathfind(conn, &obs.id, &action_a, 6, 100)
-        })
+        .with_connection(|conn| tdg_rust::db::crud::pathfind(conn, &obs.id, &action_a, 6, 100))
         .unwrap();
-    assert!(!paths.is_empty(), "path should exist: obs → telos → action_a");
+    assert!(
+        !paths.is_empty(),
+        "path should exist: obs → telos → action_a"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1642,7 +1614,13 @@ fn e2e_health_check_record_and_summary() {
 
     pool.with_connection(|conn| {
         tdg_rust::db::crud::record_health_check(conn, "api-gateway", 42.5, true, None)?;
-        tdg_rust::db::crud::record_health_check(conn, "api-gateway", 120.0, false, Some("timeout"))?;
+        tdg_rust::db::crud::record_health_check(
+            conn,
+            "api-gateway",
+            120.0,
+            false,
+            Some("timeout"),
+        )?;
         tdg_rust::db::crud::record_health_check(conn, "db", 5.0, true, None)?;
         Ok(())
     })
@@ -1878,9 +1856,7 @@ fn e2e_get_related_both_directions() {
     .unwrap();
 
     let in_edges = pool
-        .with_connection(|conn| {
-            tdg_rust::db::crud::get_edges(conn, None, Some(&b), None, None, 20)
-        })
+        .with_connection(|conn| tdg_rust::db::crud::get_edges(conn, None, Some(&b), None, None, 20))
         .unwrap();
 
     assert_eq!(in_edges.len(), 2);

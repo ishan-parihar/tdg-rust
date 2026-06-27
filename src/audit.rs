@@ -336,8 +336,7 @@ impl<'a> AuditEngine<'a> {
 
         for edge in &edges {
             // Check source exists
-            if crud::get_node(self.conn, &edge.source_id)?.is_none()
-            {
+            if crud::get_node(self.conn, &edge.source_id)?.is_none() {
                 anomalies.push(Anomaly::new(
                     &format!("dangling_src_{}", &edge.id[..8]),
                     "dangling_edge",
@@ -352,8 +351,7 @@ impl<'a> AuditEngine<'a> {
             }
 
             // Check target exists
-            if crud::get_node(self.conn, &edge.target_id)?.is_none()
-            {
+            if crud::get_node(self.conn, &edge.target_id)?.is_none() {
                 anomalies.push(Anomaly::new(
                     &format!("dangling_tgt_{}", &edge.id[..8]),
                     "dangling_edge",

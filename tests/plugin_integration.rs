@@ -1027,7 +1027,9 @@ fn preference_extractor_recurring_patterns_finds_repeated_keywords() {
                     node_type: "observation".to_string(),
                     name: format!("obs{i}"),
                     description: Some("deploy the server to AWS".to_string()),
-                    properties: Some(serde_json::json!({"description": "deploy the server to AWS"})),
+                    properties: Some(
+                        serde_json::json!({"description": "deploy the server to AWS"}),
+                    ),
                     source: Some("turn_capture".to_string()),
                     ..Default::default()
                 },
@@ -1089,7 +1091,9 @@ fn preference_extractor_cross_cycle_patterns_finds_action_verbs() {
                 node_type: "observation".to_string(),
                 name: "obs1".to_string(),
                 description: Some("I need to deploy the new version".to_string()),
-                properties: Some(serde_json::json!({"description": "I need to deploy the new version"})),
+                properties: Some(
+                    serde_json::json!({"description": "I need to deploy the new version"}),
+                ),
                 source: Some("turn_capture".to_string()),
                 ..Default::default()
             },
@@ -1100,7 +1104,9 @@ fn preference_extractor_cross_cycle_patterns_finds_action_verbs() {
                 node_type: "observation".to_string(),
                 name: "obs2".to_string(),
                 description: Some("Let me create a new module for this".to_string()),
-                properties: Some(serde_json::json!({"description": "Let me create a new module for this"})),
+                properties: Some(
+                    serde_json::json!({"description": "Let me create a new module for this"}),
+                ),
                 source: Some("turn_capture".to_string()),
                 ..Default::default()
             },
@@ -1145,8 +1151,7 @@ fn preference_extractor_cross_cycle_patterns_empty_when_no_actions() {
 #[test]
 fn preference_extractor_multiple_extractions_from_single_message() {
     let ext = PreferenceExtractor::new();
-    let results =
-        ext.extract_from_message("Remember that port is 3000, don't use Docker");
+    let results = ext.extract_from_message("Remember that port is 3000, don't use Docker");
     let types: Vec<&str> = results.iter().map(|r| r.extraction_type.as_str()).collect();
     assert!(types.contains(&"memory"));
     assert!(types.contains(&"correction"));
@@ -1155,7 +1160,8 @@ fn preference_extractor_multiple_extractions_from_single_message() {
 #[test]
 fn preference_extractor_confidence_bounded() {
     let ext = PreferenceExtractor::new();
-    let text = "Don't use Docker, I prefer Rust, remember that port is 3000, every time something happens";
+    let text =
+        "Don't use Docker, I prefer Rust, remember that port is 3000, every time something happens";
     let results = ext.extract_from_message(text);
     for r in &results {
         assert!(
@@ -1199,13 +1205,7 @@ fn cross_plugin_entity_extractor_plus_hybrid_retriever() {
         for entity in &entities {
             let results = retriever.search(conn, &entity.name, 5, None)?;
             if !results.is_empty() {
-                assert!(
-                    results[0]
-                        .node
-                        .name
-                        .to_lowercase()
-                        .contains(&entity.name)
-                );
+                assert!(results[0].node.name.to_lowercase().contains(&entity.name));
             }
         }
 

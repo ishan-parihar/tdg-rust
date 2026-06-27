@@ -626,7 +626,13 @@ fn integration_health_check_crud() {
     let pool = make_pool();
     pool.with_connection(|conn| {
         tdg_rust::db::crud::record_health_check(conn, "api-gateway", 42.5, true, None)?;
-        tdg_rust::db::crud::record_health_check(conn, "api-gateway", 120.0, false, Some("timeout"))?;
+        tdg_rust::db::crud::record_health_check(
+            conn,
+            "api-gateway",
+            120.0,
+            false,
+            Some("timeout"),
+        )?;
         tdg_rust::db::crud::record_health_check(conn, "db", 5.0, true, None)?;
 
         let summary = tdg_rust::db::crud::get_health_summary(conn)?;

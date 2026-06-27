@@ -78,7 +78,11 @@ impl HrrRetriever {
             })
             .collect();
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(top_k);
         Ok(results)
     }
@@ -193,7 +197,11 @@ impl HrrRetriever {
             })
             .collect();
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(top_k);
         Ok(results)
     }
@@ -234,7 +242,11 @@ impl HrrRetriever {
             })
             .collect();
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(top_k);
         Ok(results)
     }
@@ -367,7 +379,7 @@ fn parse_entry_name(name: &str) -> (String, String) {
     }
 }
 
-    /// Find the vector for a node by its ID inside an already-built bank.
+/// Find the vector for a node by its ID inside an already-built bank.
 fn find_node_vector(bank: &HrrMemoryBank, node_id: &str) -> Option<Array1<f64>> {
     bank.entries()
         .iter()
@@ -501,14 +513,20 @@ mod tests {
         let v2 = HrrRetriever::text_to_hrr("beta");
         let sim = hrr::cosine_similarity(&v1, &v2);
         // Orthogonal-ish: score should be small (not identical)
-        assert!(sim.abs() < 0.15, "similarity {sim} too high for different inputs");
+        assert!(
+            sim.abs() < 0.15,
+            "similarity {sim} too high for different inputs"
+        );
     }
 
     #[test]
     fn text_to_hrr_normalized() {
         let v = HrrRetriever::text_to_hrr("test");
         let norm = v.mapv(|x| x * x).sum().sqrt();
-        assert!((norm - 1.0).abs() < 1e-10, "norm should be ~1.0, got {norm}");
+        assert!(
+            (norm - 1.0).abs() < 1e-10,
+            "norm should be ~1.0, got {norm}"
+        );
     }
 
     // ── find_node_vector ─────────────────────────────────────────────

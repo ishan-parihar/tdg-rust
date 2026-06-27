@@ -7,12 +7,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use petgraph::algo::page_rank;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::schemars::JsonSchema;
 use rmcp::{tool, tool_router, ErrorData as McpError};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use petgraph::algo::page_rank;
 
 use crate::config::Config;
 use crate::db::ConnectionPool;
@@ -315,20 +315,23 @@ impl TrustStore {
         }
     }
 
-    fn set_trust(&self, agent_name: &str, score: f64, reason: Option<String>) -> Result<(), McpError> {
+    fn set_trust(
+        &self,
+        agent_name: &str,
+        score: f64,
+        reason: Option<String>,
+    ) -> Result<(), McpError> {
         let score = score.clamp(0.0, 1.0);
         let now = crate::db::crud::now_iso();
 
         if let Ok(conn) = self.pool.get_connection() {
-            let _ = crate::db::crud::set_trust(
-                &conn,
-                agent_name,
-                score,
-                reason.as_deref(),
-            );
+            let _ = crate::db::crud::set_trust(&conn, agent_name, score, reason.as_deref());
         }
 
-        let mut entries = self.entries.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
+        let mut entries = self
+            .entries
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
         entries.insert(
             agent_name.to_string(),
             TrustEntry {
@@ -343,7 +346,10 @@ impl TrustStore {
 
     fn get_trust(&self, agent_name: &str) -> Result<Option<TrustEntry>, McpError> {
         {
-            let entries = self.entries.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
+            let entries = self
+                .entries
+                .lock()
+                .map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
             if let Some(entry) = entries.get(agent_name) {
                 return Ok(Some(entry.clone()));
             }
@@ -358,7 +364,9 @@ impl TrustStore {
                         source: None,
                         reason: None,
                     };
-                    let mut entries = self.entries.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
+                    let mut entries = self.entries.lock().map_err(|e| {
+                        McpError::internal_error(format!("Lock poisoned: {}", e), None)
+                    })?;
                     entries.insert(agent_name.to_string(), entry.clone());
                     return Ok(Some(entry));
                 }
@@ -380,15 +388,13 @@ impl TrustStore {
         let now = crate::db::crud::now_iso();
 
         if let Ok(conn) = self.pool.get_connection() {
-            let _ = crate::db::crud::set_trust(
-                &conn,
-                agent_name,
-                new_score,
-                reason.as_deref(),
-            );
+            let _ = crate::db::crud::set_trust(&conn, agent_name, new_score, reason.as_deref());
         }
 
-        let mut entries = self.entries.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
+        let mut entries = self
+            .entries
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
         let entry = entries.entry(agent_name.to_string()).or_insert(TrustEntry {
             score: 0.5,
             updated_at: now.clone(),
@@ -457,7 +463,10 @@ impl HealthMonitor {
     ) -> Result<(), McpError> {
         // Write to in-memory cache
         {
-            let mut checks = self.checks.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
+            let mut checks = self
+                .checks
+                .lock()
+                .map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
             checks.push(HealthCheckRecord {
                 service: service.to_string(),
                 latency_ms,
@@ -501,7 +510,10 @@ impl HealthMonitor {
             }
         }
         // Fallback to in-memory cache
-        let checks = self.checks.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
+        let checks = self
+            .checks
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
         let total = checks.len();
         if total == 0 {
             return Ok(json!({
@@ -529,7 +541,10 @@ impl HealthMonitor {
     }
 
     fn get_circuit_breaker_status(&self) -> Result<Value, McpError> {
-        let breakers = self.breakers.lock().map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
+        let breakers = self
+            .breakers
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
         let statuses: Vec<Value> = breakers
             .iter()
             .map(|(service, cb)| {
@@ -592,7 +607,9 @@ impl TdgServer {
         Parameters(params): Parameters<SearchParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         let limit = params.limit.unwrap_or(10).min(50);
@@ -617,7 +634,9 @@ impl TdgServer {
         Parameters(params): Parameters<GetNodeParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         let node = crate::db::crud::get_node(&conn, &params.node_id)
@@ -647,7 +666,9 @@ impl TdgServer {
         Parameters(params): Parameters<QueryEventsParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         let limit = params.limit.unwrap_or(50).min(500);
@@ -691,7 +712,9 @@ impl TdgServer {
         Parameters(params): Parameters<CreateParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         if params.name.is_empty() {
             return Err(McpError::invalid_params("name is required", None));
@@ -786,7 +809,9 @@ impl TdgServer {
         Parameters(params): Parameters<UpdateParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         let mut updates = HashMap::new();
@@ -844,7 +869,9 @@ impl TdgServer {
         Parameters(params): Parameters<ConnectParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         let force = params.force.unwrap_or(false);
@@ -866,8 +893,13 @@ impl TdgServer {
             auto_detect_edge_type(&src.node_type, &tgt.node_type)
         };
 
-        if let Err(e) = crate::validation::validate_edge_creation(&src.node_type, &tgt.node_type, &edge_type) {
-            return Ok(serde_json::to_string(&json!({"error": e, "code": "VALIDATION_ERROR"})).unwrap_or_default());
+        if let Err(e) =
+            crate::validation::validate_edge_creation(&src.node_type, &tgt.node_type, &edge_type)
+        {
+            return Ok(
+                serde_json::to_string(&json!({"error": e, "code": "VALIDATION_ERROR"}))
+                    .unwrap_or_default(),
+            );
         }
 
         if !force && !matches!(edge_type.as_str(), "BLOCKS" | "DECOMPOSES_TO") {
@@ -889,14 +921,17 @@ impl TdgServer {
         }
 
         if !force && !matches!(edge_type.as_str(), "BLOCKS" | "DECOMPOSES_TO") {
-            if let Ok(paths) = crate::db::crud::pathfind(&conn, &params.source_id, &params.target_id, 6, 500) {
+            if let Ok(paths) =
+                crate::db::crud::pathfind(&conn, &params.source_id, &params.target_id, 6, 500)
+            {
                 if !paths.is_empty() {
                     return Ok(serde_json::to_string(&json!({
                         "status": "redundant",
                         "reason": "Path already exists between nodes",
                         "existing_paths": paths.len(),
                         "shortest_hops": paths.iter().map(|p| p.len()).min().unwrap_or(0)
-                    })).unwrap_or_default());
+                    }))
+                    .unwrap_or_default());
                 }
             }
         }
@@ -927,7 +962,9 @@ impl TdgServer {
         Parameters(params): Parameters<BulkCreateParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         let nodes: Vec<Value> = serde_json::from_str(&params.nodes_json)
@@ -985,7 +1022,9 @@ impl TdgServer {
         Parameters(params): Parameters<RecordExecParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         let truncated: String = params.description.chars().take(80).collect();
@@ -1022,7 +1061,9 @@ impl TdgServer {
         Parameters(params): Parameters<RateMemoryParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         let delta: i32 = if params.helpful { 1 } else { -1 };
@@ -1035,13 +1076,17 @@ impl TdgServer {
         .unwrap_or_default())
     }
 
-    #[tool(description = "Get graph state, health, or integrity. detail adds drives+telos+stage. health adds diagnostics. verify runs PRAGMA integrity_check.")]
+    #[tool(
+        description = "Get graph state, health, or integrity. detail adds drives+telos+stage. health adds diagnostics. verify runs PRAGMA integrity_check."
+    )]
     pub(crate) async fn tdg_mind_state(
         &self,
         Parameters(params): Parameters<MindStateParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
 
@@ -1056,9 +1101,7 @@ impl TdgServer {
                 .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
                 .unwrap_or(0);
             let db_path = crate::config::Config::from_env().db_path;
-            let db_size = std::fs::metadata(&db_path)
-                .map(|m| m.len())
-                .unwrap_or(0);
+            let db_size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
             return Ok(serde_json::to_string(&json!({
                 "valid": integrity == "ok",
                 "integrity_check": integrity,
@@ -1122,7 +1165,9 @@ impl TdgServer {
                 .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
                 .unwrap_or(0);
             let cc: i64 = conn
-                .prepare("SELECT COUNT(*) FROM nodes WHERE node_type='constraint' AND valid_to IS NULL")
+                .prepare(
+                    "SELECT COUNT(*) FROM nodes WHERE node_type='constraint' AND valid_to IS NULL",
+                )
                 .and_then(|mut stmt| stmt.query_row([], |r| r.get(0)))
                 .unwrap_or(0);
             let actv: i64 = conn
@@ -1153,8 +1198,10 @@ impl TdgServer {
         if params.detail.unwrap_or(false) {
             // drive scores (eros, agape, agency, communion)
             let drive_keys = ["eros", "agape", "agency", "communion"];
-            let mut drives: DriveScores =
-                drive_keys.iter().map(|k| (k.to_string(), (Vec::new(), Vec::new(), Vec::new()))).collect();
+            let mut drives: DriveScores = drive_keys
+                .iter()
+                .map(|k| (k.to_string(), (Vec::new(), Vec::new(), Vec::new())))
+                .collect();
 
             if let Ok(mut stmt) = conn.prepare("SELECT properties_json FROM nodes WHERE valid_to IS NULL AND properties_json NOT IN ('{}', '')") {
                 if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
@@ -1215,7 +1262,10 @@ impl TdgServer {
                 "5": "Rational", "6": "Pluralistic", "7": "Integral", "8": "Harvest"
             });
             let ns = (cs + 1).min(8);
-            let ns_name = sn_names.get(ns.to_string()).and_then(|v| v.as_str()).unwrap_or("Unknown");
+            let ns_name = sn_names
+                .get(ns.to_string())
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
             let req = (stages.len() + 5).max(10) as f64;
             let prog = (stages.len() as f64 / req * 100.0).min(100.0) as i64;
             result["stage_trajectory"] = json!({
@@ -1236,7 +1286,9 @@ impl TdgServer {
         Parameters(params): Parameters<ObserveParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         if params.description.is_empty() {
             return Err(McpError::invalid_params("description is required", None));
@@ -1333,7 +1385,9 @@ impl TdgServer {
         Parameters(params): Parameters<GetRelatedParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         let limit = params.limit.unwrap_or(20);
@@ -1385,7 +1439,9 @@ impl TdgServer {
         Parameters(params): Parameters<MaintenanceParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         let phase = params.phase.as_deref().unwrap_or("all");
@@ -1415,7 +1471,9 @@ impl TdgServer {
     #[tool(description = "Introspect the database schema (tables, columns, row counts)")]
     pub(crate) async fn tdg_get_schema(&self) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         let mut tables = serde_json::Map::new();
@@ -1447,7 +1505,9 @@ impl TdgServer {
         Parameters(params): Parameters<BankParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         match params.action.as_deref().unwrap_or("list") {
@@ -1478,7 +1538,9 @@ impl TdgServer {
         Parameters(params): Parameters<EntityParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         match params.action.as_deref().unwrap_or("resolve") {
@@ -1523,13 +1585,17 @@ impl TdgServer {
         }
     }
 
-    #[tool(description = "LLM-powered cross-memory synthesis. Gathers recent graph context, tries LLM providers (OpenAI → Anthropic → Ollama), falls back to pattern-based synthesis, and stores synthesis nodes in the graph. Use status_only=true to check LLM availability without running synthesis.")]
+    #[tool(
+        description = "LLM-powered cross-memory synthesis. Gathers recent graph context, tries LLM providers (OpenAI → Anthropic → Ollama), falls back to pattern-based synthesis, and stores synthesis nodes in the graph. Use status_only=true to check LLM availability without running synthesis."
+    )]
     pub(crate) async fn tdg_reflect(
         &self,
         Parameters(params): Parameters<ReflectParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
 
         let conn = get_conn(&self.pool)?;
@@ -1538,7 +1604,12 @@ impl TdgServer {
         let focus_topics: Vec<String> = params
             .focus_topics
             .as_ref()
-            .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
+            .map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect()
+            })
             .unwrap_or_default();
 
         // ── Status-only mode: check LLM availability ──────────────
@@ -1615,19 +1686,32 @@ impl TdgServer {
         };
 
         // Unique entity names
-        let entity_names: Vec<String> = people.iter().map(|p| p.name.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
+        let entity_names: Vec<String> = people
+            .iter()
+            .map(|p| p.name.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
 
         // ── Focus topics filtering ─────────────────────────────────
         let observations = if !focus_topics.is_empty() {
-            let mut scored: Vec<(i32, _)> = observations.into_iter().map(|n| {
-                let haystack = format!("{} {}", n.name, n.description).to_lowercase();
-                let score = focus_topics.iter()
-                    .filter(|t| haystack.contains(&t.to_lowercase()))
-                    .count() as i32;
-                (score, n)
-            }).collect();
+            let mut scored: Vec<(i32, _)> = observations
+                .into_iter()
+                .map(|n| {
+                    let haystack = format!("{} {}", n.name, n.description).to_lowercase();
+                    let score = focus_topics
+                        .iter()
+                        .filter(|t| haystack.contains(&t.to_lowercase()))
+                        .count() as i32;
+                    (score, n)
+                })
+                .collect();
             scored.sort_by(|a, b| b.0.cmp(&a.0));
-            scored.into_iter().take(turns as usize).map(|(_, n)| n).collect()
+            scored
+                .into_iter()
+                .take(turns as usize)
+                .map(|(_, n)| n)
+                .collect()
         } else {
             observations
         };
@@ -1649,15 +1733,21 @@ impl TdgServer {
         }
 
         // ── Build context string for prompt ───────────────────────
-        let context_nodes: Vec<Value> = observations.iter().chain(people.iter()).chain(telos.iter()).take(turns as usize).map(|n| {
-            json!({
-                "id": n.id,
-                "type": n.node_type,
-                "name": n.name,
-                "description": n.description.chars().take(200).collect::<String>(),
-                "created_at": n.created_at,
+        let context_nodes: Vec<Value> = observations
+            .iter()
+            .chain(people.iter())
+            .chain(telos.iter())
+            .take(turns as usize)
+            .map(|n| {
+                json!({
+                    "id": n.id,
+                    "type": n.node_type,
+                    "name": n.name,
+                    "description": n.description.chars().take(200).collect::<String>(),
+                    "created_at": n.created_at,
+                })
             })
-        }).collect();
+            .collect();
 
         let context_map = json!({
             "nodes": context_nodes,
@@ -1673,7 +1763,10 @@ impl TdgServer {
         let focus_section = if focus_topics.is_empty() {
             String::new()
         } else {
-            format!("FOCUS TOPICS: {}\nPay special attention to these areas.\n", focus_topics.join(", "))
+            format!(
+                "FOCUS TOPICS: {}\nPay special attention to these areas.\n",
+                focus_topics.join(", ")
+            )
         };
 
         let prompt = format!(
@@ -1734,7 +1827,8 @@ Do NOT include any text outside the JSON block."#
         }
 
         // ── Fallback: pattern-based synthesis ─────────────────────
-        let pattern_result = pattern_synthesis(&conn, &context_map, total_nodes, edge_count, &focus_topics);
+        let pattern_result =
+            pattern_synthesis(&conn, &context_map, total_nodes, edge_count, &focus_topics);
         let synthesis_nodes = store_synthesis(&conn, &pattern_result, "pattern", total_nodes);
 
         Ok(serde_json::to_string(&json!({
@@ -1760,7 +1854,9 @@ Do NOT include any text outside the JSON block."#
         Parameters(params): Parameters<GetTrustParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let ts: &TrustStore = &self.trust_store;
         match ts.get_trust(&params.agent_name) {
@@ -1782,13 +1878,17 @@ Do NOT include any text outside the JSON block."#
         }
     }
 
-    #[tool(description = "Adjust an agent's trust score by a delta with optional reason and source")]
+    #[tool(
+        description = "Adjust an agent's trust score by a delta with optional reason and source"
+    )]
     pub(crate) async fn tdg_adjust_trust(
         &self,
         Parameters(params): Parameters<AdjustTrustParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let new_score = self.trust_store.adjust_trust(
             &params.agent_name,
@@ -1811,7 +1911,9 @@ Do NOT include any text outside the JSON block."#
         Parameters(params): Parameters<HealthCheckParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         self.health_monitor.record_health_check(
             &params.service,
@@ -1834,7 +1936,9 @@ Do NOT include any text outside the JSON block."#
         Parameters(_params): Parameters<SystemHealthParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let summary = self.health_monitor.get_health_summary()?;
         let cb_status = self.health_monitor.get_circuit_breaker_status()?;
@@ -1845,13 +1949,17 @@ Do NOT include any text outside the JSON block."#
         Ok(serde_json::to_string(&result).unwrap_or_default())
     }
 
-    #[tool(description = "Get graph statistics: node/edge counts, average degree, density, top PageRank hubs")]
+    #[tool(
+        description = "Get graph statistics: node/edge counts, average degree, density, top PageRank hubs"
+    )]
     pub(crate) async fn tdg_graph_stats(
         &self,
         Parameters(_params): Parameters<GraphStatsParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let conn = get_conn(&self.pool)?;
         let node_count = crate::db::crud::count_nodes(&conn, None).map_err(mcp_err)?;
@@ -1876,7 +1984,8 @@ Do NOT include any text outside the JSON block."#
                         .iter()
                         .map(|(id, idx)| (id.clone(), ranks[idx.index()]))
                         .collect();
-                    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    ranked
+                        .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
                     ranked
                         .into_iter()
                         .take(5)
@@ -1900,13 +2009,17 @@ Do NOT include any text outside the JSON block."#
 
     // ─── Mind State Persistence Tools ──────────────────────────────────────────
 
-    #[tool(description = "Save the current mind state to disk. Optionally specify a session ID to associate.")]
+    #[tool(
+        description = "Save the current mind state to disk. Optionally specify a session ID to associate."
+    )]
     pub(crate) async fn tdg_save_mind_state(
         &self,
         Parameters(params): Parameters<SaveMindStateParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         if let Some(ref session_id) = params.session_id {
             if !session_id.is_empty() {
@@ -1933,7 +2046,9 @@ Do NOT include any text outside the JSON block."#
         Parameters(_params): Parameters<LoadMindStateParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let state = self.mind_state_manager.get_state();
         Ok(serde_json::to_string(&json!({
@@ -1954,11 +2069,11 @@ Do NOT include any text outside the JSON block."#
     }
 
     #[tool(description = "Get the current project context string")]
-    pub(crate) async fn tdg_get_project_context(
-        &self,
-    ) -> Result<String, McpError> {
+    pub(crate) async fn tdg_get_project_context(&self) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         let context = self
             .mind_state_manager
@@ -1977,7 +2092,9 @@ Do NOT include any text outside the JSON block."#
         Parameters(params): Parameters<SetProjectContextParams>,
     ) -> Result<String, McpError> {
         if self.lean_guard()? {
-            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
         }
         if params.context.is_empty() {
             return Err(McpError::invalid_params("context is required", None));
@@ -2026,7 +2143,10 @@ async fn call_openai(
     cfg: &crate::llm::config::LlmConfig,
     prompt: &str,
 ) -> Option<String> {
-    let url = format!("{}/chat/completions", cfg.openai.base_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/chat/completions",
+        cfg.openai.base_url.trim_end_matches('/')
+    );
     let payload = json!({
         "model": cfg.openai.model,
         "messages": [{"role": "user", "content": prompt}],
@@ -2037,13 +2157,21 @@ async fn call_openai(
     let resp = client
         .post(&url)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", cfg.openai.api_key.as_deref()?))
+        .header(
+            "Authorization",
+            format!("Bearer {}", cfg.openai.api_key.as_deref()?),
+        )
         .json(&payload)
         .send()
         .await
         .ok()?;
     let body: Value = resp.json().await.ok()?;
-    let content = body.get("choices")?.get(0)?.get("message")?.get("content")?.as_str()?;
+    let content = body
+        .get("choices")?
+        .get(0)?
+        .get("message")?
+        .get("content")?
+        .as_str()?;
     Some(content.to_string())
 }
 
@@ -2069,9 +2197,9 @@ async fn call_anthropic(
         .ok()?;
     let body: Value = resp.json().await.ok()?;
     let content_list = body.get("content")?.as_array()?;
-    let text_block = content_list.iter().find(|b| {
-        b.get("type").and_then(|v| v.as_str()) == Some("text")
-    })?;
+    let text_block = content_list
+        .iter()
+        .find(|b| b.get("type").and_then(|v| v.as_str()) == Some("text"))?;
     Some(text_block.get("text")?.as_str()?.to_string())
 }
 
@@ -2080,7 +2208,10 @@ async fn call_ollama(
     cfg: &crate::llm::config::LlmConfig,
     prompt: &str,
 ) -> Option<String> {
-    let url = format!("{}/v1/chat/completions", cfg.ollama.base_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/v1/chat/completions",
+        cfg.ollama.base_url.trim_end_matches('/')
+    );
     let payload = json!({
         "model": cfg.ollama.model,
         "messages": [{"role": "user", "content": prompt}],
@@ -2094,7 +2225,12 @@ async fn call_ollama(
         .await
         .ok()?;
     let body: Value = resp.json().await.ok()?;
-    let content = body.get("choices")?.get(0)?.get("message")?.get("content")?.as_str()?;
+    let content = body
+        .get("choices")?
+        .get(0)?
+        .get("message")?
+        .get("content")?
+        .as_str()?;
     Some(content.to_string())
 }
 
@@ -2122,17 +2258,37 @@ fn parse_llm_output(raw: &str) -> Option<Value> {
 }
 
 fn normalize_synthesis_json(data: Value) -> Option<Value> {
-    let insights = data.get("insights").or_else(|| data.get("Insights"))
-        .and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let patterns = data.get("patterns").or_else(|| data.get("Patterns"))
-        .and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let questions = data.get("questions").or_else(|| data.get("Questions"))
-        .and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let synthesis = data.get("synthesis").or_else(|| data.get("Synthesis"))
+    let insights = data
+        .get("insights")
+        .or_else(|| data.get("Insights"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let patterns = data
+        .get("patterns")
+        .or_else(|| data.get("Patterns"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let questions = data
+        .get("questions")
+        .or_else(|| data.get("Questions"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let synthesis = data
+        .get("synthesis")
+        .or_else(|| data.get("Synthesis"))
         .or_else(|| data.get("summary"))
-        .and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let confidence = data.get("confidence").or_else(|| data.get("Confidence"))
-        .and_then(|v| v.as_f64()).unwrap_or(0.5).clamp(0.0, 1.0);
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let confidence = data
+        .get("confidence")
+        .or_else(|| data.get("Confidence"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.5)
+        .clamp(0.0, 1.0);
     Some(json!({
         "insights": insights,
         "patterns": patterns,
@@ -2165,24 +2321,36 @@ fn pattern_synthesis(
         let total: i64 = types.values().filter_map(|v| v.as_i64()).sum();
         let mut sorted: Vec<_> = types.iter().collect();
         sorted.sort_by(|a, b| b.1.as_i64().unwrap_or(0).cmp(&a.1.as_i64().unwrap_or(0)));
-        let type_summary: Vec<String> = sorted.iter().take(5).map(|(t, c)| format!("{}: {}", t, c)).collect();
+        let type_summary: Vec<String> = sorted
+            .iter()
+            .take(5)
+            .map(|(t, c)| format!("{}: {}", t, c))
+            .collect();
         insights.push(format!(
             "Node distribution — {} total nodes across {} types. Top types: {}.",
-            total, types.len(), type_summary.join(", ")
+            total,
+            types.len(),
+            type_summary.join(", ")
         ));
         if let Some((dominant_type, dominant_count)) = sorted.first() {
             let count = dominant_count.as_i64().unwrap_or(0);
             if total > 0 {
                 patterns.push(format!(
                     "Graph is dominated by '{}' nodes ({}/{} = {:.0}%).",
-                    dominant_type, count, total, (count as f64 / total as f64) * 100.0
+                    dominant_type,
+                    count,
+                    total,
+                    (count as f64 / total as f64) * 100.0
                 ));
             }
         }
     }
 
     if obs_count > 0 {
-        insights.push(format!("Recent context includes {} observation nodes.", obs_count));
+        insights.push(format!(
+            "Recent context includes {} observation nodes.",
+            obs_count
+        ));
     } else {
         insights.push("No recent observation activity detected.".to_string());
     }
@@ -2278,12 +2446,14 @@ fn pattern_synthesis(
                 let entries: Vec<(String, String)> = rows.filter_map(|r| r.ok()).collect();
                 if entries.len() >= 10 {
                     // Check for burst activity (many nodes on same day)
-                    let mut day_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+                    let mut day_counts: std::collections::HashMap<String, i64> =
+                        std::collections::HashMap::new();
                     for (ts, _) in &entries {
                         let day = ts.chars().take(10).collect::<String>();
                         *day_counts.entry(day).or_insert(0) += 1;
                     }
-                    if let Some((peak_day, peak_count)) = day_counts.iter().max_by_key(|(_, c)| *c) {
+                    if let Some((peak_day, peak_count)) = day_counts.iter().max_by_key(|(_, c)| *c)
+                    {
                         if *peak_count >= 5 {
                             patterns.push(format!(
                                 "Temporal burst: {} nodes created on {} — indicates concentrated activity.",
@@ -2292,7 +2462,8 @@ fn pattern_synthesis(
                         }
                     }
                     // Check for type clustering over time
-                    let mut type_order: Vec<String> = entries.iter().map(|(_, t)| t.clone()).collect();
+                    let mut type_order: Vec<String> =
+                        entries.iter().map(|(_, t)| t.clone()).collect();
                     type_order.dedup();
                     if type_order.len() <= 3 && entries.len() >= 10 {
                         patterns.push(format!(
@@ -2318,7 +2489,8 @@ fn pattern_synthesis(
         if let Ok(mut stmt) = conn.prepare(drive_query) {
             if let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) {
                 let drive_entries: Vec<String> = rows.filter_map(|r| r.ok()).collect();
-                let mut drive_sum: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+                let mut drive_sum: std::collections::HashMap<String, f64> =
+                    std::collections::HashMap::new();
                 let mut drive_count = 0i64;
                 for raw in &drive_entries {
                     if let Ok(val) = serde_json::from_str::<Value>(raw) {
@@ -2333,24 +2505,31 @@ fn pattern_synthesis(
                     }
                 }
                 if drive_count > 0 && !drive_sum.is_empty() {
-                    let mut avg_drives: Vec<(String, f64)> = drive_sum.iter()
+                    let mut avg_drives: Vec<(String, f64)> = drive_sum
+                        .iter()
                         .map(|(k, v)| (k.clone(), v / drive_count as f64))
                         .collect();
-                    avg_drives.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-                    let top_drives: Vec<String> = avg_drives.iter().take(3)
+                    avg_drives
+                        .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    let top_drives: Vec<String> = avg_drives
+                        .iter()
+                        .take(3)
                         .map(|(k, v)| format!("{}({:.2})", k, v))
                         .collect();
                     insights.push(format!(
                         "Active drive dimensions across {} nodes: {}.",
-                        drive_count, top_drives.join(", ")
+                        drive_count,
+                        top_drives.join(", ")
                     ));
                     // Flag depleted drives
-                    let depleted: Vec<&String> = avg_drives.iter()
+                    let depleted: Vec<&String> = avg_drives
+                        .iter()
                         .filter(|(_, v)| *v < 0.2)
                         .map(|(k, _)| k)
                         .collect();
                     if !depleted.is_empty() {
-                        let depleted_names: Vec<&str> = depleted.iter().map(|s| s.as_str()).collect();
+                        let depleted_names: Vec<&str> =
+                            depleted.iter().map(|s| s.as_str()).collect();
                         questions.push(format!(
                             "Depleted drive dimensions ({}) may need attention — what actions could restore them?",
                             depleted_names.join(", ")
@@ -2366,7 +2545,10 @@ fn pattern_synthesis(
         let topic_list = focus_topics.join(", ");
         insights.push(format!("Synthesis focused on: {}.", topic_list));
         for topic in focus_topics.iter().take(3) {
-            questions.push(format!("What patterns emerge specifically around '{}'?", topic));
+            questions.push(format!(
+                "What patterns emerge specifically around '{}'?",
+                topic
+            ));
         }
     }
 
@@ -2381,9 +2563,11 @@ fn pattern_synthesis(
         }
     }
     if obs_count > 50 {
-        questions.push("With many observations, are there identifiable thematic clusters?".to_string());
+        questions
+            .push("With many observations, are there identifiable thematic clusters?".to_string());
     }
-    questions.push("What emergent developmental patterns exist across the graph structure?".to_string());
+    questions
+        .push("What emergent developmental patterns exist across the graph structure?".to_string());
 
     let synthesis = format!(
         "Pattern-based analysis of {} nodes ({} types, {} edges). The graph shows {} observations and {} known entities.",
@@ -2412,10 +2596,16 @@ fn store_synthesis(
     synthesis_count_hint: i64,
 ) -> Vec<String> {
     let mut created = Vec::new();
-    let summary = result.get("synthesis").and_then(|v| v.as_str()).unwrap_or("");
+    let summary = result
+        .get("synthesis")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let short_summary: String = summary.chars().take(300).collect();
     let name_preview: String = short_summary.chars().take(80).collect();
-    let confidence = result.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.5);
+    let confidence = result
+        .get("confidence")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.5);
 
     let main_node = crate::db::crud::add_node(
         conn,
@@ -2443,7 +2633,11 @@ fn store_synthesis(
             let main_id = node.id.clone();
             created.push(main_id.clone());
 
-            let insights = result.get("insights").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let insights = result
+                .get("insights")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
             for (i, insight) in insights.iter().take(5).enumerate() {
                 let insight_text = insight.as_str().unwrap_or("");
                 let insight_preview: String = insight_text.chars().take(80).collect();

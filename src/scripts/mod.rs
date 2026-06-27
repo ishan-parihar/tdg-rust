@@ -326,7 +326,12 @@ pub fn sync_skills(conn: &Connection, dir: &str) -> TdgResult<Value> {
                                 .find(|l| l.starts_with("name:") || l.starts_with("title:"))
                                 .map(|l| {
                                     l.split_once(':')
-                                        .map(|(_, v)| v.trim().trim_matches('"').trim_matches('\'').to_string())
+                                        .map(|(_, v)| {
+                                            v.trim()
+                                                .trim_matches('"')
+                                                .trim_matches('\'')
+                                                .to_string()
+                                        })
                                         .unwrap_or_default()
                                 });
                             let description = content
@@ -334,7 +339,12 @@ pub fn sync_skills(conn: &Connection, dir: &str) -> TdgResult<Value> {
                                 .find(|l| l.starts_with("description:") || l.starts_with("desc:"))
                                 .map(|l| {
                                     l.split_once(':')
-                                        .map(|(_, v)| v.trim().trim_matches('"').trim_matches('\'').to_string())
+                                        .map(|(_, v)| {
+                                            v.trim()
+                                                .trim_matches('"')
+                                                .trim_matches('\'')
+                                                .to_string()
+                                        })
                                         .unwrap_or_default()
                                 });
 

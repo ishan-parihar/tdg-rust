@@ -46,8 +46,8 @@ impl Default for RetrievalWeights {
 /// Stop words for filtering — expanded to match Python's 60+ word list.
 static STOP_WORDS: &[&str] = &[
     // Articles & pronouns
-    "the", "a", "an", "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us",
-    "them", "my", "your", "his", "its", "our", "their", "mine", "yours", "hers", "ours", "theirs",
+    "the", "a", "an", "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them",
+    "my", "your", "his", "its", "our", "their", "mine", "yours", "hers", "ours", "theirs",
     // Verbs
     "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
     "will", "would", "could", "should", "may", "might", "can", "shall", "must", "need", "ought",
@@ -103,7 +103,10 @@ impl HybridRetriever {
             results = self.like_search(conn, query, limit * 2)?;
             rank_map = std::collections::HashMap::new();
         } else {
-            rank_map = fts_results.iter().map(|(n, r)| (n.id.clone(), *r)).collect();
+            rank_map = fts_results
+                .iter()
+                .map(|(n, r)| (n.id.clone(), *r))
+                .collect();
             results = fts_results.into_iter().map(|(n, _)| n).collect();
         };
 
@@ -195,15 +198,21 @@ impl HybridRetriever {
 
         let mut map = std::collections::HashMap::new();
         let ids: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
-        let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+        let placeholders: Vec<String> = ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect();
         let sql = format!(
             "SELECT node_id, embedding FROM embeddings WHERE node_id IN ({})",
             placeholders.join(",")
         );
 
         if let Ok(mut stmt) = conn.prepare(&sql) {
-            let params_refs: Vec<Box<dyn rusqlite::types::ToSql>> =
-                ids.iter().map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>).collect();
+            let params_refs: Vec<Box<dyn rusqlite::types::ToSql>> = ids
+                .iter()
+                .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
+                .collect();
             let param_refs: Vec<&dyn rusqlite::types::ToSql> =
                 params_refs.iter().map(|p| p.as_ref()).collect();
             if let Ok(rows) = stmt.query_map(&*param_refs, |row| {
@@ -229,7 +238,12 @@ impl HybridRetriever {
         None
     }
 
-    fn fts_search(&self, conn: &Connection, query: &str, limit: i64) -> TdgResult<Vec<(Node, f64)>> {
+    fn fts_search(
+        &self,
+        conn: &Connection,
+        query: &str,
+        limit: i64,
+    ) -> TdgResult<Vec<(Node, f64)>> {
         let sql = "
             SELECT n.id, n.node_type, n.name, n.description, n.properties_json, n.quadrants_json,
                    n.drives_json, n.lifecycle_state, n.teleological_level, n.developmental_stage,

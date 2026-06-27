@@ -55,9 +55,33 @@ static KNOWN_PATTERNS: LazyLock<Vec<(&'static str, &'static str)>> = LazyLock::n
 /// Tool/action-bound words.
 static TOOL_WORDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     vec![
-        "deploy", "build", "test", "compile", "lint", "format", "commit", "push", "pull", "merge",
-        "rebase", "branch", "install", "upgrade", "migrate", "backup", "restore", "docker",
-        "kubernetes", "terraform", "ansible", "pytest", "cargo", "npm", "pnpm", "yarn", "pip",
+        "deploy",
+        "build",
+        "test",
+        "compile",
+        "lint",
+        "format",
+        "commit",
+        "push",
+        "pull",
+        "merge",
+        "rebase",
+        "branch",
+        "install",
+        "upgrade",
+        "migrate",
+        "backup",
+        "restore",
+        "docker",
+        "kubernetes",
+        "terraform",
+        "ansible",
+        "pytest",
+        "cargo",
+        "npm",
+        "pnpm",
+        "yarn",
+        "pip",
     ]
 });
 
@@ -91,20 +115,163 @@ static NAME_TOKEN_RE: LazyLock<regex::Regex> =
 /// Token-level stopwords for graph matching (broader than top-level STOP_WORDS).
 static TOKEN_STOPWORDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     vec![
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has",
-        "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "can",
-        "shall", "to", "of", "in", "for", "on", "with", "at", "by", "from", "as", "into",
-        "through", "during", "before", "after", "above", "below", "between", "out", "off", "over",
-        "under", "again", "further", "then", "once", "here", "there", "when", "where", "why",
-        "how", "all", "each", "every", "both", "few", "more", "most", "other", "some", "such",
-        "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "just", "don",
-        "now", "and", "but", "or", "if", "it", "its", "this", "that", "these", "those", "i",
-        "you", "he", "she", "we", "they", "me", "him", "her", "us", "them", "my", "your", "his",
-        "our", "their", "used", "using", "need", "make", "like", "want", "know", "think", "see",
-        "get", "give", "take", "come", "go", "run", "look", "put", "let", "say", "said", "tell",
-        "told", "set", "also", "well", "back", "even", "still", "new", "way", "use", "work",
-        "first", "last", "long", "great", "little", "right", "big", "high", "old", "different",
-        "small", "large", "next", "early", "young", "important", "public", "bad", "same", "able",
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "can",
+        "shall",
+        "to",
+        "of",
+        "in",
+        "for",
+        "on",
+        "with",
+        "at",
+        "by",
+        "from",
+        "as",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "between",
+        "out",
+        "off",
+        "over",
+        "under",
+        "again",
+        "further",
+        "then",
+        "once",
+        "here",
+        "there",
+        "when",
+        "where",
+        "why",
+        "how",
+        "all",
+        "each",
+        "every",
+        "both",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "nor",
+        "not",
+        "only",
+        "own",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "just",
+        "don",
+        "now",
+        "and",
+        "but",
+        "or",
+        "if",
+        "it",
+        "its",
+        "this",
+        "that",
+        "these",
+        "those",
+        "i",
+        "you",
+        "he",
+        "she",
+        "we",
+        "they",
+        "me",
+        "him",
+        "her",
+        "us",
+        "them",
+        "my",
+        "your",
+        "his",
+        "our",
+        "their",
+        "used",
+        "using",
+        "need",
+        "make",
+        "like",
+        "want",
+        "know",
+        "think",
+        "see",
+        "get",
+        "give",
+        "take",
+        "come",
+        "go",
+        "run",
+        "look",
+        "put",
+        "let",
+        "say",
+        "said",
+        "tell",
+        "told",
+        "set",
+        "also",
+        "well",
+        "back",
+        "even",
+        "still",
+        "new",
+        "way",
+        "use",
+        "work",
+        "first",
+        "last",
+        "long",
+        "great",
+        "little",
+        "right",
+        "big",
+        "high",
+        "old",
+        "different",
+        "small",
+        "large",
+        "next",
+        "early",
+        "young",
+        "important",
+        "public",
+        "bad",
+        "same",
+        "able",
     ]
 });
 
@@ -120,9 +287,8 @@ pub struct EntityNameCache {
 
 impl EntityNameCache {
     pub fn build(conn: &Connection) -> TdgResult<Self> {
-        let mut stmt = conn.prepare(
-            "SELECT id, name, node_type FROM nodes WHERE valid_to IS NULL",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, name, node_type FROM nodes WHERE valid_to IS NULL")?;
 
         let mut node_names = HashMap::new();
         let mut token_to_nodes: HashMap<String, Vec<(String, String)>> = HashMap::new();
@@ -144,7 +310,8 @@ impl EntityNameCache {
             node_types.insert(id.clone(), node_type);
 
             // Split name into tokens for inverted index
-            let tokens: Vec<&str> = NAME_TOKEN_RE.split(&name)
+            let tokens: Vec<&str> = NAME_TOKEN_RE
+                .split(&name)
                 .filter(|t| t.len() > 2 && !TOKEN_STOPWORDS.contains(t))
                 .collect();
 
@@ -171,7 +338,9 @@ impl EntityNameCache {
 
     /// Look up a node ID from a name.
     pub fn get_node_id(&self, name: &str) -> Option<&str> {
-        self.node_names.get(&name.to_lowercase()).map(|s| s.as_str())
+        self.node_names
+            .get(&name.to_lowercase())
+            .map(|s| s.as_str())
     }
 
     /// Get the node type for a given node ID.
@@ -318,7 +487,10 @@ impl EntityExtractor {
 
             // Exact match
             if text_lower == name_lower.as_str() {
-                let node_type = cache.get_node_type(node_id).unwrap_or("unknown").to_string();
+                let node_type = cache
+                    .get_node_type(node_id)
+                    .unwrap_or("unknown")
+                    .to_string();
                 seen_ids.insert(node_id.clone(), true);
                 results.push(ExtractedEntity {
                     name: name_lower.clone(),
@@ -332,7 +504,10 @@ impl EntityExtractor {
 
             // Containment match
             if text_lower.contains(name_lower.as_str()) {
-                let node_type = cache.get_node_type(node_id).unwrap_or("unknown").to_string();
+                let node_type = cache
+                    .get_node_type(node_id)
+                    .unwrap_or("unknown")
+                    .to_string();
                 seen_ids.insert(node_id.clone(), true);
                 results.push(ExtractedEntity {
                     name: name_lower.clone(),
@@ -356,7 +531,8 @@ impl EntityExtractor {
                     }
 
                     let name_lower = node_name.to_lowercase();
-                    let name_tokens: Vec<&str> = NAME_TOKEN_RE.split(&name_lower)
+                    let name_tokens: Vec<&str> = NAME_TOKEN_RE
+                        .split(&name_lower)
                         .filter(|t| t.len() > 2 && !TOKEN_STOPWORDS.contains(t))
                         .collect();
 
@@ -395,7 +571,10 @@ impl EntityExtractor {
         // Collect scored results
         for (node_id, score) in &node_scores {
             if *score > 0.4 && !seen_ids.contains_key(node_id) {
-                let node_type = cache.get_node_type(node_id).unwrap_or("unknown").to_string();
+                let node_type = cache
+                    .get_node_type(node_id)
+                    .unwrap_or("unknown")
+                    .to_string();
                 let name = node_names.get(node_id).unwrap_or(node_id).clone();
                 let confidence = (*score * 0.85).min(0.9);
                 seen_ids.insert(node_id.clone(), true);
@@ -508,15 +687,9 @@ impl EntityExtractor {
     }
 
     /// Add an alias to a person node's properties.
-    pub fn add_alias(
-        &self,
-        node_id: &str,
-        alias: &str,
-        conn: &Connection,
-    ) -> TdgResult<bool> {
-        let mut stmt = conn.prepare(
-            "SELECT properties FROM nodes WHERE id = ?1 AND valid_to IS NULL",
-        )?;
+    pub fn add_alias(&self, node_id: &str, alias: &str, conn: &Connection) -> TdgResult<bool> {
+        let mut stmt =
+            conn.prepare("SELECT properties FROM nodes WHERE id = ?1 AND valid_to IS NULL")?;
 
         let current_props: Option<String> = stmt
             .query_map(params![node_id], |row| row.get::<_, Option<String>>(0))?
@@ -536,7 +709,10 @@ impl EntityExtractor {
                 .or_insert_with(|| serde_json::json!([]));
 
             if let Some(arr) = aliases.as_array_mut() {
-                if !arr.iter().any(|v: &serde_json::Value| v.as_str() == Some(&alias_str)) {
+                if !arr
+                    .iter()
+                    .any(|v: &serde_json::Value| v.as_str() == Some(&alias_str))
+                {
                     arr.push(serde_json::json!(alias));
                 }
             }
@@ -558,9 +734,8 @@ impl EntityExtractor {
         aliases: &[String],
         conn: &Connection,
     ) -> TdgResult<bool> {
-        let mut stmt = conn.prepare(
-            "SELECT properties FROM nodes WHERE id = ?1 AND valid_to IS NULL",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT properties FROM nodes WHERE id = ?1 AND valid_to IS NULL")?;
 
         let current_props: Option<String> = stmt
             .query_map(params![node_id], |row| row.get::<_, Option<String>>(0))?
@@ -573,10 +748,8 @@ impl EntityExtractor {
             None => serde_json::json!({}),
         };
 
-        let alias_values: Vec<serde_json::Value> = aliases
-            .iter()
-            .map(|a| serde_json::json!(a))
-            .collect();
+        let alias_values: Vec<serde_json::Value> =
+            aliases.iter().map(|a| serde_json::json!(a)).collect();
 
         props["aliases"] = serde_json::json!(alias_values);
 
@@ -591,9 +764,8 @@ impl EntityExtractor {
 
     /// Get all aliases for a person node.
     pub fn get_aliases(&self, node_id: &str, conn: &Connection) -> TdgResult<Vec<String>> {
-        let mut stmt = conn.prepare(
-            "SELECT properties FROM nodes WHERE id = ?1 AND valid_to IS NULL",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT properties FROM nodes WHERE id = ?1 AND valid_to IS NULL")?;
 
         let current_props: Option<String> = stmt
             .query_map(params![node_id], |row| row.get::<_, Option<String>>(0))?
@@ -783,7 +955,10 @@ mod tests {
         let map = ext.expand_aliases(&conn).unwrap();
         assert_eq!(map.get("ali").map(|s| s.as_str()), Some("Alice Smith"));
         assert_eq!(map.get("asmith").map(|s| s.as_str()), Some("Alice Smith"));
-        assert_eq!(map.get("alice smith").map(|s| s.as_str()), Some("Alice Smith"));
+        assert_eq!(
+            map.get("alice smith").map(|s| s.as_str()),
+            Some("Alice Smith")
+        );
         assert_eq!(map.get("bj").map(|s| s.as_str()), Some("Bob Jones"));
         assert_eq!(map.get("bobby").map(|s| s.as_str()), Some("Bob Jones"));
     }
@@ -801,7 +976,8 @@ mod tests {
     fn set_aliases_replaces_existing() {
         let ext = EntityExtractor::new();
         let conn = setup_person_db();
-        ext.set_aliases("p1", &["new_alias".to_string()], &conn).unwrap();
+        ext.set_aliases("p1", &["new_alias".to_string()], &conn)
+            .unwrap();
         let aliases = ext.get_aliases("p1", &conn).unwrap();
         assert_eq!(aliases, vec!["new_alias"]);
     }
@@ -869,8 +1045,12 @@ mod tests {
         let ext = EntityExtractor::new();
         let entities = ext.extract("rust docker deploy test build", None);
         for e in &entities {
-            assert!(e.confidence >= 0.0 && e.confidence <= 1.0,
-                "confidence {} out of range for {}", e.confidence, e.name);
+            assert!(
+                e.confidence >= 0.0 && e.confidence <= 1.0,
+                "confidence {} out of range for {}",
+                e.confidence,
+                e.name
+            );
         }
     }
 
@@ -904,11 +1084,13 @@ mod tests {
                 valid_to TEXT DEFAULT NULL, helpful_count INTEGER DEFAULT 0,
                 retrieval_count INTEGER DEFAULT 0, agent_id TEXT DEFAULT NULL
             );",
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO nodes (id, name, node_type) VALUES ('n1', 'My Cool Project', 'project')",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let cache = EntityNameCache::build(&conn).unwrap();
         let resolved = cache.resolve_token("cool");
@@ -934,11 +1116,13 @@ mod tests {
                 valid_to TEXT DEFAULT NULL, helpful_count INTEGER DEFAULT 0,
                 retrieval_count INTEGER DEFAULT 0, agent_id TEXT DEFAULT NULL
             );",
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO nodes (id, name, node_type) VALUES ('n1', 'this is a test', 'animal')",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let cache = EntityNameCache::build(&conn).unwrap();
         assert!(cache.resolve_token("this").is_none());

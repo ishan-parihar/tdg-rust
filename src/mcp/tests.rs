@@ -543,37 +543,50 @@ mod tool_tests {
         let env = TestEnv::new();
         let server = env.server();
 
-        env.pool.with_connection(|conn| {
-            for (name, desc) in vec![
-                ("Rust async runtime", "Tokio runtime with epoll for async I/O"),
-                ("Garden planning", "Planning the vegetable garden for summer"),
-                ("Rust borrow checker", "Understanding lifetime annotations in Rust"),
-                ("Grocery shopping", "Weekly grocery list and meal prep"),
-                ("Rust trait objects", "dyn Trait vs generics for dynamic dispatch"),
-            ]
-            .into_iter()
-            {
+        env.pool
+            .with_connection(|conn| {
+                for (name, desc) in vec![
+                    (
+                        "Rust async runtime",
+                        "Tokio runtime with epoll for async I/O",
+                    ),
+                    (
+                        "Garden planning",
+                        "Planning the vegetable garden for summer",
+                    ),
+                    (
+                        "Rust borrow checker",
+                        "Understanding lifetime annotations in Rust",
+                    ),
+                    ("Grocery shopping", "Weekly grocery list and meal prep"),
+                    (
+                        "Rust trait objects",
+                        "dyn Trait vs generics for dynamic dispatch",
+                    ),
+                ]
+                .into_iter()
+                {
+                    let _ = crate::db::crud::add_node(
+                        conn,
+                        &crate::models::NewNode {
+                            node_type: "observation".into(),
+                            name: name.into(),
+                            description: Some(desc.into()),
+                            ..Default::default()
+                        },
+                    );
+                }
                 let _ = crate::db::crud::add_node(
                     conn,
                     &crate::models::NewNode {
-                        node_type: "observation".into(),
-                        name: name.into(),
-                        description: Some(desc.into()),
+                        node_type: "people".into(),
+                        name: "Alice".into(),
                         ..Default::default()
                     },
                 );
-            }
-            let _ = crate::db::crud::add_node(
-                conn,
-                &crate::models::NewNode {
-                    node_type: "people".into(),
-                    name: "Alice".into(),
-                    ..Default::default()
-                },
-            );
-            Ok(())
-        })
-        .unwrap();
+                Ok(())
+            })
+            .unwrap();
 
         let params = ReflectParams {
             turns: Some(50),
@@ -597,7 +610,8 @@ mod tool_tests {
             "pattern fallback should create synthesis nodes"
         );
 
-        let insights_text: String = insights.iter()
+        let insights_text: String = insights
+            .iter()
             .filter_map(|v| v.as_str())
             .collect::<Vec<_>>()
             .join(" ");

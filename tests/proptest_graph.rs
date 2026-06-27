@@ -12,8 +12,7 @@ fn arb_node_name() -> impl Strategy<Value = String> {
 }
 
 fn arb_node_type() -> impl Strategy<Value = String> {
-    prop::sample::select(tdg_rust::models::NODE_TYPES.to_vec())
-        .prop_map(|s| s.to_string())
+    prop::sample::select(tdg_rust::models::NODE_TYPES.to_vec()).prop_map(|s| s.to_string())
 }
 
 fn setup_test_db() -> rusqlite::Connection {

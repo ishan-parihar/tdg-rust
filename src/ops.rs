@@ -268,7 +268,8 @@ pub fn macro_slice(conn: &Connection, depth: Option<i64>) -> TdgResult<serde_jso
     let pulse_summary = pulse_engine.summarize(&pulse_results);
 
     // Diagnostic analysis
-    let thresholds = load_diagnostic_thresholds(&crate::config::Config::default().diagnostic_thresholds_path());
+    let thresholds =
+        load_diagnostic_thresholds(&crate::config::Config::default().diagnostic_thresholds_path());
     let diag_engine = DiagnosticEngine::with_thresholds(thresholds);
     let report = diag_engine.analyze(conn, &[], &[])?;
 

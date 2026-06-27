@@ -6,7 +6,11 @@ use ndarray::{Array1, Array2};
 pub struct ClusterEngine;
 
 impl ClusterEngine {
-    pub fn cluster_observations(observations: &[String], min_points: usize, tolerance: f64) -> Vec<Option<usize>> {
+    pub fn cluster_observations(
+        observations: &[String],
+        min_points: usize,
+        tolerance: f64,
+    ) -> Vec<Option<usize>> {
         if observations.is_empty() {
             return vec![];
         }
@@ -63,11 +67,9 @@ impl ClusterEngine {
         observations
             .iter()
             .zip(clusters.iter())
-            .map(|(_obs, cluster_id)| {
-                match cluster_id {
-                    Some(id) => format!("cluster_{}", id),
-                    None => "noise".to_string(),
-                }
+            .map(|(_obs, cluster_id)| match cluster_id {
+                Some(id) => format!("cluster_{}", id),
+                None => "noise".to_string(),
             })
             .collect()
     }

@@ -53,10 +53,7 @@ impl LlmProvider for FallbackProvider {
     /// On failure, logs the error and proceeds to the next provider.
     /// If all providers fail, returns a `TdgError::Custom` containing all
     /// individual error messages.
-    async fn complete(
-        &self,
-        request: &LlmCompletionRequest,
-    ) -> TdgResult<LlmCompletionResponse> {
+    async fn complete(&self, request: &LlmCompletionRequest) -> TdgResult<LlmCompletionResponse> {
         if self.providers.is_empty() {
             return Err(TdgError::Custom(
                 "Fallback provider has no providers configured".to_string(),
@@ -185,9 +182,18 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("a: a error"), "error should mention provider a");
-        assert!(err.contains("b: b error"), "error should mention provider b");
-        assert!(err.contains("c: c error"), "error should mention provider c");
+        assert!(
+            err.contains("a: a error"),
+            "error should mention provider a"
+        );
+        assert!(
+            err.contains("b: b error"),
+            "error should mention provider b"
+        );
+        assert!(
+            err.contains("c: c error"),
+            "error should mention provider c"
+        );
         assert!(
             err.contains("All 3 fallback providers failed"),
             "error should mention count"

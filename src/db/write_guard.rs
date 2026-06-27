@@ -24,7 +24,11 @@ impl WriteGuard {
         let start = Instant::now();
         loop {
             match lock_file.try_lock() {
-                Ok(()) => return Ok(Self { _lock_file: lock_file }),
+                Ok(()) => {
+                    return Ok(Self {
+                        _lock_file: lock_file,
+                    })
+                }
                 Err(std::fs::TryLockError::WouldBlock) => {
                     if start.elapsed() >= timeout {
                         return Err(LockError::Timeout);

@@ -6,9 +6,9 @@ use crate::error::TdgError;
 use crate::error::TdgResult;
 
 use super::config::OpenAiConfig;
-use super::{LlmCompletionRequest, LlmCompletionResponse, LlmProvider, LlmUsage};
 #[cfg(test)]
 use super::LlmMessage;
+use super::{LlmCompletionRequest, LlmCompletionResponse, LlmProvider, LlmUsage};
 
 /// OpenAI-compatible LLM provider (OpenAI, Azure OpenAI, etc.).
 pub struct OpenAiProvider {
@@ -56,18 +56,16 @@ impl OpenAiProvider {
                 TdgError::Custom("OpenAI response missing 'choices' array".to_string())
             })?;
 
-        let first_choice = choices.first().ok_or_else(|| {
-            TdgError::Custom("OpenAI response returned zero choices".to_string())
-        })?;
+        let first_choice = choices
+            .first()
+            .ok_or_else(|| TdgError::Custom("OpenAI response returned zero choices".to_string()))?;
 
         let content = first_choice
             .get("message")
             .and_then(|m| m.get("content"))
             .and_then(|c| c.as_str())
             .ok_or_else(|| {
-                TdgError::Custom(
-                    "OpenAI response missing 'choices[0].message.content'".to_string(),
-                )
+                TdgError::Custom("OpenAI response missing 'choices[0].message.content'".to_string())
             })?
             .to_string();
 
@@ -108,9 +106,11 @@ impl LlmProvider for OpenAiProvider {
     }
 
     async fn complete(&self, request: &LlmCompletionRequest) -> TdgResult<LlmCompletionResponse> {
-        let api_key = self.config.api_key.as_deref().ok_or_else(|| {
-            TdgError::Custom("OpenAI API key is not configured".to_string())
-        })?;
+        let api_key = self
+            .config
+            .api_key
+            .as_deref()
+            .ok_or_else(|| TdgError::Custom("OpenAI API key is not configured".to_string()))?;
 
         let url = format!(
             "{}/chat/completions",
@@ -319,12 +319,10 @@ mod tests {
 
         let result = provider.parse_response(&response_json);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("missing 'choices' array")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing 'choices' array"));
     }
 
     #[test]
@@ -341,12 +339,10 @@ mod tests {
 
         let result = provider.parse_response(&response_json);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("returned zero choices")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("returned zero choices"));
     }
 
     #[test]
@@ -371,12 +367,10 @@ mod tests {
 
         let result = provider.parse_response(&response_json);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("missing 'choices[0].message.content'")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing 'choices[0].message.content'"));
     }
 
     #[tokio::test]
@@ -422,12 +416,10 @@ mod tests {
 
         let result = provider.complete(&request).await;
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("API key is not configured")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("API key is not configured"));
     }
 
     #[test]

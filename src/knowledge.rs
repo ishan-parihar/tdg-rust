@@ -673,29 +673,28 @@ pub fn archive_stale_nodes(
         let properties: serde_json::Value =
             serde_json::from_str(properties_json).unwrap_or(serde_json::json!({}));
 
-        let should_archive = if let Some(archive_after) =
-            properties.get("archive_after").and_then(|v| v.as_str())
-        {
-            if let Ok(aa) = chrono::NaiveDateTime::parse_from_str(
-                archive_after.replace('Z', "").as_str(),
-                "%Y-%m-%dT%H:%M:%S%.f",
-            ) {
-                now > aa
+        let should_archive =
+            if let Some(archive_after) = properties.get("archive_after").and_then(|v| v.as_str()) {
+                if let Ok(aa) = chrono::NaiveDateTime::parse_from_str(
+                    archive_after.replace('Z', "").as_str(),
+                    "%Y-%m-%dT%H:%M:%S%.f",
+                ) {
+                    now > aa
+                } else {
+                    false
+                }
             } else {
-                false
-            }
-        } else {
-            // Check age-based staleness
-            if let Ok(created) = chrono::NaiveDateTime::parse_from_str(
-                created_at.replace('Z', "").as_str(),
-                "%Y-%m-%dT%H:%M:%S%.f",
-            ) {
-                let age_days = (now - created).num_days();
-                age_days > threshold
-            } else {
-                false
-            }
-        };
+                // Check age-based staleness
+                if let Ok(created) = chrono::NaiveDateTime::parse_from_str(
+                    created_at.replace('Z', "").as_str(),
+                    "%Y-%m-%dT%H:%M:%S%.f",
+                ) {
+                    let age_days = (now - created).num_days();
+                    age_days > threshold
+                } else {
+                    false
+                }
+            };
 
         if should_archive {
             // Soft-archived: update lifecycle_state

@@ -57,10 +57,22 @@ static RECURRING_PATTERNS: LazyLock<Vec<(&'static str, f64)>> = LazyLock::new(||
 
 static AUTONOMOUS_PATTERNS: LazyLock<Vec<(&'static str, f64)>> = LazyLock::new(|| {
     vec![
-        (r"(?i)(?:based\s+on|from)\s+(?:my\s+)?(?:observations?|history|data)\s*,?\s*(.+)", 0.7),
-        (r"(?i)(?:the\s+)?(?:data|evidence)\s+(?:suggests?|shows?|indicates?)\s+(.+)", 0.75),
-        (r"(?i)(?:I've\s+inferred|deduced|concluded)\s+(?:that\s+)?(.+)", 0.8),
-        (r"(?i)(?:the\s+)?(?:pattern|signal)\s+(?:is|shows?|suggests?)\s+(.+)", 0.7),
+        (
+            r"(?i)(?:based\s+on|from)\s+(?:my\s+)?(?:observations?|history|data)\s*,?\s*(.+)",
+            0.7,
+        ),
+        (
+            r"(?i)(?:the\s+)?(?:data|evidence)\s+(?:suggests?|shows?|indicates?)\s+(.+)",
+            0.75,
+        ),
+        (
+            r"(?i)(?:I've\s+inferred|deduced|concluded)\s+(?:that\s+)?(.+)",
+            0.8,
+        ),
+        (
+            r"(?i)(?:the\s+)?(?:pattern|signal)\s+(?:is|shows?|suggests?)\s+(.+)",
+            0.7,
+        ),
     ]
 });
 
@@ -69,29 +81,72 @@ static TOPIC_KEYWORDS: LazyLock<Vec<(&'static str, Vec<&'static str>)>> = LazyLo
         (
             "lr",
             vec![
-                "deploy", "server", "database", "api", "infrastructure", "docker", "aws",
-                "pricing", "cost", "hosting", "domain", "ssl", "nginx", "kubernetes",
+                "deploy",
+                "server",
+                "database",
+                "api",
+                "infrastructure",
+                "docker",
+                "aws",
+                "pricing",
+                "cost",
+                "hosting",
+                "domain",
+                "ssl",
+                "nginx",
+                "kubernetes",
             ],
         ),
         (
             "ul",
             vec![
-                "prefer", "feel", "like", "dislike", "comfortable", "trust", "believe",
-                "value", "satisfied", "frustrated", "happy", "unhappy", "opinion",
+                "prefer",
+                "feel",
+                "like",
+                "dislike",
+                "comfortable",
+                "trust",
+                "believe",
+                "value",
+                "satisfied",
+                "frustrated",
+                "happy",
+                "unhappy",
+                "opinion",
             ],
         ),
         (
             "ll",
             vec![
-                "identity", "brand", "name", "persona", "style", "tone", "voice", "culture",
-                "image", "reputation", "messaging", "positioning",
+                "identity",
+                "brand",
+                "name",
+                "persona",
+                "style",
+                "tone",
+                "voice",
+                "culture",
+                "image",
+                "reputation",
+                "messaging",
+                "positioning",
             ],
         ),
         (
             "ur",
             vec![
-                "do", "action", "behavior", "habit", "practice", "technique", "approach",
-                "workflow", "process", "method", "routine", "execute",
+                "do",
+                "action",
+                "behavior",
+                "habit",
+                "practice",
+                "technique",
+                "approach",
+                "workflow",
+                "process",
+                "method",
+                "routine",
+                "execute",
             ],
         ),
     ]
@@ -222,10 +277,7 @@ impl PreferenceExtractor {
         results
     }
 
-    pub fn extract_from_messages(
-        &self,
-        messages: &[String],
-    ) -> Vec<PreferenceExtraction> {
+    pub fn extract_from_messages(&self, messages: &[String]) -> Vec<PreferenceExtraction> {
         let mut all_results = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
 
@@ -260,7 +312,9 @@ impl PreferenceExtractor {
         let mut keyword_counts: HashMap<String, Vec<String>> = HashMap::new();
 
         for obs in &observations {
-            let text = obs.properties.get("description")
+            let text = obs
+                .properties
+                .get("description")
                 .or_else(|| obs.properties.get("text"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
@@ -291,8 +345,7 @@ impl PreferenceExtractor {
                         unique_obs.len()
                     );
                     let quadrant = self.infer_quadrant(keyword);
-                    let constraint_id =
-                        build_constraint_id("recurring_pattern", &text);
+                    let constraint_id = build_constraint_id("recurring_pattern", &text);
                     results.push(PreferenceExtraction {
                         extraction_type: "recurring_pattern".to_string(),
                         constraint_text: text,
@@ -326,7 +379,9 @@ impl PreferenceExtractor {
         let mut results = Vec::new();
 
         for obs in &observations {
-            let text = obs.properties.get("description")
+            let text = obs
+                .properties
+                .get("description")
                 .or_else(|| obs.properties.get("text"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
@@ -623,7 +678,9 @@ mod tests {
         for text in cases {
             let results = ext.extract_from_message(text);
             assert!(
-                results.iter().any(|r| r.extraction_type == "recurring_pattern"),
+                results
+                    .iter()
+                    .any(|r| r.extraction_type == "recurring_pattern"),
                 "Expected recurring_pattern for: {}",
                 text
             );
@@ -641,7 +698,9 @@ mod tests {
         for text in cases {
             let results = ext.extract_from_message(text);
             assert!(
-                results.iter().any(|r| r.extraction_type == "autonomous_insight"),
+                results
+                    .iter()
+                    .any(|r| r.extraction_type == "autonomous_insight"),
                 "Expected autonomous_insight for: {}",
                 text
             );
@@ -666,7 +725,10 @@ mod tests {
             "I prefer using Rust".to_string(),
         ];
         let results = ext.extract_from_messages(&messages);
-        let pref_count = results.iter().filter(|r| r.extraction_type == "preference").count();
+        let pref_count = results
+            .iter()
+            .filter(|r| r.extraction_type == "preference")
+            .count();
         assert_eq!(pref_count, 1);
     }
 }

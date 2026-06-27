@@ -171,10 +171,12 @@ mod onnx_impl {
 
         let seq_len = encoding.len();
         let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
-        let attention_mask: Vec<i64> =
-            encoding.get_attention_mask().iter().map(|&m| m as i64).collect();
-        let token_type_ids: Vec<i64> =
-            encoding.get_type_ids().iter().map(|&t| t as i64).collect();
+        let attention_mask: Vec<i64> = encoding
+            .get_attention_mask()
+            .iter()
+            .map(|&m| m as i64)
+            .collect();
+        let token_type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|&t| t as i64).collect();
 
         // Build tensors: shape [1, seq_len]
         let input_ids_tensor = Array2::from_shape_vec((1, seq_len), input_ids)
@@ -383,7 +385,10 @@ mod tests {
     fn stub_embed_returns_error() {
         let result = embed("hello world");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("ONNX feature not enabled"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("ONNX feature not enabled"));
     }
 
     #[cfg(not(feature = "onnx"))]

@@ -40,15 +40,38 @@ static QUADRANT_KEYWORDS: LazyLock<Vec<(&'static str, Vec<&'static str>)>> = Laz
         (
             "lr",
             vec![
-                "deploy", "server", "database", "api", "infrastructure", "docker", "aws",
-                "pricing", "cost", "build", "compile", "test", "run", "fix", "debug",
+                "deploy",
+                "server",
+                "database",
+                "api",
+                "infrastructure",
+                "docker",
+                "aws",
+                "pricing",
+                "cost",
+                "build",
+                "compile",
+                "test",
+                "run",
+                "fix",
+                "debug",
             ],
         ),
         (
             "ul",
             vec![
-                "prefer", "feel", "like", "dislike", "comfortable", "trust", "believe",
-                "value", "think", "believe", "understand", "learn",
+                "prefer",
+                "feel",
+                "like",
+                "dislike",
+                "comfortable",
+                "trust",
+                "believe",
+                "value",
+                "think",
+                "believe",
+                "understand",
+                "learn",
             ],
         ),
         (
@@ -61,8 +84,18 @@ static QUADRANT_KEYWORDS: LazyLock<Vec<(&'static str, Vec<&'static str>)>> = Laz
         (
             "ur",
             vec![
-                "do", "action", "behavior", "habit", "practice", "technique", "approach",
-                "create", "build", "make", "write", "implement",
+                "do",
+                "action",
+                "behavior",
+                "habit",
+                "practice",
+                "technique",
+                "approach",
+                "create",
+                "build",
+                "make",
+                "write",
+                "implement",
             ],
         ),
     ]
@@ -253,9 +286,7 @@ impl TurnCapture {
                     let entity_overlap = if entity_set.is_empty() || obs_entity_set.is_empty() {
                         0.0
                     } else {
-                        let intersection = entity_set
-                            .intersection(&obs_entity_set)
-                            .count() as f64;
+                        let intersection = entity_set.intersection(&obs_entity_set).count() as f64;
                         let union = entity_set.union(&obs_entity_set).count() as f64;
                         if union == 0.0 {
                             0.0

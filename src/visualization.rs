@@ -1,6 +1,6 @@
+use petgraph::dot::{Config, Dot};
 use petgraph::graph::DiGraph;
-use petgraph::visit::{IntoNodeReferences, EdgeRef};
-use petgraph::dot::{Dot, Config};
+use petgraph::visit::{EdgeRef, IntoNodeReferences};
 use serde_json::{json, Value};
 
 /// D3.js force-directed graph JSON export.
@@ -8,7 +8,8 @@ pub mod d3_json {
     use super::*;
 
     pub fn export(graph: &DiGraph<String, String>) -> Value {
-        let nodes: Vec<Value> = graph.node_references()
+        let nodes: Vec<Value> = graph
+            .node_references()
             .map(|(idx, weight)| {
                 json!({
                     "id": idx.index(),
@@ -18,7 +19,8 @@ pub mod d3_json {
             })
             .collect();
 
-        let links: Vec<Value> = graph.edge_references()
+        let links: Vec<Value> = graph
+            .edge_references()
             .map(|edge| {
                 json!({
                     "source": edge.source().index(),

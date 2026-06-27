@@ -73,8 +73,7 @@ impl LlmConfig {
             api_key: std::env::var("TDG_LLM_OPENAI_API_KEY").ok(),
             base_url: std::env::var("TDG_LLM_OPENAI_BASE_URL")
                 .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
-            model: std::env::var("TDG_LLM_OPENAI_MODEL")
-                .unwrap_or_else(|_| "gpt-4o".to_string()),
+            model: std::env::var("TDG_LLM_OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".to_string()),
             max_tokens: parse_env_u32("TDG_LLM_OPENAI_MAX_TOKENS", 4096),
             temperature: parse_env_f32("TDG_LLM_OPENAI_TEMPERATURE", 0.7),
         };
@@ -92,8 +91,7 @@ impl LlmConfig {
         let ollama = OllamaConfig {
             base_url: std::env::var("TDG_LLM_OLLAMA_URL")
                 .unwrap_or_else(|_| "http://localhost:11434".to_string()),
-            model: std::env::var("TDG_LLM_OLLAMA_MODEL")
-                .unwrap_or_else(|_| "llama3".to_string()),
+            model: std::env::var("TDG_LLM_OLLAMA_MODEL").unwrap_or_else(|_| "llama3".to_string()),
             max_tokens: parse_env_u32("TDG_LLM_OLLAMA_MAX_TOKENS", 4096),
             temperature: parse_env_f32("TDG_LLM_OLLAMA_TEMPERATURE", 0.7),
         };
@@ -167,8 +165,14 @@ mod tests {
         // ollama always available
         assert!(cfg.provider_available("ollama"));
         // openai/anthropic only if key is set
-        assert_eq!(cfg.provider_available("openai"), cfg.openai.api_key.is_some());
-        assert_eq!(cfg.provider_available("anthropic"), cfg.anthropic.api_key.is_some());
+        assert_eq!(
+            cfg.provider_available("openai"),
+            cfg.openai.api_key.is_some()
+        );
+        assert_eq!(
+            cfg.provider_available("anthropic"),
+            cfg.anthropic.api_key.is_some()
+        );
         // unknown provider
         assert!(!cfg.provider_available("nonexistent"));
     }

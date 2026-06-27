@@ -2,10 +2,10 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
 
-use crate::error::TdgError;
-use crate::error::TdgResult;
 use super::config::AnthropicConfig;
 use super::{LlmCompletionRequest, LlmCompletionResponse, LlmProvider, LlmUsage};
+use crate::error::TdgError;
+use crate::error::TdgResult;
 
 /// Anthropic LLM provider using the Messages API.
 ///
@@ -32,16 +32,9 @@ impl AnthropicProvider {
     /// Anthropic places the system prompt at the top level, not in the messages array.
     /// This extracts any message with role "system" and lifts it to the `system` field.
     fn build_request_body(&self, request: &LlmCompletionRequest) -> Value {
-        let model = request
-            .model
-            .as_deref()
-            .unwrap_or(&self.config.model);
-        let max_tokens = request
-            .max_tokens
-            .unwrap_or(self.config.max_tokens);
-        let temperature = request
-            .temperature
-            .unwrap_or(self.config.temperature);
+        let model = request.model.as_deref().unwrap_or(&self.config.model);
+        let max_tokens = request.max_tokens.unwrap_or(self.config.max_tokens);
+        let temperature = request.temperature.unwrap_or(self.config.temperature);
 
         let mut system_message: Option<String> = None;
         let mut api_messages: Vec<Value> = Vec::new();
@@ -89,9 +82,7 @@ impl AnthropicProvider {
             .and_then(|arr| arr.first())
             .and_then(|block| block["text"].as_str())
             .ok_or_else(|| {
-                TdgError::Custom(
-                    "Anthropic response missing content[0].text".to_string(),
-                )
+                TdgError::Custom("Anthropic response missing content[0].text".to_string())
             })?
             .to_string();
 
@@ -101,7 +92,9 @@ impl AnthropicProvider {
             .to_string();
 
         let input_tokens = response_body["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32;
-        let output_tokens = response_body["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32;
+        let output_tokens = response_body["usage"]["output_tokens"]
+            .as_u64()
+            .unwrap_or(0) as u32;
 
         Ok(LlmCompletionResponse {
             content,
@@ -126,14 +119,12 @@ impl LlmProvider for AnthropicProvider {
     }
 
     async fn complete(&self, request: &LlmCompletionRequest) -> TdgResult<LlmCompletionResponse> {
-        let api_key = self.config.api_key.as_deref().ok_or_else(|| {
-            TdgError::Custom("Anthropic API key is not configured".to_string())
-        })?;
+        let api_key =
+            self.config.api_key.as_deref().ok_or_else(|| {
+                TdgError::Custom("Anthropic API key is not configured".to_string())
+            })?;
 
-        let url = format!(
-            "{}/messages",
-            self.config.base_url.trim_end_matches('/')
-        );
+        let url = format!("{}/messages", self.config.base_url.trim_end_matches('/'));
         let body = self.build_request_body(request);
 
         let response = self
@@ -340,12 +331,7 @@ mod tests {
 
         let result = provider.parse_response(&response_json);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("content[0].text")
-        );
+        assert!(result.unwrap_err().to_string().contains("content[0].text"));
     }
 
     #[tokio::test]
@@ -391,12 +377,10 @@ mod tests {
 
         let result = provider.complete(&request).await;
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("API key is not configured")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("API key is not configured"));
     }
 
     #[test]

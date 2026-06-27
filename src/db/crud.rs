@@ -72,13 +72,18 @@ pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
     check_circuit_breaker()?;
     let _guard = acquire_write_guard(conn)?;
 
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0))?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL",
+        [],
+        |r| r.get(0),
+    )?;
     if count as usize >= MAX_NODES {
         return Err(TdgError::GraphSizeLimit(format!(
-            "Node limit reached: {} >= {}", count, MAX_NODES
+            "Node limit reached: {} >= {}",
+            count, MAX_NODES
         )));
     }
-    
+
     let id = gen_node_id();
     let now = now_iso();
     let node_type = new.node_type.clone();
@@ -335,13 +340,18 @@ pub fn add_edge(conn: &Connection, new: &NewEdge) -> TdgResult<Edge> {
     check_circuit_breaker()?;
     let _guard = acquire_write_guard(conn)?;
 
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM edges WHERE valid_to IS NULL", [], |r| r.get(0))?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM edges WHERE valid_to IS NULL",
+        [],
+        |r| r.get(0),
+    )?;
     if count as usize >= MAX_EDGES {
         return Err(TdgError::GraphSizeLimit(format!(
-            "Edge limit reached: {} >= {}", count, MAX_EDGES
+            "Edge limit reached: {} >= {}",
+            count, MAX_EDGES
         )));
     }
-    
+
     let id = gen_edge_id();
     let now = now_iso();
     let weight = new.weight.unwrap_or(1.0);
@@ -837,14 +847,11 @@ pub fn get_recent_health_checks(
              FROM health_checks WHERE service = ?1
              ORDER BY timestamp DESC LIMIT ?2",
         )?;
-        let mapped = stmt_filtered.query_map(params![svc, limit], |row| {
-            health_check_row_to_json(row)
-        })?;
+        let mapped =
+            stmt_filtered.query_map(params![svc, limit], |row| health_check_row_to_json(row))?;
         mapped.filter_map(|r| r.ok()).collect::<Vec<_>>()
     } else {
-        let mapped = stmt.query_map(params![limit], |row| {
-            health_check_row_to_json(row)
-        })?;
+        let mapped = stmt.query_map(params![limit], |row| health_check_row_to_json(row))?;
         mapped.filter_map(|r| r.ok()).collect::<Vec<_>>()
     };
 
@@ -1343,7 +1350,12 @@ pub fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
 // ─── Trust CRUD ──────────────────────────────────────────────────────────────
 
 /// Set a trust score for an agent. Overwrites any existing score.
-pub fn set_trust(conn: &Connection, agent_id: &str, score: f64, reason: Option<&str>) -> TdgResult<()> {
+pub fn set_trust(
+    conn: &Connection,
+    agent_id: &str,
+    score: f64,
+    reason: Option<&str>,
+) -> TdgResult<()> {
     let _guard = acquire_write_guard(conn)?;
 
     let now = now_iso();
@@ -1370,7 +1382,12 @@ pub fn get_trust(conn: &Connection, agent_id: &str) -> TdgResult<f64> {
 
 /// Adjust an agent's trust score by a delta. Returns the new score.
 /// Creates a default entry (0.5) if the agent has no trust record.
-pub fn adjust_trust(conn: &Connection, agent_id: &str, delta: f64, reason: Option<&str>) -> TdgResult<f64> {
+pub fn adjust_trust(
+    conn: &Connection,
+    agent_id: &str,
+    delta: f64,
+    reason: Option<&str>,
+) -> TdgResult<f64> {
     let current = get_trust(conn, agent_id)?;
     let new_score = (current + delta).clamp(0.0, 1.0);
     set_trust(conn, agent_id, new_score, reason)?;

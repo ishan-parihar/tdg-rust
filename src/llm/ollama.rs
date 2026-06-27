@@ -58,9 +58,7 @@ impl OllamaProvider {
             .and_then(|m| m.get("content"))
             .and_then(|c| c.as_str())
             .ok_or_else(|| {
-                TdgError::Custom(
-                    "Ollama response missing 'message.content'".to_string(),
-                )
+                TdgError::Custom("Ollama response missing 'message.content'".to_string())
             })?
             .to_string();
 
@@ -100,10 +98,7 @@ impl LlmProvider for OllamaProvider {
     }
 
     async fn health_check(&self) -> bool {
-        let url = format!(
-            "{}/api/tags",
-            self.config.base_url.trim_end_matches('/')
-        );
+        let url = format!("{}/api/tags", self.config.base_url.trim_end_matches('/'));
         match self.client.get(&url).send().await {
             Ok(resp) => resp.status().is_success(),
             Err(_) => false,
@@ -111,10 +106,7 @@ impl LlmProvider for OllamaProvider {
     }
 
     async fn complete(&self, request: &LlmCompletionRequest) -> TdgResult<LlmCompletionResponse> {
-        let url = format!(
-            "{}/api/chat",
-            self.config.base_url.trim_end_matches('/')
-        );
+        let url = format!("{}/api/chat", self.config.base_url.trim_end_matches('/'));
         let body = self.build_request_body(request);
 
         let response = self
@@ -150,8 +142,8 @@ impl LlmProvider for OllamaProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::LlmMessage;
+    use super::*;
 
     fn test_config() -> OllamaConfig {
         OllamaConfig {
@@ -271,12 +263,10 @@ mod tests {
 
         let result = provider.parse_response(&response_json);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("missing 'message.content'")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing 'message.content'"));
     }
 
     #[test]
@@ -294,12 +284,10 @@ mod tests {
 
         let result = provider.parse_response(&response_json);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("missing 'message.content'")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing 'message.content'"));
     }
 
     #[test]

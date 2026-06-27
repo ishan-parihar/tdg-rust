@@ -95,9 +95,7 @@ impl TestDb {
 
     pub fn count(&self, table: &str) -> i64 {
         let sql = format!("SELECT COUNT(*) FROM {table}");
-        self.conn
-            .query_row(&sql, [], |row| row.get(0))
-            .unwrap_or(0)
+        self.conn.query_row(&sql, [], |row| row.get(0)).unwrap_or(0)
     }
 
     pub fn count_nodes(&self) -> i64 {

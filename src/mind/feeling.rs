@@ -268,7 +268,10 @@ pub fn feeling_state_prompt(report: &FeelingReport) -> String {
     }
 
     if !report.blind_drives.is_empty() {
-        lines.push(format!("\nBlind drives: {}", report.blind_drives.join(", ")));
+        lines.push(format!(
+            "\nBlind drives: {}",
+            report.blind_drives.join(", ")
+        ));
     }
 
     if !report.pathological_drives.is_empty() {

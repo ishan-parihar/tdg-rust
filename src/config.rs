@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use figment::{
-    Figment,
     providers::{Env, Format, Json, Serialized, Yaml},
+    Figment,
 };
 use serde::{Deserialize, Serialize};
 
@@ -169,9 +169,7 @@ impl Config {
     /// Mirrors Python `resolve_config_json()` from `core/config.py`.
     pub fn resolve_config_json(path: &std::path::Path) -> anyhow::Result<serde_json::Value> {
         let content = std::fs::read_to_string(path)?;
-        let repo = Self::repo_root()
-            .to_string_lossy()
-            .into_owned();
+        let repo = Self::repo_root().to_string_lossy().into_owned();
         let resolved = content.replace("{REPO_ROOT}", &repo);
         let value: serde_json::Value = serde_json::from_str(&resolved)?;
         Ok(value)
@@ -225,16 +223,37 @@ mod tests {
     #[test]
     fn derived_paths_computed_from_home() {
         let cfg = Config::defaults();
-        assert_eq!(cfg.archive_db_path(), cfg.tdg_dir.join("graph").join("tdg_archive.db"));
+        assert_eq!(
+            cfg.archive_db_path(),
+            cfg.tdg_dir.join("graph").join("tdg_archive.db")
+        );
         assert_eq!(cfg.graph_dir(), cfg.tdg_dir.join("graph"));
         assert_eq!(cfg.config_dir(), cfg.tdg_dir.join("config"));
         assert_eq!(cfg.snapshots_dir(), cfg.tdg_dir.join("snapshots"));
-        assert_eq!(cfg.working_memory_path(), cfg.state_dir.join("hermes-working-memory.json"));
-        assert_eq!(cfg.loop_state_path(), cfg.state_dir.join("hermes-loop-state.json"));
-        assert_eq!(cfg.meta_view_cache_path(), cfg.state_dir.join("hermes-meta-view-cache.json"));
-        assert_eq!(cfg.constraints_path(), cfg.state_dir.join("hermes-constraints.json"));
-        assert_eq!(cfg.diagnostic_thresholds_path(), cfg.config_dir().join("diagnostic_thresholds.yaml"));
-        assert!(cfg.onnx_model_path().to_string_lossy().contains("model_quantized.onnx"));
+        assert_eq!(
+            cfg.working_memory_path(),
+            cfg.state_dir.join("hermes-working-memory.json")
+        );
+        assert_eq!(
+            cfg.loop_state_path(),
+            cfg.state_dir.join("hermes-loop-state.json")
+        );
+        assert_eq!(
+            cfg.meta_view_cache_path(),
+            cfg.state_dir.join("hermes-meta-view-cache.json")
+        );
+        assert_eq!(
+            cfg.constraints_path(),
+            cfg.state_dir.join("hermes-constraints.json")
+        );
+        assert_eq!(
+            cfg.diagnostic_thresholds_path(),
+            cfg.config_dir().join("diagnostic_thresholds.yaml")
+        );
+        assert!(cfg
+            .onnx_model_path()
+            .to_string_lossy()
+            .contains("model_quantized.onnx"));
     }
 
     #[test]

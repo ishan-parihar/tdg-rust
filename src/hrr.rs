@@ -244,7 +244,10 @@ mod tests {
 
         // Circular correlation: unbind(bind(a,b), b) recovers a scaled by |FFT(b)|^2
         let best_val = unbound.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        assert!(best_val > 0.0, "unbind should produce positive values for positive input");
+        assert!(
+            best_val > 0.0,
+            "unbind should produce positive values for positive input"
+        );
     }
 
     #[test]
