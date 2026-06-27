@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::crud;
 use crate::models::NodeQuery;
+use crate::util::quadrants::infer_quadrant as infer_quadrant_from_text;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreferenceExtraction {
@@ -76,82 +77,6 @@ static AUTONOMOUS_PATTERNS: LazyLock<Vec<(&'static str, f64)>> = LazyLock::new(|
     ]
 });
 
-static TOPIC_KEYWORDS: LazyLock<Vec<(&'static str, Vec<&'static str>)>> = LazyLock::new(|| {
-    vec![
-        (
-            "lr",
-            vec![
-                "deploy",
-                "server",
-                "database",
-                "api",
-                "infrastructure",
-                "docker",
-                "aws",
-                "pricing",
-                "cost",
-                "hosting",
-                "domain",
-                "ssl",
-                "nginx",
-                "kubernetes",
-            ],
-        ),
-        (
-            "ul",
-            vec![
-                "prefer",
-                "feel",
-                "like",
-                "dislike",
-                "comfortable",
-                "trust",
-                "believe",
-                "value",
-                "satisfied",
-                "frustrated",
-                "happy",
-                "unhappy",
-                "opinion",
-            ],
-        ),
-        (
-            "ll",
-            vec![
-                "identity",
-                "brand",
-                "name",
-                "persona",
-                "style",
-                "tone",
-                "voice",
-                "culture",
-                "image",
-                "reputation",
-                "messaging",
-                "positioning",
-            ],
-        ),
-        (
-            "ur",
-            vec![
-                "do",
-                "action",
-                "behavior",
-                "habit",
-                "practice",
-                "technique",
-                "approach",
-                "workflow",
-                "process",
-                "method",
-                "routine",
-                "execute",
-            ],
-        ),
-    ]
-});
-
 const RECURRING_MIN_OCCURRENCES: usize = 3;
 
 const CROSS_CYCLE_VERBS: &[(&str, &str)] = &[
@@ -179,7 +104,7 @@ impl PreferenceExtractor {
                 if let Some(caps) = re.captures(text) {
                     if let Some(content) = caps.get(2).or_else(|| caps.get(1)) {
                         let constraint_text = content.as_str().trim().to_string();
-                        let quadrant = self.infer_quadrant(&constraint_text);
+                        let quadrant = infer_quadrant_from_text(&constraint_text);
                         let constraint_id = build_constraint_id("memory", &constraint_text);
                         results.push(PreferenceExtraction {
                             extraction_type: "memory".to_string(),
@@ -198,7 +123,7 @@ impl PreferenceExtractor {
                 if let Some(caps) = re.captures(text) {
                     if let Some(content) = caps.get(2).or_else(|| caps.get(1)) {
                         let constraint_text = content.as_str().trim().to_string();
-                        let quadrant = self.infer_quadrant(&constraint_text);
+                        let quadrant = infer_quadrant_from_text(&constraint_text);
                         let constraint_id = build_constraint_id("correction", &constraint_text);
                         results.push(PreferenceExtraction {
                             extraction_type: "correction".to_string(),
@@ -217,7 +142,7 @@ impl PreferenceExtractor {
                 if let Some(caps) = re.captures(text) {
                     if let Some(content) = caps.get(2).or_else(|| caps.get(1)) {
                         let constraint_text = content.as_str().trim().to_string();
-                        let quadrant = self.infer_quadrant(&constraint_text);
+                        let quadrant = infer_quadrant_from_text(&constraint_text);
                         let constraint_id = build_constraint_id("preference", &constraint_text);
                         results.push(PreferenceExtraction {
                             extraction_type: "preference".to_string(),
@@ -236,7 +161,7 @@ impl PreferenceExtractor {
                 if let Some(caps) = re.captures(text) {
                     if let Some(content) = caps.get(1) {
                         let constraint_text = content.as_str().trim().to_string();
-                        let quadrant = self.infer_quadrant(&constraint_text);
+                        let quadrant = infer_quadrant_from_text(&constraint_text);
                         let constraint_id =
                             build_constraint_id("recurring_pattern", &constraint_text);
                         results.push(PreferenceExtraction {
@@ -256,7 +181,7 @@ impl PreferenceExtractor {
                 if let Some(caps) = re.captures(text) {
                     if let Some(content) = caps.get(1) {
                         let constraint_text = content.as_str().trim().to_string();
-                        let quadrant = self.infer_quadrant(&constraint_text);
+                        let quadrant = infer_quadrant_from_text(&constraint_text);
                         let constraint_id =
                             build_constraint_id("autonomous_insight", &constraint_text);
                         results.push(PreferenceExtraction {
@@ -321,8 +246,8 @@ impl PreferenceExtractor {
 
             let lower = text.to_lowercase();
 
-            for (_quadrant, keywords) in TOPIC_KEYWORDS.iter() {
-                for kw in keywords {
+            for (_quadrant, keywords) in crate::util::quadrants::QUADRANT_KEYWORDS.iter() {
+                for kw in *keywords {
                     if lower.contains(kw) {
                         keyword_counts
                             .entry(kw.to_string())
@@ -344,7 +269,7 @@ impl PreferenceExtractor {
                         keyword,
                         unique_obs.len()
                     );
-                    let quadrant = self.infer_quadrant(keyword);
+                    let quadrant = infer_quadrant_from_text(keyword);
                     let constraint_id = build_constraint_id("recurring_pattern", &text);
                     results.push(PreferenceExtraction {
                         extraction_type: "recurring_pattern".to_string(),
@@ -391,7 +316,7 @@ impl PreferenceExtractor {
                     if re.is_match(text) {
                         let constraint_text =
                             format!("Cross-cycle action detected: {} in: {}", verb_label, text);
-                        let quadrant = self.infer_quadrant(text);
+                        let quadrant = infer_quadrant_from_text(text);
                         let constraint_id =
                             build_constraint_id("autonomous_insight", &constraint_text);
                         results.push(PreferenceExtraction {
@@ -411,18 +336,6 @@ impl PreferenceExtractor {
         results.retain(|r| seen.insert(r.constraint_id.clone()));
 
         results
-    }
-
-    pub fn infer_quadrant(&self, text: &str) -> String {
-        let lower = text.to_lowercase();
-
-        for (quadrant, keywords) in TOPIC_KEYWORDS.iter() {
-            if keywords.iter().any(|kw| lower.contains(kw)) {
-                return quadrant.to_string();
-            }
-        }
-
-        "ur".to_string()
     }
 }
 
@@ -479,9 +392,8 @@ mod tests {
 
     #[test]
     fn quadrant_inference() {
-        let ext = PreferenceExtractor::new();
-        assert_eq!(ext.infer_quadrant("deploy the server"), "lr");
-        assert_eq!(ext.infer_quadrant("I feel comfortable"), "ul");
+        assert_eq!(infer_quadrant_from_text("deploy the server"), "lr");
+        assert_eq!(infer_quadrant_from_text("I feel comfortable"), "ul");
     }
 
     #[test]
@@ -709,12 +621,11 @@ mod tests {
 
     #[test]
     fn infer_quadrant_all_types() {
-        let ext = PreferenceExtractor::new();
-        assert_eq!(ext.infer_quadrant("deploy the server"), "lr");
-        assert_eq!(ext.infer_quadrant("I feel comfortable"), "ul");
-        assert_eq!(ext.infer_quadrant("our brand identity"), "ll");
-        assert_eq!(ext.infer_quadrant("build the workflow"), "ur");
-        assert_eq!(ext.infer_quadrant("something else entirely"), "ur");
+        assert_eq!(infer_quadrant_from_text("deploy the server"), "lr");
+        assert_eq!(infer_quadrant_from_text("I feel comfortable"), "ul");
+        assert_eq!(infer_quadrant_from_text("our brand identity"), "ll");
+        assert_eq!(infer_quadrant_from_text("build the workflow"), "ur");
+        assert_eq!(infer_quadrant_from_text("something else entirely"), "ur");
     }
 
     #[test]

@@ -46,7 +46,6 @@ shellexpand = "3"
 
 # Configuration (YAML + JSON + env vars)
 figment = { version = "0.10", features = ["yaml", "toml", "json", "env"] }
-serde_yaml = "0.9"
 
 # Hashing (for vector similarity)
 ahash = "0.8"

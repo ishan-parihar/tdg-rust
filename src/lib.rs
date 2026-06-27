@@ -131,6 +131,7 @@ pub mod scripts;
 pub mod telearchy;
 #[cfg(test)]
 pub mod test_utils;
+pub mod util;
 pub mod validation;
 pub mod visualization;
 

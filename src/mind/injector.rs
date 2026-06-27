@@ -10,7 +10,7 @@ use std::sync::atomic::AtomicUsize;
 use crate::config::Config;
 use crate::error::TdgResult;
 use crate::mind::data_loader::*;
-use crate::mind::diagnostic::{load_diagnostic_thresholds, DiagnosticEngine};
+use crate::mind::diagnostic::DiagnosticEngine;
 use crate::mind::feeling::{feeling_state_prompt, FeelingEngine};
 use crate::mind::sections::*;
 use crate::mind::terrain::{discover_skills_for_terrain, generate_terrain_context};
@@ -117,8 +117,7 @@ pub fn generate_prompt(conn: &Connection, cfg: &Config) -> TdgResult<String> {
     }
 
     if !lean {
-        let thresholds = load_diagnostic_thresholds(&cfg.diagnostic_thresholds_path());
-        let diag_engine = DiagnosticEngine::with_thresholds(thresholds);
+        let diag_engine = DiagnosticEngine::new();
         if let Ok(report) = diag_engine.analyze(conn, &[], &[]) {
             let diag_section = diag_engine.diagnostic_prompt_section(&report);
             if !diag_section.is_empty() {
@@ -251,7 +250,7 @@ pub fn write_mind_state_file(
         .unwrap_or_else(|| {
             DiagnosticEngine::new()
                 .analyze(conn, &[], &[])
-                .map(|r| r.escalation_level.as_str().to_string())
+                .map(|r| format!("{:?}", r.escalation_level).to_lowercase())
                 .unwrap_or_else(|_| "soft".to_string())
         });
 

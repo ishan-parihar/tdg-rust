@@ -3,6 +3,8 @@ use rand::Rng;
 use rand::SeedableRng;
 use rustfft::{num_complex::Complex, FftPlanner};
 
+use crate::util::math::cosine_similarity_f64;
+
 /// Dimension of HRR phase vectors.
 pub const HRR_DIM: usize = 1024;
 
@@ -17,18 +19,6 @@ pub const ROLE_ATOM: &str = "atom";
 pub const ROLE_MEM: &str = "mem";
 /// Memory bank super-vector
 pub const ROLE_BANK: &str = "bank";
-
-/// Estimate signal-to-noise ratio for N stored vectors.
-///
-/// SNR ≈ sqrt(dim) / sqrt(N)
-///
-/// Returns `f64::INFINITY` when count is 0.
-pub fn snr_estimate(count: usize, dim: usize) -> f64 {
-    if count == 0 {
-        return f64::INFINITY;
-    }
-    (dim as f64).sqrt() / (count as f64).sqrt()
-}
 
 /// Phase-encode a scalar value into a 1024-dim circular permutation vector.
 pub fn phase_encode(value: f64, dim: usize) -> Array1<f64> {
@@ -116,17 +106,11 @@ pub fn normalize(v: &Array1<f64>) -> Array1<f64> {
     }
 }
 
-/// Cosine similarity between two vectors.
 pub fn cosine_similarity(a: &Array1<f64>, b: &Array1<f64>) -> f64 {
-    let dot = a.dot(b);
-    let norm_a = a.mapv(|x| x * x).sum().sqrt();
-    let norm_b = b.mapv(|x| x * x).sum().sqrt();
-
-    if norm_a < 1e-10 || norm_b < 1e-10 {
-        0.0
-    } else {
-        dot / (norm_a * norm_b)
-    }
+    cosine_similarity_f64(
+        a.as_slice().expect("Array1 is always contiguous"),
+        b.as_slice().expect("Array1 is always contiguous"),
+    )
 }
 
 /// HRR memory bank: a collection of named vectors.
@@ -166,36 +150,6 @@ impl HrrMemoryBank {
         best
     }
 
-    /// Related: find vectors related to a given name via unbinding.
-    pub fn related(&self, name: &str, key: &Array1<f64>) -> Vec<(String, f64)> {
-        let target = self.entries.iter().find(|(n, _)| n == name);
-        if let Some((_, vector)) = target {
-            let unbound = unbind(vector, key);
-            let mut results: Vec<(String, f64)> = self
-                .entries
-                .iter()
-                .filter(|(n, _)| n != name)
-                .map(|(n, v)| (n.clone(), cosine_similarity(&unbound, v)))
-                .collect();
-            results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            results
-        } else {
-            Vec::new()
-        }
-    }
-
-    /// Reason: combine two probes to find related knowledge.
-    pub fn reason(&self, query_a: &Array1<f64>, query_b: &Array1<f64>) -> Vec<(String, f64)> {
-        let combined = normalize(&(&normalize(query_a) + &normalize(query_b)));
-        let mut results: Vec<(String, f64)> = self
-            .entries
-            .iter()
-            .map(|(n, v)| (n.clone(), cosine_similarity(&combined, v)))
-            .collect();
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        results
-    }
-
     /// Get all stored entries.
     pub fn entries(&self) -> &[(String, Array1<f64>)] {
         &self.entries
@@ -216,12 +170,6 @@ impl Default for HrrMemoryBank {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Generate a random key vector for binding.
-pub fn random_key(dim: usize) -> Array1<f64> {
-    let mut rng = rand::thread_rng();
-    Array1::from_shape_fn(dim, |_| rng.gen_range(-1.0..1.0))
 }
 
 #[cfg(test)]
@@ -292,7 +240,7 @@ mod tests {
     fn memory_bank_store_and_probe() {
         let mut bank = HrrMemoryBank::new();
 
-        let key = random_key(HRR_DIM);
+        let key = normalize(&phase_encode(0.1, HRR_DIM));
         let v1 = normalize(&phase_encode(1.0, HRR_DIM));
         let v2 = normalize(&phase_encode(2.0, HRR_DIM));
 

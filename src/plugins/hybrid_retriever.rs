@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::db::events::record_retrieval;
 use crate::error::TdgResult;
 use crate::models::Node;
+use crate::util::math::cosine_similarity;
+use crate::util::stopwords::STOP_WORDS;
 
 /// Search result with scoring.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,23 +44,6 @@ impl Default for RetrievalWeights {
         }
     }
 }
-
-/// Stop words for filtering — expanded to match Python's 60+ word list.
-static STOP_WORDS: &[&str] = &[
-    // Articles & pronouns
-    "the", "a", "an", "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them",
-    "my", "your", "his", "its", "our", "their", "mine", "yours", "hers", "ours", "theirs",
-    // Verbs
-    "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
-    "will", "would", "could", "should", "may", "might", "can", "shall", "must", "need", "ought",
-    "used", "to", "of", "in", "for", "on", "with", "at", "by", "from", "as", "into", "through",
-    "during", "before", "after", "above", "below", "between", "out", "off", "over", "under",
-    // Conjunctions & prepositions
-    "again", "further", "then", "once", "here", "there", "when", "where", "why", "how", "all",
-    "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only",
-    "own", "same", "so", "than", "too", "very", "just", "because", "but", "and", "or", "if",
-    "while", "about", "against", "also",
-];
 
 /// High-value node types for boosting — matches Python's BOOSTED_TYPES.
 static HIGH_VALUE_TYPES: &[&str] = &["action", "telos", "skill", "tool", "product", "capability"];
@@ -429,20 +414,6 @@ fn decode_f32_vec(blob: &[u8]) -> Result<Vec<f32>, ()> {
     Ok(chunks
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect())
-}
-
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let mag_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let mag_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if mag_a == 0.0 || mag_b == 0.0 {
-        0.0
-    } else {
-        dot / (mag_a * mag_b)
-    }
 }
 
 #[cfg(test)]

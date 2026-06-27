@@ -9,6 +9,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
 use crate::error::TdgResult;
+use crate::util::stopwords::EXTENDED_STOP_WORDS;
 
 /// Extracted entity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,21 +86,6 @@ static TOOL_WORDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     ]
 });
 
-/// Stop words to exclude from token matching.
-static STOP_WORDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    vec![
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
-        "do", "does", "did", "will", "would", "could", "should", "may", "might", "can", "shall",
-        "to", "of", "in", "for", "on", "with", "at", "by", "from", "as", "into", "through",
-        "during", "before", "after", "above", "below", "between", "out", "off", "over", "under",
-        "again", "further", "then", "once", "here", "there", "when", "where", "why", "how", "all",
-        "each", "every", "both", "few", "more", "most", "other", "some", "such", "no", "nor",
-        "not", "only", "own", "same", "so", "than", "too", "very", "just", "don", "now", "and",
-        "but", "or", "if", "it", "its", "this", "that", "these", "those", "i", "you", "he", "she",
-        "we", "they", "me", "him", "her", "us", "them", "my", "your", "his", "our", "their",
-    ]
-});
-
 /// Token regex: alphanumeric sequences.
 static TOKEN_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"[a-zA-Z0-9]+").unwrap());
@@ -112,168 +98,7 @@ static REDDIT_RE: LazyLock<regex::Regex> =
 static NAME_TOKEN_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"[:\s_/-]+").unwrap());
 
-/// Token-level stopwords for graph matching (broader than top-level STOP_WORDS).
-static TOKEN_STOPWORDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    vec![
-        "the",
-        "a",
-        "an",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "have",
-        "has",
-        "had",
-        "do",
-        "does",
-        "did",
-        "will",
-        "would",
-        "could",
-        "should",
-        "may",
-        "might",
-        "can",
-        "shall",
-        "to",
-        "of",
-        "in",
-        "for",
-        "on",
-        "with",
-        "at",
-        "by",
-        "from",
-        "as",
-        "into",
-        "through",
-        "during",
-        "before",
-        "after",
-        "above",
-        "below",
-        "between",
-        "out",
-        "off",
-        "over",
-        "under",
-        "again",
-        "further",
-        "then",
-        "once",
-        "here",
-        "there",
-        "when",
-        "where",
-        "why",
-        "how",
-        "all",
-        "each",
-        "every",
-        "both",
-        "few",
-        "more",
-        "most",
-        "other",
-        "some",
-        "such",
-        "no",
-        "nor",
-        "not",
-        "only",
-        "own",
-        "same",
-        "so",
-        "than",
-        "too",
-        "very",
-        "just",
-        "don",
-        "now",
-        "and",
-        "but",
-        "or",
-        "if",
-        "it",
-        "its",
-        "this",
-        "that",
-        "these",
-        "those",
-        "i",
-        "you",
-        "he",
-        "she",
-        "we",
-        "they",
-        "me",
-        "him",
-        "her",
-        "us",
-        "them",
-        "my",
-        "your",
-        "his",
-        "our",
-        "their",
-        "used",
-        "using",
-        "need",
-        "make",
-        "like",
-        "want",
-        "know",
-        "think",
-        "see",
-        "get",
-        "give",
-        "take",
-        "come",
-        "go",
-        "run",
-        "look",
-        "put",
-        "let",
-        "say",
-        "said",
-        "tell",
-        "told",
-        "set",
-        "also",
-        "well",
-        "back",
-        "even",
-        "still",
-        "new",
-        "way",
-        "use",
-        "work",
-        "first",
-        "last",
-        "long",
-        "great",
-        "little",
-        "right",
-        "big",
-        "high",
-        "old",
-        "different",
-        "small",
-        "large",
-        "next",
-        "early",
-        "young",
-        "important",
-        "public",
-        "bad",
-        "same",
-        "able",
-    ]
-});
+
 
 /// Inverted index cache for graph node names.
 pub struct EntityNameCache {
@@ -312,7 +137,7 @@ impl EntityNameCache {
             // Split name into tokens for inverted index
             let tokens: Vec<&str> = NAME_TOKEN_RE
                 .split(&name)
-                .filter(|t| t.len() > 2 && !TOKEN_STOPWORDS.contains(t))
+                .filter(|t| t.len() > 2 && !EXTENDED_STOP_WORDS.contains(t))
                 .collect();
 
             for token in tokens {
@@ -469,7 +294,7 @@ impl EntityExtractor {
         let input_tokens: Vec<String> = TOKEN_RE
             .find_iter(text)
             .map(|m| m.as_str().to_lowercase())
-            .filter(|t| !TOKEN_STOPWORDS.contains(&t.as_str()) && t.len() > 2)
+            .filter(|t| !EXTENDED_STOP_WORDS.contains(&t.as_str()) && t.len() > 2)
             .collect();
 
         if input_tokens.is_empty() {
@@ -533,7 +358,7 @@ impl EntityExtractor {
                     let name_lower = node_name.to_lowercase();
                     let name_tokens: Vec<&str> = NAME_TOKEN_RE
                         .split(&name_lower)
-                        .filter(|t| t.len() > 2 && !TOKEN_STOPWORDS.contains(t))
+                        .filter(|t| t.len() > 2 && !EXTENDED_STOP_WORDS.contains(t))
                         .collect();
 
                     let total_tokens = name_tokens.len().max(1) as f64;

@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReflectConfig {
-    pub min_observations_to_run: usize,
-    pub min_cluster_size: usize,
-    pub min_shared_entities: usize,
-    pub stale_observation_days: u32,
-    pub max_clusters_per_run: usize,
+struct ReflectConfig {
+    min_observations_to_run: usize,
+    min_cluster_size: usize,
+    min_shared_entities: usize,
+    stale_observation_days: u32,
+    max_clusters_per_run: usize,
 }
 
 impl Default for ReflectConfig {
@@ -50,10 +50,6 @@ impl<'a> ReflectEngine<'a> {
             conn,
             config: ReflectConfig::default(),
         }
-    }
-
-    pub fn with_config(conn: &'a Connection, config: ReflectConfig) -> Self {
-        Self { conn, config }
     }
 
     pub fn run(&self) -> TdgResult<ReflectResult> {

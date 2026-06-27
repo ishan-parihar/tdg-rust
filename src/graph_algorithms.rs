@@ -88,18 +88,6 @@ pub mod community {
 
         communities
     }
-
-    /// Return the number of communities detected.
-    pub fn num_communities(graph: &DiGraph<String, String>) -> usize {
-        if graph.node_count() == 0 {
-            return 0;
-        }
-        leiden_communities(graph)
-            .values()
-            .copied()
-            .max()
-            .map_or(0, |m| m + 1)
-    }
 }
 
 #[cfg(test)]
@@ -255,26 +243,6 @@ mod tests {
         assert_ne!(
             communities["A"], communities["C"],
             "separate components should differ"
-        );
-    }
-
-    #[test]
-    fn num_communities_empty() {
-        let g: DiGraph<String, String> = DiGraph::new();
-        assert_eq!(community::num_communities(&g), 0);
-    }
-
-    #[test]
-    fn num_communities_disconnected() {
-        let mut g: DiGraph<String, String> = DiGraph::new();
-        g.add_node("A".into());
-        g.add_node("B".into());
-        g.add_node("C".into());
-        g.add_edge(NodeIndex::new(0), NodeIndex::new(1), "e".into());
-        let n = community::num_communities(&g);
-        assert!(
-            n >= 2,
-            "disconnected graph should have >= 2 communities, got {n}"
         );
     }
 }

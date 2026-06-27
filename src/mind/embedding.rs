@@ -241,21 +241,6 @@ mod onnx_impl {
         texts.iter().map(|t| embed(t)).collect()
     }
 
-    /// Compute cosine similarity between two vectors.
-    pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-        if a.len() != b.len() || a.is_empty() {
-            return 0.0;
-        }
-        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if norm_a < 1e-12 || norm_b < 1e-12 {
-            0.0
-        } else {
-            dot / (norm_a * norm_b)
-        }
-    }
-
     /// Reset the global model cache (for testing).
     pub fn reset() {
         if let Ok(mut cache) = get_cache().lock() {
@@ -263,6 +248,8 @@ mod onnx_impl {
         }
     }
 }
+
+pub use crate::util::math::cosine_similarity;
 
 // ── Feature-gated GGUF Implementation ────────────────────────────────
 
@@ -411,26 +398,10 @@ pub mod onnx_impl {
         ))
     }
 
-    /// Cosine similarity between two vectors (works without ONNX).
-    pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-        if a.len() != b.len() || a.is_empty() {
-            return 0.0;
-        }
-        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if norm_a < 1e-12 || norm_b < 1e-12 {
-            0.0
-        } else {
-            dot / (norm_a * norm_b)
-        }
-    }
-
     /// Stub: no-op when ONNX feature is disabled.
     pub fn reset() {}
 }
 
-// Re-export onnx_impl functions at module level for convenience.
 #[allow(unused_imports)]
 pub use onnx_impl::*;
 

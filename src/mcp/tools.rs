@@ -2263,7 +2263,6 @@ Do NOT include any text outside the JSON block."#
                     .map_err(mcp_err)?;
             }
         }
-        self.mind_state_manager.persist().map_err(mcp_err)?;
         let state = self.mind_state_manager.get_state();
         Ok(serde_json::to_string(&json!({
             "status": "saved",
@@ -2335,7 +2334,6 @@ Do NOT include any text outside the JSON block."#
         self.mind_state_manager
             .remember("project_context", &params.context, None)
             .map_err(mcp_err)?;
-        self.mind_state_manager.persist().map_err(mcp_err)?;
         Ok(serde_json::to_string(&json!({
             "status": "saved",
             "project_context": params.context,

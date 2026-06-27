@@ -143,17 +143,6 @@ impl MindStateManager {
         Ok(())
     }
 
-    /// Persist the current in-memory state to the JSON file.
-    ///
-    /// This is called automatically by [`update`](Self::update); you only need it
-    /// when you have modified the state outside of `update` (not recommended).
-    pub fn persist(&self) -> TdgResult<()> {
-        let guard = self.state.lock().expect("mind state mutex poisoned");
-        let serialised = serde_json::to_string_pretty(&*guard)?;
-        atomic_write(&self.state_path, &serialised)?;
-        Ok(())
-    }
-
     // ─── Working memory ───────────────────────────────────────────────────
 
     /// Store a value in working memory.

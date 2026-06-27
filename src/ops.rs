@@ -14,7 +14,7 @@ use crate::db::crud::{count_nodes, get_node, now_iso, query_nodes, record_event}
 use crate::error::TdgResult;
 use crate::flow::{self, FlowDriveState};
 use crate::knowledge;
-use crate::mind::diagnostic::{load_diagnostic_thresholds, DiagnosticEngine};
+use crate::mind::diagnostic::DiagnosticEngine;
 use crate::mind::pulse::PulseEngine;
 use crate::models::{NewNode, NodeQuery};
 
@@ -268,9 +268,7 @@ pub fn macro_slice(conn: &Connection, depth: Option<i64>) -> TdgResult<serde_jso
     let pulse_summary = pulse_engine.summarize(&pulse_results);
 
     // Diagnostic analysis
-    let thresholds =
-        load_diagnostic_thresholds(&crate::config::Config::default().diagnostic_thresholds_path());
-    let diag_engine = DiagnosticEngine::with_thresholds(thresholds);
+    let diag_engine = DiagnosticEngine::new();
     let report = diag_engine.analyze(conn, &[], &[])?;
 
     Ok(serde_json::json!({

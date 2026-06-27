@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
@@ -9,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::TdgResult;
 use crate::models::NewNode;
+use crate::util::quadrants::infer_quadrant;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapturedTurn {
@@ -34,72 +34,6 @@ pub struct WriteRequest {
     pub quadrant: String,
     pub timestamp: String,
 }
-
-static QUADRANT_KEYWORDS: LazyLock<Vec<(&'static str, Vec<&'static str>)>> = LazyLock::new(|| {
-    vec![
-        (
-            "lr",
-            vec![
-                "deploy",
-                "server",
-                "database",
-                "api",
-                "infrastructure",
-                "docker",
-                "aws",
-                "pricing",
-                "cost",
-                "build",
-                "compile",
-                "test",
-                "run",
-                "fix",
-                "debug",
-            ],
-        ),
-        (
-            "ul",
-            vec![
-                "prefer",
-                "feel",
-                "like",
-                "dislike",
-                "comfortable",
-                "trust",
-                "believe",
-                "value",
-                "think",
-                "believe",
-                "understand",
-                "learn",
-            ],
-        ),
-        (
-            "ll",
-            vec![
-                "identity", "brand", "name", "persona", "style", "tone", "voice", "culture",
-                "remember", "note", "memo",
-            ],
-        ),
-        (
-            "ur",
-            vec![
-                "do",
-                "action",
-                "behavior",
-                "habit",
-                "practice",
-                "technique",
-                "approach",
-                "create",
-                "build",
-                "make",
-                "write",
-                "implement",
-            ],
-        ),
-    ]
-});
 
 pub struct TurnCapture {
     last_write_ts: std::cell::Cell<u64>,
@@ -155,7 +89,7 @@ impl TurnCapture {
         let extractor = crate::plugins::EntityExtractor::new();
         let entities = extractor.extract(text, Some(conn));
         let entity_names: Vec<String> = entities.iter().map(|e| e.name.clone()).collect();
-        let quadrant = infer_quadrant_from_content(text);
+        let quadrant = infer_quadrant(text);
 
         if let Some(ref tx) = self.write_tx {
             let observation_id = format!("obs:{}", uuid::Uuid::new_v4());
@@ -440,16 +374,6 @@ fn calculate_overlap(a: &str, b: &str) -> f64 {
     }
 }
 
-fn infer_quadrant_from_content(text: &str) -> String {
-    let lower = text.to_lowercase();
-    for (quadrant, keywords) in QUADRANT_KEYWORDS.iter() {
-        if keywords.iter().any(|kw| lower.contains(kw)) {
-            return quadrant.to_string();
-        }
-    }
-    "ur".to_string()
-}
-
 fn find_or_create_agent_self(conn: &Connection, agent_id: &str) -> TdgResult<String> {
     let node_id = format!("agent:{}", agent_id);
 
@@ -563,25 +487,25 @@ mod tests {
 
     #[test]
     fn infer_quadrant_deploy() {
-        let result = infer_quadrant_from_content("deploy the server to production");
+        let result = infer_quadrant("deploy the server to production");
         assert_eq!(result, "lr");
     }
 
     #[test]
     fn infer_quadrant_feel() {
-        let result = infer_quadrant_from_content("I feel comfortable with this approach");
+        let result = infer_quadrant("I feel comfortable with this approach");
         assert_eq!(result, "ul");
     }
 
     #[test]
     fn infer_quadrant_identity() {
-        let result = infer_quadrant_from_content("our brand identity is evolving");
+        let result = infer_quadrant("our brand identity is evolving");
         assert_eq!(result, "ll");
     }
 
     #[test]
     fn infer_quadrant_default() {
-        let result = infer_quadrant_from_content("something unrelated");
+        let result = infer_quadrant("something unrelated");
         assert_eq!(result, "ur");
     }
 

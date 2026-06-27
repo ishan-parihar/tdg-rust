@@ -146,17 +146,6 @@ pub enum PulseSeverity {
     Healthy,
 }
 
-impl PulseSeverity {
-    pub fn as_str(&self) -> &str {
-        match self {
-            PulseSeverity::Critical => "critical",
-            PulseSeverity::Gap => "gap",
-            PulseSeverity::Minor => "minor",
-            PulseSeverity::Healthy => "healthy",
-        }
-    }
-}
-
 /// A structural gap detected for a node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PulseResult {
@@ -342,7 +331,7 @@ impl PulseEngine {
                 "name": r.name,
                 "node_type": r.node_type,
                 "gap_score": r.gap_score,
-                "severity": r.severity.as_str(),
+                "severity": format!("{:?}", r.severity).to_lowercase(),
             })).collect::<Vec<_>>(),
         })
     }

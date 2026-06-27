@@ -33,11 +33,7 @@ pub struct ConsolidationEngine<'a> {
 }
 
 impl<'a> ConsolidationEngine<'a> {
-    pub fn new(conn: &'a Connection) -> Self {
-        Self { conn, lean: false }
-    }
-
-    pub fn with_lean(conn: &'a Connection, lean: bool) -> Self {
+    pub fn new(conn: &'a Connection, lean: bool) -> Self {
         Self { conn, lean }
     }
 
@@ -361,7 +357,7 @@ mod tests {
     #[test]
     fn test_consolidation_empty_graph() {
         let conn = setup_db();
-        let engine = ConsolidationEngine::new(&conn);
+        let engine = ConsolidationEngine::new(&conn, false);
         let report = engine.run().unwrap();
         assert_eq!(report.status, "consolidated_partial");
         assert_eq!(report.nodes_count, 0);
@@ -371,7 +367,7 @@ mod tests {
     #[test]
     fn test_consolidation_lean_mode() {
         let conn = setup_db();
-        let engine = ConsolidationEngine::with_lean(&conn, true);
+        let engine = ConsolidationEngine::new(&conn, true);
         let report = engine.run().unwrap();
         assert_eq!(report.status, "consolidated_lean");
         assert!(report.reflection.is_none());
@@ -401,7 +397,7 @@ mod tests {
             )
             .unwrap();
         }
-        let engine = ConsolidationEngine::new(&conn);
+        let engine = ConsolidationEngine::new(&conn, false);
         let report = engine.run().unwrap();
         assert_eq!(report.nodes_count, 10);
         assert!(report.node_types.contains_key("observation"));
@@ -429,7 +425,7 @@ mod tests {
             },
         )
         .unwrap();
-        let engine = ConsolidationEngine::new(&conn);
+        let engine = ConsolidationEngine::new(&conn, false);
         let report = engine.run().unwrap();
         assert_eq!(report.orphans, 1);
         assert!(report

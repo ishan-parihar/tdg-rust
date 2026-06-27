@@ -3,7 +3,6 @@
 //! Port of `core/mind/diagnostic_engine.py`.
 
 use std::collections::HashMap;
-use std::path::Path;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -17,16 +16,6 @@ pub enum Severity {
     Soft,
     Strong,
     Mandatory,
-}
-
-impl Severity {
-    pub fn as_str(&self) -> &str {
-        match self {
-            Severity::Soft => "soft",
-            Severity::Strong => "strong",
-            Severity::Mandatory => "mandatory",
-        }
-    }
 }
 
 /// A single diagnostic pattern flag.
@@ -48,19 +37,6 @@ pub enum DriveLabel {
     Allergic,
     Blind,
     Conflicted,
-}
-
-impl DriveLabel {
-    pub fn as_str(&self) -> &str {
-        match self {
-            DriveLabel::Healthy => "healthy",
-            DriveLabel::Pathological => "pathological",
-            DriveLabel::Addicted => "addicted",
-            DriveLabel::Allergic => "allergic",
-            DriveLabel::Blind => "blind",
-            DriveLabel::Conflicted => "conflicted",
-        }
-    }
 }
 
 /// Phantom node detection — drive expressed in wrong quadrant.
@@ -116,14 +92,6 @@ impl Default for DiagnosticThresholds {
             quadrant_persistence_cycles: 4,
         }
     }
-}
-
-/// Load diagnostic thresholds from a YAML file, falling back to defaults if missing.
-pub fn load_diagnostic_thresholds(path: &Path) -> DiagnosticThresholds {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_yaml::from_str(&content).ok())
-        .unwrap_or_default()
 }
 
 /// The Diagnostic Engine — retrospective dashboard for agent self-awareness.

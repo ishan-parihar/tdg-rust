@@ -7,6 +7,7 @@ use tdg_rust::plugins::entity_extractor::{EntityExtractor, EntityNameCache};
 use tdg_rust::plugins::hybrid_retriever::{HybridRetriever, RetrievalWeights};
 use tdg_rust::plugins::preference_extractor::{build_constraint_id, PreferenceExtractor};
 use tdg_rust::plugins::turn_capture::TurnCapture;
+use tdg_rust::util::quadrants::infer_quadrant;
 
 fn make_pool() -> ConnectionPool {
     let pool = ConnectionPool::new(":memory:", 5, 30000).expect("pool creation");
@@ -998,12 +999,11 @@ fn preference_extractor_batch_deduplication() {
 
 #[test]
 fn preference_extractor_quadrant_inference_all_types() {
-    let ext = PreferenceExtractor::new();
-    assert_eq!(ext.infer_quadrant("deploy the server"), "lr");
-    assert_eq!(ext.infer_quadrant("I feel comfortable"), "ul");
-    assert_eq!(ext.infer_quadrant("our brand identity"), "ll");
-    assert_eq!(ext.infer_quadrant("build the workflow"), "ur");
-    assert_eq!(ext.infer_quadrant("something else entirely"), "ur");
+    assert_eq!(infer_quadrant("deploy the server"), "lr");
+    assert_eq!(infer_quadrant("I feel comfortable"), "ul");
+    assert_eq!(infer_quadrant("our brand identity"), "ll");
+    assert_eq!(infer_quadrant("build the workflow"), "ur");
+    assert_eq!(infer_quadrant("something else entirely"), "ur");
 }
 
 #[test]
