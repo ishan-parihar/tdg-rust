@@ -294,6 +294,32 @@ pub struct SetProjectContextParams {
     pub context: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PrefetchParams {
+    #[schemars(description = "Search query for context recall")]
+    pub query: String,
+    #[schemars(description = "Max results (default: 10)")]
+    pub limit: Option<i64>,
+    #[schemars(description = "Optional session ID for scoping")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExportParams {
+    #[schemars(description = "Output file path (default: tdg_export.json)")]
+    pub output_path: Option<String>,
+    #[schemars(description = "Include events in export (default: true)")]
+    pub include_events: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ImportParams {
+    #[schemars(description = "Input file path to import")]
+    pub input_path: String,
+    #[schemars(description = "Skip duplicate nodes (default: true)")]
+    pub skip_duplicates: Option<bool>,
+}
+
 // ─── In-Memory Trust Store ─────────────────────────────────────────────────
 
 /// Per-agent trust entry stored in the in-memory TrustStore.
@@ -632,6 +658,144 @@ impl TdgServer {
             serde_json::to_string(&json!({"nodes": items, "total": items.len()}))
                 .unwrap_or_default(),
         )
+    }
+
+    #[tool(description = "Prefetch relevant context for a query — hybrid FTS5 + embedding search formatted for <memory-context> injection")]
+    pub(crate) async fn tdg_prefetch(
+        &self,
+        Parameters(params): Parameters<PrefetchParams>,
+    ) -> Result<String, McpError> {
+        if self.lean_guard()? {
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
+        }
+        let conn = get_conn(&self.pool)?;
+        let limit = params.limit.unwrap_or(10).min(50);
+        let retriever = crate::plugins::HybridRetriever::new();
+        let results = retriever
+            .search(&conn, &params.query, limit, None)
+            .map_err(mcp_err)?;
+        let context = results
+            .iter()
+            .map(|r| {
+                format!(
+                    "[{}] {} — {}",
+                    r.node.node_type,
+                    r.node.name,
+                    &r.node.description
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        Ok(context)
+    }
+
+    #[tool(description = "Export graph data to JSON file for migration or backup")]
+    pub(crate) async fn tdg_export(
+        &self,
+        Parameters(params): Parameters<ExportParams>,
+    ) -> Result<String, McpError> {
+        if self.lean_guard()? {
+            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+        }
+        let conn = get_conn(&self.pool)?;
+        let output_path = params.output_path.unwrap_or_else(|| "tdg_export.json".to_string());
+
+        let nodes: Vec<Value> = conn
+            .prepare("SELECT id, node_type, name, COALESCE(description, '') FROM nodes WHERE valid_to IS NULL")
+            .map_err(mcp_err)?
+            .query_map([], |row| {
+                Ok(json!({
+                    "id": row.get::<_, String>(0)?,
+                    "node_type": row.get::<_, String>(1)?,
+                    "name": row.get::<_, String>(2)?,
+                    "description": row.get::<_, String>(3)?
+                }))
+            })
+            .map_err(mcp_err)?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let edges: Vec<Value> = conn
+            .prepare("SELECT source_id, target_id, edge_type FROM edges WHERE valid_to IS NULL")
+            .map_err(mcp_err)?
+            .query_map([], |row| {
+                Ok(json!({
+                    "source_id": row.get::<_, String>(0)?,
+                    "target_id": row.get::<_, String>(1)?,
+                    "edge_type": row.get::<_, String>(2)?
+                }))
+            })
+            .map_err(mcp_err)?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let export = json!({
+            "version": 1,
+            "nodes": nodes,
+            "edges": edges,
+            "node_count": nodes.len(),
+            "edge_count": edges.len(),
+        });
+
+        std::fs::write(&output_path, serde_json::to_string_pretty(&export).unwrap_or_default())
+            .map_err(|e| mcp_err(anyhow::anyhow!("Write error: {}", e)))?;
+
+        Ok(format!("Exported {} nodes, {} edges to {}", nodes.len(), edges.len(), output_path))
+    }
+
+    #[tool(description = "Import graph data from JSON file")]
+    pub(crate) async fn tdg_import(
+        &self,
+        Parameters(params): Parameters<ImportParams>,
+    ) -> Result<String, McpError> {
+        if self.lean_guard()? {
+            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+        }
+        let conn = get_conn(&self.pool)?;
+        let content = std::fs::read_to_string(&params.input_path)
+            .map_err(|e| mcp_err(anyhow::anyhow!("Read error: {}", e)))?;
+        let import: Value = serde_json::from_str(&content)
+            .map_err(|e| mcp_err(anyhow::anyhow!("Parse error: {}", e)))?;
+        let skip_dupes = params.skip_duplicates.unwrap_or(true);
+        let mut nodes_imported = 0;
+        let mut edges_imported = 0;
+
+        if let Some(nodes) = import["nodes"].as_array() {
+            for node in nodes {
+                let id = node["id"].as_str().unwrap_or("");
+                let node_type = node["node_type"].as_str().unwrap_or("observation");
+                let name = node["name"].as_str().unwrap_or("");
+                let description = node["description"].as_str().unwrap_or("");
+                if skip_dupes {
+                    let exists: bool = conn
+                        .query_row("SELECT COUNT(*) > 0 FROM nodes WHERE id = ?1", [id], |row| row.get(0))
+                        .unwrap_or(false);
+                    if exists { continue; }
+                }
+                conn.execute(
+                    "INSERT OR REPLACE INTO nodes (id, node_type, name, description, created_at) VALUES (?1, ?2, ?3, ?4, datetime('now'))",
+                    [id, node_type, name, description],
+                ).ok();
+                nodes_imported += 1;
+            }
+        }
+
+        if let Some(edges) = import["edges"].as_array() {
+            for edge in edges {
+                let source = edge["source_id"].as_str().unwrap_or("");
+                let target = edge["target_id"].as_str().unwrap_or("");
+                let edge_type = edge["edge_type"].as_str().unwrap_or("RELATES_TO");
+                conn.execute(
+                    "INSERT OR IGNORE INTO edges (source_id, target_id, edge_type, created_at) VALUES (?1, ?2, ?3, datetime('now'))",
+                    [source, target, edge_type],
+                ).ok();
+                edges_imported += 1;
+            }
+        }
+
+        Ok(format!("Imported {} nodes, {} edges", nodes_imported, edges_imported))
     }
 
     #[tool(description = "Retrieve details for a specific node with optional context")]
