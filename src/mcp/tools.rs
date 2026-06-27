@@ -633,7 +633,7 @@ impl TdgServer {
         Ok(self.lean)
     }
 
-    #[tool(description = "Search graph memory using hybrid FTS5 full-text search")]
+    #[tool(description = "Hybrid FTS5 graph search")]
     pub(crate) async fn tdg_search(
         &self,
         Parameters(params): Parameters<SearchParams>,
@@ -660,7 +660,7 @@ impl TdgServer {
         )
     }
 
-    #[tool(description = "Prefetch relevant context for a query — hybrid FTS5 + embedding search formatted for <memory-context> injection")]
+    #[tool(description = "Prefetch context for query injection")]
     pub(crate) async fn tdg_prefetch(
         &self,
         Parameters(params): Parameters<PrefetchParams>,
@@ -691,7 +691,7 @@ impl TdgServer {
         Ok(context)
     }
 
-    #[tool(description = "Export graph data to JSON file for migration or backup")]
+    #[tool(description = "Export graph to JSON")]
     pub(crate) async fn tdg_export(
         &self,
         Parameters(params): Parameters<ExportParams>,
@@ -745,7 +745,7 @@ impl TdgServer {
         Ok(format!("Exported {} nodes, {} edges to {}", nodes.len(), edges.len(), output_path))
     }
 
-    #[tool(description = "Import graph data from JSON file")]
+    #[tool(description = "Import graph from JSON")]
     pub(crate) async fn tdg_import(
         &self,
         Parameters(params): Parameters<ImportParams>,
@@ -798,7 +798,7 @@ impl TdgServer {
         Ok(format!("Imported {} nodes, {} edges", nodes_imported, edges_imported))
     }
 
-    #[tool(description = "Check graph health — coverage metrics, edge noise, orphan count, DB size")]
+    #[tool(description = "Graph health: coverage, noise, orphans")]
     pub(crate) async fn tdg_graph_health(
         &self,
     ) -> Result<String, McpError> {
@@ -842,7 +842,7 @@ impl TdgServer {
         }).to_string())
     }
 
-    #[tool(description = "Retrieve details for a specific node with optional context")]
+    #[tool(description = "Get node details with context")]
     pub(crate) async fn tdg_get_node(
         &self,
         Parameters(params): Parameters<GetNodeParams>,
@@ -874,7 +874,7 @@ impl TdgServer {
         Ok(serde_json::to_string(&result).unwrap_or_default())
     }
 
-    #[tool(description = "Query the event log with optional filters")]
+    #[tool(description = "Query event log")]
     pub(crate) async fn tdg_query_events(
         &self,
         Parameters(params): Parameters<QueryEventsParams>,
@@ -920,7 +920,7 @@ impl TdgServer {
         )
     }
 
-    #[tool(description = "Create a new graph node with automatic edge wiring")]
+    #[tool(description = "Create node with edge wiring")]
     pub(crate) async fn tdg_create(
         &self,
         Parameters(params): Parameters<CreateParams>,
@@ -1017,7 +1017,7 @@ impl TdgServer {
         .unwrap_or_default())
     }
 
-    #[tool(description = "Update a node's details or relationships")]
+    #[tool(description = "Update node details")]
     pub(crate) async fn tdg_update(
         &self,
         Parameters(params): Parameters<UpdateParams>,
@@ -1077,7 +1077,7 @@ impl TdgServer {
         .unwrap_or_default())
     }
 
-    #[tool(description = "Connect two nodes with an edge (auto-detects type from node pair)")]
+    #[tool(description = "Connect two nodes with an edge")]
     pub(crate) async fn tdg_connect(
         &self,
         Parameters(params): Parameters<ConnectParams>,
@@ -1170,7 +1170,7 @@ impl TdgServer {
         .unwrap_or_default())
     }
 
-    #[tool(description = "Batch-import nodes and edges from JSON arrays")]
+    #[tool(description = "Batch create nodes/edges")]
     pub(crate) async fn tdg_bulk_create(
         &self,
         Parameters(params): Parameters<BulkCreateParams>,
@@ -1230,7 +1230,7 @@ impl TdgServer {
         .unwrap_or_default())
     }
 
-    #[tool(description = "Record an execution outcome as an observation node")]
+    #[tool(description = "Record execution as observation")]
     pub(crate) async fn tdg_record_exec(
         &self,
         Parameters(params): Parameters<RecordExecParams>,
@@ -1269,7 +1269,7 @@ impl TdgServer {
         Ok(serde_json::to_string(&json!({"observation_id": node.id, "action_type": params.action_type, "result": params.result})).unwrap_or_default())
     }
 
-    #[tool(description = "Adjust a node's confidence rating based on feedback")]
+    #[tool(description = "Rate node confidence")]
     pub(crate) async fn tdg_rate_memory(
         &self,
         Parameters(params): Parameters<RateMemoryParams>,
@@ -1290,9 +1290,7 @@ impl TdgServer {
         .unwrap_or_default())
     }
 
-    #[tool(
-        description = "Get graph state, health, or integrity. detail adds drives+telos+stage. health adds diagnostics. verify runs PRAGMA integrity_check."
-    )]
+    #[tool(description = "Graph state, health, or integrity check")]
     pub(crate) async fn tdg_mind_state(
         &self,
         Parameters(params): Parameters<MindStateParams>,
@@ -1494,7 +1492,7 @@ impl TdgServer {
         Ok(serde_json::to_string(&result).unwrap_or_default())
     }
 
-    #[tool(description = "Create an observation node from a description")]
+    #[tool(description = "Create observation node")]
     pub(crate) async fn tdg_observe(
         &self,
         Parameters(params): Parameters<ObserveParams>,
@@ -1593,7 +1591,7 @@ impl TdgServer {
         .unwrap_or_default())
     }
 
-    #[tool(description = "Traverse relationships from a node by edge type and direction")]
+    #[tool(description = "Traverse node relationships")]
     pub(crate) async fn tdg_get_related(
         &self,
         Parameters(params): Parameters<GetRelatedParams>,
@@ -1647,7 +1645,7 @@ impl TdgServer {
         .unwrap_or_default())
     }
 
-    #[tool(description = "Run graph maintenance (hygiene, archive, or all)")]
+    #[tool(description = "Run graph maintenance")]
     pub(crate) async fn tdg_maintenance(
         &self,
         Parameters(params): Parameters<MaintenanceParams>,
@@ -1682,7 +1680,7 @@ impl TdgServer {
         Ok(serde_json::to_string(&json!(report)).unwrap_or_default())
     }
 
-    #[tool(description = "Run autonomous self-management: health check → janitor → enricher → archiver with before/after health scoring")]
+    #[tool(description = "Run autonomous self-management cycle")]
     pub(crate) async fn tdg_self_manage(
         &self,
         Parameters(params): Parameters<SelfManageParams>,
@@ -1711,7 +1709,7 @@ impl TdgServer {
         .unwrap_or_default())
     }
 
-    #[tool(description = "Introspect the database schema (tables, columns, row counts)")]
+    #[tool(description = "Introspect database schema")]
     pub(crate) async fn tdg_get_schema(&self) -> Result<String, McpError> {
         if self.lean_guard()? {
             return Ok(
@@ -1742,7 +1740,7 @@ impl TdgServer {
         Ok(serde_json::to_string(&json!({"tables": tables})).unwrap_or_default())
     }
 
-    #[tool(description = "Manage multi-agent memory banks")]
+    #[tool(description = "Manage memory banks")]
     pub(crate) async fn tdg_bank(
         &self,
         Parameters(params): Parameters<BankParams>,
@@ -1775,7 +1773,7 @@ impl TdgServer {
         }
     }
 
-    #[tool(description = "Resolve entity names and manage aliases")]
+    #[tool(description = "Resolve entity names and aliases")]
     pub(crate) async fn tdg_entity(
         &self,
         Parameters(params): Parameters<EntityParams>,
@@ -1828,9 +1826,7 @@ impl TdgServer {
         }
     }
 
-    #[tool(
-        description = "LLM-powered cross-memory synthesis. Gathers recent graph context, tries LLM providers (OpenAI → Anthropic → Ollama), falls back to pattern-based synthesis, and stores synthesis nodes in the graph. Use status_only=true to check LLM availability without running synthesis."
-    )]
+    #[tool(description = "Run LLM synthesis on graph context")]
     pub(crate) async fn tdg_reflect(
         &self,
         Parameters(params): Parameters<ReflectParams>,
@@ -2091,7 +2087,7 @@ Do NOT include any text outside the JSON block."#
 
     // ─── Trust Tools ────────────────────────────────────────────────────────
 
-    #[tool(description = "Get the trust score and metadata for a specific agent")]
+    #[tool(description = "Get agent trust score")]
     pub(crate) async fn tdg_get_trust(
         &self,
         Parameters(params): Parameters<GetTrustParams>,
@@ -2121,9 +2117,7 @@ Do NOT include any text outside the JSON block."#
         }
     }
 
-    #[tool(
-        description = "Adjust an agent's trust score by a delta with optional reason and source"
-    )]
+    #[tool(description = "Adjust agent trust score by delta")]
     pub(crate) async fn tdg_adjust_trust(
         &self,
         Parameters(params): Parameters<AdjustTrustParams>,
@@ -2148,7 +2142,7 @@ Do NOT include any text outside the JSON block."#
 
     // ─── Health Tools ───────────────────────────────────────────────────────
 
-    #[tool(description = "Record a health check result for a service")]
+    #[tool(description = "Record service health check")]
     pub(crate) async fn tdg_health_check(
         &self,
         Parameters(params): Parameters<HealthCheckParams>,
@@ -2173,7 +2167,7 @@ Do NOT include any text outside the JSON block."#
         .unwrap_or_default())
     }
 
-    #[tool(description = "Get overall system health summary including circuit breaker status")]
+    #[tool(description = "System health + circuit breaker status")]
     pub(crate) async fn tdg_system_health(
         &self,
         Parameters(_params): Parameters<SystemHealthParams>,
@@ -2192,9 +2186,7 @@ Do NOT include any text outside the JSON block."#
         Ok(serde_json::to_string(&result).unwrap_or_default())
     }
 
-    #[tool(
-        description = "Get graph statistics: node/edge counts, average degree, density, top PageRank hubs"
-    )]
+    #[tool(description = "Graph stats: counts, degree, PageRank")]
     pub(crate) async fn tdg_graph_stats(
         &self,
         Parameters(_params): Parameters<GraphStatsParams>,
@@ -2252,9 +2244,7 @@ Do NOT include any text outside the JSON block."#
 
     // ─── Mind State Persistence Tools ──────────────────────────────────────────
 
-    #[tool(
-        description = "Save the current mind state to disk. Optionally specify a session ID to associate."
-    )]
+    #[tool(description = "Save mind state to disk")]
     pub(crate) async fn tdg_save_mind_state(
         &self,
         Parameters(params): Parameters<SaveMindStateParams>,
@@ -2283,7 +2273,7 @@ Do NOT include any text outside the JSON block."#
         .unwrap_or_default())
     }
 
-    #[tool(description = "Load mind state from disk and return a summary of the loaded data")]
+    #[tool(description = "Load mind state from disk")]
     pub(crate) async fn tdg_load_mind_state(
         &self,
         Parameters(_params): Parameters<LoadMindStateParams>,
@@ -2311,7 +2301,7 @@ Do NOT include any text outside the JSON block."#
         .unwrap_or_default())
     }
 
-    #[tool(description = "Get the current project context string")]
+    #[tool(description = "Get project context")]
     pub(crate) async fn tdg_get_project_context(&self) -> Result<String, McpError> {
         if self.lean_guard()? {
             return Ok(
@@ -2329,7 +2319,7 @@ Do NOT include any text outside the JSON block."#
         .unwrap_or_default())
     }
 
-    #[tool(description = "Set the project context string and persist to disk")]
+    #[tool(description = "Set project context string")]
     pub(crate) async fn tdg_set_project_context(
         &self,
         Parameters(params): Parameters<SetProjectContextParams>,
