@@ -63,7 +63,7 @@ pub struct QueryEventsParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateParams {
-    #[schemars(description = "Node type (observation, action, constraint, telos, etc.)")]
+    #[schemars(description = "Node type")]
     pub node_type: String,
     #[schemars(description = "Node name")]
     pub name: String,
@@ -81,9 +81,9 @@ pub struct CreateParams {
     pub lifecycle_state: Option<String>,
     #[schemars(description = "Source identifier")]
     pub source: Option<String>,
-    #[schemars(description = "Comma-separated target IDs for BLOCKS edges")]
+    #[schemars(description = "Block target IDs")]
     pub blocks_targets: Option<String>,
-    #[schemars(description = "Comma-separated target IDs for EVIDENCE edges")]
+    #[schemars(description = "Evidence target IDs")]
     pub evidence_targets: Option<String>,
 }
 
@@ -191,7 +191,7 @@ pub struct GetRelatedParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MaintenanceParams {
-    #[schemars(description = "Maintenance phase: hygiene, archive, or all")]
+    #[schemars(description = "Phase: hygiene, archive, or all")]
     pub phase: Option<String>,
     #[schemars(description = "Run full maintenance")]
     pub full: Option<bool>,
@@ -281,7 +281,7 @@ pub struct GraphStatsParams {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SaveMindStateParams {
-    #[schemars(description = "Optional session ID to associate with the saved state")]
+    #[schemars(description = "Session ID to associate")]
     pub session_id: Option<String>,
 }
 
@@ -306,7 +306,7 @@ pub struct PrefetchParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExportParams {
-    #[schemars(description = "Output file path (default: tdg_export.json)")]
+    #[schemars(description = "Output file path")]
     pub output_path: Option<String>,
     #[schemars(description = "Include events in export (default: true)")]
     pub include_events: Option<bool>,
