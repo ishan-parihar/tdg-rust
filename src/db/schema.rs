@@ -53,6 +53,9 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
 
     conn.execute_batch(MIGRATE_TRIGGERS)?;
 
+    // Phase 5: New tables (mutation_log, schema_meta, leases)
+    conn.execute_batch(MIGRATE_NEW_TABLES)?;
+
     Ok(())
 }
 
@@ -242,6 +245,41 @@ CREATE TABLE IF NOT EXISTS events (
 );
 "#;
 
+const MIGRATE_NEW_TABLES: &str = r#"
+-- Mutation log (audit trail for all graph mutations)
+CREATE TABLE IF NOT EXISTS mutation_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    session_id TEXT,
+    mutation_type TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    agent_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_mutation_timestamp ON mutation_log(timestamp);
+CREATE INDEX IF NOT EXISTS idx_mutation_target ON mutation_log(target_type, target_id);
+
+-- Schema versioning
+CREATE TABLE IF NOT EXISTS schema_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('version', '1');
+
+-- Lease management (domain-based locking)
+CREATE TABLE IF NOT EXISTS leases (
+    domain TEXT PRIMARY KEY,
+    holder_id TEXT NOT NULL,
+    acquired_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    renewal_count INTEGER DEFAULT 0
+);
+"#;
+
 const MIGRATE_TRIGGERS: &str = r#"
 -- Event triggers for nodes
 CREATE TRIGGER IF NOT EXISTS nodes_events_ai AFTER INSERT ON nodes BEGIN
@@ -344,6 +382,9 @@ mod tests {
         assert!(tables.contains(&"events".to_string()));
         assert!(tables.contains(&"nodes_fts".to_string()));
         assert!(tables.contains(&"health_checks".to_string()));
+        assert!(tables.contains(&"mutation_log".to_string()));
+        assert!(tables.contains(&"schema_meta".to_string()));
+        assert!(tables.contains(&"leases".to_string()));
     }
 
     #[test]

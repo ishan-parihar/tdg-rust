@@ -28,7 +28,7 @@
 //! │  db (SQLite+WAL) · eventsourcing · schema        │
 //! ├─────────────────────────────────────────────────┤
 //! │              Observability                       │
-//! │  audit · circuit_breaker · score · validation    │
+//! │  audit · circuit_breaker · validation              │
 //! └─────────────────────────────────────────────────┘
 //! ```
 //!
@@ -53,7 +53,6 @@
 //! | [`audit`] | Anomaly detection, health checks, audit bundles |
 //! | [`circuit_breaker`] | Failure-threshold circuit breaker for write operations |
 //! | [`eventsourcing`] | Event journal, replay engine, snapshot management |
-//! | [`score`] | Multi-source score reconciliation with provenance |
 //! | [`telearchy`] | Telearchy engine for evidence collection and reporting |
 //! | [`digestion`] | Digestion engine for processing raw observations |
 //! | [`llm`] | LLM integration for reflection and synthesis |
@@ -122,13 +121,13 @@ pub mod hrr;
 pub mod hrr_retriever;
 pub mod knowledge;
 pub mod llm;
+pub mod maintenance;
 pub mod mcp;
 pub mod mind;
 pub mod models;
 pub mod ops;
 pub mod plugins;
 pub mod schema;
-pub mod score;
 pub mod scripts;
 pub mod telearchy;
 #[cfg(test)]
@@ -155,5 +154,4 @@ pub use mind::sections::{
 pub use mind::terrain::{discover_skills_for_terrain, generate_terrain_context};
 pub use models::{Edge, NewEdge, NewNode, Node, NodeQuery};
 pub use schema::{CatalystType, DigestionStatus, Quadrant, Stage, TelosLevel};
-pub use score::{ProvenancedScore, ScoreReconciliationEngine, SourceLayer};
 pub use telearchy::{EvidenceCollector, TelearchyEngine, TelearchyReport};

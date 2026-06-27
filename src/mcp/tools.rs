@@ -198,6 +198,12 @@ pub struct MaintenanceParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct SelfManageParams {
+    #[schemars(description = "Dry run mode (default: true)")]
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct BankParams {
     #[schemars(description = "Action: list, set_context, or get_nodes")]
     pub action: Option<String>,
@@ -1466,6 +1472,35 @@ impl TdgServer {
             );
         }
         Ok(serde_json::to_string(&json!(report)).unwrap_or_default())
+    }
+
+    #[tool(description = "Run autonomous self-management: health check → janitor → enricher → archiver with before/after health scoring")]
+    pub(crate) async fn tdg_self_manage(
+        &self,
+        Parameters(params): Parameters<SelfManageParams>,
+    ) -> Result<String, McpError> {
+        if self.lean_guard()? {
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
+        }
+        let dry_run = params.dry_run.unwrap_or(true);
+        let conn = get_conn(&self.pool)?;
+        let manager = crate::maintenance::SelfManager::new(&conn);
+        let report = manager.run(dry_run).map_err(mcp_err)?;
+        Ok(serde_json::to_string(&json!({
+            "dry_run": report.dry_run,
+            "health_before": report.health_before.as_ref().map(|h| h.health_score),
+            "health_after": report.health_after.as_ref().map(|h| h.health_score),
+            "health_delta": report.health_delta,
+            "janitor": report.janitor.as_ref().map(|j| format!("{:?}", j)),
+            "enricher": report.enricher.as_ref().map(|e| format!("{:?}", e)),
+            "archiver": report.archiver.as_ref().map(|a| format!("{:?}", a)),
+            "duration_seconds": report.duration_seconds,
+            "succeeded": report.succeeded,
+            "failed": report.failed,
+        }))
+        .unwrap_or_default())
     }
 
     #[tool(description = "Introspect the database schema (tables, columns, row counts)")]
