@@ -798,6 +798,50 @@ impl TdgServer {
         Ok(format!("Imported {} nodes, {} edges", nodes_imported, edges_imported))
     }
 
+    #[tool(description = "Check graph health — coverage metrics, edge noise, orphan count, DB size")]
+    pub(crate) async fn tdg_graph_health(
+        &self,
+    ) -> Result<String, McpError> {
+        if self.lean_guard()? {
+            return Ok(json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string());
+        }
+        let conn = get_conn(&self.pool)?;
+
+        let node_count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0)).unwrap_or(0);
+        let edge_count: i64 = conn.query_row("SELECT COUNT(*) FROM edges WHERE valid_to IS NULL", [], |r| r.get(0)).unwrap_or(0);
+        let fts_count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes_fts", [], |r| r.get(0)).unwrap_or(0);
+        let emb_count: i64 = conn.query_row("SELECT COUNT(*) FROM embeddings", [], |r| r.get(0)).unwrap_or(0);
+        let mentions: i64 = conn.query_row("SELECT COUNT(*) FROM edges WHERE edge_type = 'MENTIONS' AND valid_to IS NULL", [], |r| r.get(0)).unwrap_or(0);
+        let orphans: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM edges e WHERE e.valid_to IS NULL AND (e.source_id NOT IN (SELECT id FROM nodes WHERE valid_to IS NULL) OR e.target_id NOT IN (SELECT id FROM nodes WHERE valid_to IS NULL))",
+            [], |r| r.get(0),
+        ).unwrap_or(0);
+        let event_count: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap_or(0);
+
+        let fts_coverage = if node_count > 0 { fts_count as f64 / node_count as f64 } else { 1.0 };
+        let emb_coverage = if node_count > 0 { emb_count as f64 / node_count as f64 } else { 1.0 };
+        let edge_noise = if edge_count > 0 { mentions as f64 / edge_count as f64 } else { 0.0 };
+
+        let db_size: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0)).unwrap_or(0)
+            * conn.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap_or(4096);
+
+        let health_score = (fts_coverage * 0.25 + emb_coverage * 0.25 + (1.0 - edge_noise) * 0.15
+            + (1.0 - (orphans as f64 / (orphans + 100).max(1) as f64)) * 0.10
+            + if node_count > 0 { 0.25 } else { 0.0 });
+
+        Ok(json!({
+            "node_count": node_count,
+            "edge_count": edge_count,
+            "fts_coverage": format!("{:.1}%", fts_coverage * 100.0),
+            "embedding_coverage": format!("{:.1}%", emb_coverage * 100.0),
+            "edge_noise": format!("{:.1}%", edge_noise * 100.0),
+            "orphan_count": orphans,
+            "event_count": event_count,
+            "db_size_mb": format!("{:.1}", db_size as f64 / 1024.0 / 1024.0),
+            "health_score": format!("{:.2}", health_score),
+        }).to_string())
+    }
+
     #[tool(description = "Retrieve details for a specific node with optional context")]
     pub(crate) async fn tdg_get_node(
         &self,
