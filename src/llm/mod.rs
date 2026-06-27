@@ -1,6 +1,5 @@
 pub mod anthropic;
 pub mod config;
-pub mod fallback;
 pub mod ollama;
 pub mod openai;
 

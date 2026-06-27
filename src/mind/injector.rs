@@ -12,7 +12,6 @@ use crate::error::TdgResult;
 use crate::mind::data_loader::*;
 use crate::mind::diagnostic::{load_diagnostic_thresholds, DiagnosticEngine};
 use crate::mind::feeling::{feeling_state_prompt, FeelingEngine};
-use crate::mind::metrics::MetricsEngine;
 use crate::mind::sections::*;
 use crate::mind::terrain::{discover_skills_for_terrain, generate_terrain_context};
 
@@ -150,16 +149,6 @@ pub fn generate_prompt(conn: &Connection, cfg: &Config) -> TdgResult<String> {
             sections.push("".to_string());
         }
 
-        let mut metrics_engine = MetricsEngine::new();
-        let wisdom_nodes = metrics_engine.detect_wisdom();
-        if !wisdom_nodes.is_empty() {
-            sections.push("## Metrics Wisdom".to_string());
-            sections.push("".to_string());
-            for w in &wisdom_nodes {
-                sections.push(format!("- [{}] {}", w.severity, w.message));
-            }
-            sections.push("".to_string());
-        }
     }
 
     sections.push("## 🧩 Active Skills".to_string());
@@ -218,7 +207,7 @@ pub fn generate_prompt(conn: &Connection, cfg: &Config) -> TdgResult<String> {
             .to_string(),
     );
     sections.push("7. **RUN post-execution audit** immediately after execution".to_string());
-    sections.push("8. **Record to MetricsEngine** and save working memory".to_string());
+    sections.push("8. **Save working memory**".to_string());
     sections.push("".to_string());
     sections.push(
         "**You are the navigator. The terrain and the dashboard are your maps.**".to_string(),

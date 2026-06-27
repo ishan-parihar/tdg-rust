@@ -26,7 +26,6 @@ axum = { version = "0.8", features = ["json"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
-futures = "0.3"
 
 # Linear algebra (HRR)
 ndarray = { version = "0.16", features = ["serde"] }
@@ -44,7 +43,6 @@ clap = { version = "4", features = ["derive"] }
 # Environment
 dotenvy = "0.15"
 shellexpand = "3"
-dirs = "5"
 
 # Configuration (YAML + JSON + env vars)
 figment = { version = "0.10", features = ["yaml", "toml", "json", "env"] }
@@ -75,11 +73,6 @@ tempfile = "3"
 petgraph = { version = "0.8", features = ["serde-1"] }
 rustworkx-core = "0.17"
 leiden-rs = "0.8"
-
-# Clustering (observation pattern extraction)
-linfa = "0.8.1"
-linfa-clustering = "0.8.1"
-linfa-preprocessing = "0.8.1"
 
 # MCP protocol
 rmcp = { version = "1.7.0", features = ["server", "schemars", "transport-io", "transport-streamable-http-server"] }
