@@ -264,6 +264,118 @@ mod onnx_impl {
     }
 }
 
+// ── Feature-gated GGUF Implementation ────────────────────────────────
+
+/// GGUF embedding dimension (EmbeddingGemma-300M).
+pub const GGUF_EMBEDDING_DIM: usize = 768;
+
+#[cfg(feature = "gguf")]
+pub mod gguf {
+    use super::*;
+    use crate::error::{TdgError, TdgResult};
+    use llama_cpp::{EmbeddingsParams, LlamaModel, LlamaParams};
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    static MODEL_CACHE: OnceLock<Arc<Mutex<Option<LlamaModel>>>> = OnceLock::new();
+
+    fn get_model() -> TdgResult<std::sync::Arc<std::sync::Mutex<Option<LlamaModel>>>> {
+        Ok(MODEL_CACHE
+            .get_or_init(|| Arc::new(Mutex::new(None)))
+            .clone())
+    }
+
+    pub fn init(model_path: Option<&str>) -> TdgResult<()> {
+        let path = model_path
+            .map(String::from)
+            .unwrap_or_else(|| {
+                std::env::var("TDG_GGUF_MODEL_PATH").unwrap_or_else(|_| {
+                    "models/embeddinggemma-300m/embeddinggemma-300m-Q4_0.gguf".into()
+                })
+            });
+
+        let cache = get_model()?;
+        let mut guard = cache.lock().map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
+
+        if guard.is_some() {
+            return Ok(());
+        }
+
+        let model = LlamaModel::load_from_file(&path, LlamaParams::default())
+            .map_err(|e| TdgError::Custom(format!("Failed to load GGUF model: {e}")))?;
+
+        *guard = Some(model);
+        Ok(())
+    }
+
+    pub fn embed(text: &str) -> TdgResult<EmbeddingResult> {
+        let cache = get_model()?;
+        let guard = cache.lock().map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
+        let model = guard.as_ref().ok_or_else(|| {
+            TdgError::Custom("GGUF model not loaded. Call init() first.".into())
+        })?;
+
+        let embeddings = model
+            .embeddings(
+                &[text],
+                EmbeddingsParams {
+                    n_threads: 4,
+                    n_threads_batch: 4,
+                },
+            )
+            .map_err(|e| TdgError::Custom(format!("GGUF embedding failed: {e}")))?;
+
+        let vector = embeddings
+            .into_iter()
+            .next()
+            .ok_or_else(|| TdgError::Custom("No embedding returned".into()))?;
+
+        Ok(EmbeddingResult {
+            vector,
+            token_count: text.split_whitespace().count(),
+        })
+    }
+
+    pub fn embed_batch(texts: &[&str]) -> TdgResult<Vec<EmbeddingResult>> {
+        let cache = get_model()?;
+        let guard = cache.lock().map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
+        let model = guard.as_ref().ok_or_else(|| {
+            TdgError::Custom("GGUF model not loaded. Call init() first.".into())
+        })?;
+
+        let all_embeddings = model
+            .embeddings(
+                texts,
+                EmbeddingsParams {
+                    n_threads: 4,
+                    n_threads_batch: 4,
+                },
+            )
+            .map_err(|e| TdgError::Custom(format!("GGUF batch embedding failed: {e}")))?;
+
+        Ok(all_embeddings
+            .into_iter()
+            .zip(texts.iter())
+            .map(|(vector, text)| EmbeddingResult {
+                vector,
+                token_count: text.split_whitespace().count(),
+            })
+            .collect())
+    }
+
+    pub fn reset() {
+        if let Ok(mut guard) = MODEL_CACHE
+            .get_or_init(|| Arc::new(Mutex::new(None)))
+            .lock()
+        {
+            *guard = None;
+        }
+    }
+}
+
+// Re-export GGUF only when ONNX is not also enabled (avoids symbol collision).
+#[cfg(all(feature = "gguf", not(feature = "onnx")))]
+pub use gguf::*;
+
 // ── Feature-disabled stubs ────────────────────────────────────────────
 
 #[cfg(not(feature = "onnx"))]

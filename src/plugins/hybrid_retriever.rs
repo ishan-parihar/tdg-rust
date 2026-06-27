@@ -114,7 +114,7 @@ impl HybridRetriever {
             results = self.type_search(conn, node_type, limit)?;
         }
 
-        let embedding_map = self.build_embedding_map(conn, &results);
+        let embedding_map = self.build_embedding_map(conn, &results, query);
 
         let query_tokens = self.tokenize(query);
         let mut scored: Vec<SearchResult> = results
@@ -186,12 +186,13 @@ impl HybridRetriever {
         &self,
         conn: &Connection,
         nodes: &[Node],
+        query: &str,
     ) -> std::collections::HashMap<String, f64> {
         if nodes.is_empty() {
             return std::collections::HashMap::new();
         }
 
-        let query_vec = match self.get_query_embedding_stub(conn) {
+        let query_vec = match self.get_query_embedding(query) {
             Some(v) => v,
             None => return std::collections::HashMap::new(),
         };
@@ -234,8 +235,8 @@ impl HybridRetriever {
         map
     }
 
-    fn get_query_embedding_stub(&self, _conn: &Connection) -> Option<Vec<f32>> {
-        None
+    fn get_query_embedding(&self, query: &str) -> Option<Vec<f32>> {
+        crate::mind::embedding::embed(query).ok().map(|r| r.vector)
     }
 
     fn fts_search(

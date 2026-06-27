@@ -13,6 +13,8 @@ pub struct JanitorReport {
     pub lifecycle_fixed: i64,
     pub edges_pruned: i64,
     pub parents_backfilled: i64,
+    pub vec_missing: i64,
+    pub vec_embedded: i64,
     pub dry_run: bool,
     pub timestamp: String,
 }
@@ -33,6 +35,8 @@ impl<'a> Janitor<'a> {
             lifecycle_fixed: 0,
             edges_pruned: 0,
             parents_backfilled: 0,
+            vec_missing: 0,
+            vec_embedded: 0,
             dry_run,
             timestamp: Utc::now().to_rfc3339(),
         };
@@ -43,6 +47,7 @@ impl<'a> Janitor<'a> {
         self.validate_lifecycle(&mut report, dry_run);
         self.prune_orphaned_edges(&mut report, dry_run);
         self.backfill_parent_ids(&mut report, dry_run);
+        self.backfill_vec(&mut report, dry_run);
 
         info!("Janitor finished: {}", report_summary(&report));
         Ok(report)
@@ -243,6 +248,75 @@ impl<'a> Janitor<'a> {
             warn!("Parent backfill failed: {}", e);
         }
     }
+
+    fn backfill_vec(&self, report: &mut JanitorReport, dry_run: bool) {
+        let result = (|| -> Result<()> {
+            // Find active nodes without embeddings
+            let nodes: Vec<(String, String, String)> = {
+                let mut stmt = self.conn.prepare(
+                    "SELECT n.id, n.name, COALESCE(n.description, '') FROM nodes n
+                     WHERE n.valid_to IS NULL
+                     AND n.id NOT IN (SELECT node_id FROM embeddings)",
+                )?;
+                let rows = stmt.query_map([], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?;
+                rows.filter_map(|r| r.ok()).collect()
+            };
+
+            report.vec_missing = nodes.len() as i64;
+            if nodes.is_empty() {
+                info!("Vec: no nodes need embeddings");
+                return Ok(());
+            }
+
+            info!(
+                "Vec: {} nodes need embeddings{}",
+                nodes.len(),
+                if dry_run { " (dry run)" } else { "" }
+            );
+
+            if dry_run {
+                return Ok(());
+            }
+
+            let mut embedded = 0i64;
+            for (id, name, desc) in &nodes {
+                let text = if desc.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{name} {desc}")
+                };
+
+                match crate::mind::embedding::embed(&text) {
+                    Ok(result) => {
+                        let blob = crate::db::crud::serialize_vector(&result.vector);
+                        self.conn.execute(
+                            "INSERT OR REPLACE INTO embeddings (node_id, vector, model, updated_at)
+                             VALUES (?1, ?2, 'onnx', datetime('now'))",
+                            rusqlite::params![id, blob],
+                        )?;
+                        let _ = crate::db::crud::store_to_vec(self.conn, id, &result.vector);
+                        embedded += 1;
+                    }
+                    Err(e) => {
+                        warn!("Vec: failed to embed {}: {}", id, e);
+                    }
+                }
+            }
+
+            report.vec_embedded = embedded;
+            report.vec_missing = nodes.len() as i64 - embedded;
+            if embedded > 0 || report.vec_missing > 0 {
+                info!("Vec: {} embedded, {} failed", embedded, report.vec_missing);
+            }
+
+            Ok(())
+        })();
+        if let Err(e) = result {
+            warn!("Vec backfill failed: {}", e);
+        }
+    }
 }
 
 fn report_summary(report: &JanitorReport) -> String {
@@ -263,6 +337,12 @@ fn report_summary(report: &JanitorReport) -> String {
         parts.push(format!(
             "Parents: {} backfilled",
             report.parents_backfilled
+        ));
+    }
+    if report.vec_missing > 0 || report.vec_embedded > 0 {
+        parts.push(format!(
+            "Vec: {} missing, {} embedded",
+            report.vec_missing, report.vec_embedded
         ));
     }
     if parts.is_empty() {

@@ -56,6 +56,14 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     // Phase 5: New tables (mutation_log, schema_meta, leases)
     conn.execute_batch(MIGRATE_NEW_TABLES)?;
 
+    // Phase 6: Vector search (sqlite-vec)
+    let _ = conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS vec_nodes USING vec0(
+            node_id TEXT PRIMARY KEY,
+            embedding FLOAT[768]
+        )"
+    );
+
     Ok(())
 }
 

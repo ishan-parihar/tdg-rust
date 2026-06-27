@@ -1056,6 +1056,57 @@ pub fn search_similar(
     Ok(scored)
 }
 
+/// ANN vector search using sqlite-vec.
+pub fn search_vector(
+    conn: &Connection,
+    query_vector: &[f32],
+    limit: i64,
+) -> TdgResult<Vec<(String, f64)>> {
+    let vec_blob = serialize_vector(query_vector);
+    
+    let sql = "
+        SELECT node_id, distance
+        FROM vec_nodes
+        WHERE embedding MATCH ?1
+        ORDER BY distance
+        LIMIT ?2
+    ";
+    
+    let results = conn.prepare(sql)
+        .and_then(|mut stmt| {
+            stmt.query_map(params![vec_blob, limit], |row| {
+                let node_id: String = row.get(0)?;
+                let distance: f64 = row.get(1)?;
+                Ok((node_id, distance))
+            })?.collect::<Result<Vec<_>, _>>()
+        })
+        .unwrap_or_default();
+    
+    Ok(results)
+}
+
+/// Store embedding to vec_nodes table.
+pub fn store_to_vec(
+    conn: &Connection,
+    node_id: &str,
+    vector: &[f32],
+) -> TdgResult<()> {
+    let vec_blob = serialize_vector(vector);
+    
+    conn.execute(
+        "INSERT OR REPLACE INTO vec_nodes (node_id, embedding) VALUES (?1, ?2)",
+        params![node_id, vec_blob],
+    ).ok();
+    
+    Ok(())
+}
+
+/// Serialize f32 vector to bytes.
+pub fn serialize_vector(vector: &[f32]) -> Vec<u8> {
+    let bytes: Vec<u8> = vector.iter().flat_map(|f| f.to_le_bytes()).collect();
+    bytes
+}
+
 /// BFS shortest path. Matches Python `pathfind()`.
 pub fn pathfind(
     conn: &Connection,

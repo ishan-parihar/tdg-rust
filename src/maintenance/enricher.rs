@@ -89,6 +89,8 @@ pub struct EnricherReport {
     pub drives_enriched: i64,
     pub stages_enriched: i64,
     pub parents_enriched: i64,
+    pub embeddings_enriched: i64,
+    pub embeddings_failed: i64,
     pub dry_run: bool,
     pub timestamp: String,
 }
@@ -107,18 +109,79 @@ impl<'a> Enricher<'a> {
             drives_enriched: 0,
             stages_enriched: 0,
             parents_enriched: 0,
+            embeddings_enriched: 0,
+            embeddings_failed: 0,
             dry_run,
             timestamp: Utc::now().to_rfc3339(),
         };
 
         info!("Enricher starting (dry_run={})", dry_run);
 
+        self.enrich_embeddings(&mut report, dry_run);
         self.enrich_drives(&mut report, dry_run);
         self.enrich_stages(&mut report, dry_run);
         self.enrich_parents(&mut report, dry_run);
 
         info!("Enricher finished: {}", report_summary(&report));
         Ok(report)
+    }
+
+    fn enrich_embeddings(&self, report: &mut EnricherReport, dry_run: bool) {
+        let result = (|| -> Result<()> {
+            let rows: Vec<(String, String, String)> = {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id, name, COALESCE(description, '') FROM nodes
+                     WHERE valid_to IS NULL
+                     AND id NOT IN (SELECT node_id FROM embeddings)",
+                )?;
+                let mapped = stmt.query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?;
+                mapped.filter_map(|r| r.ok()).collect()
+            };
+
+            if rows.is_empty() {
+                return Ok(());
+            }
+
+            for (id, name, description) in &rows {
+                let text = format!(
+                    "{} {}",
+                    name,
+                    if description.is_empty() {
+                        ""
+                    } else {
+                        description
+                    }
+                );
+                match crate::mind::embedding::embed(&text) {
+                    Ok(result) => {
+                        if !dry_run {
+                            let blob = crate::db::crud::serialize_vector(&result.vector);
+                            self.conn.execute(
+                                "INSERT OR REPLACE INTO embeddings (node_id, vector, model, updated_at)
+                                 VALUES (?1, ?2, 'onnx', datetime('now'))",
+                                rusqlite::params![id, blob],
+                            )?;
+                            let _ = crate::db::crud::store_to_vec(&self.conn, id, &result.vector);
+                        }
+                        report.embeddings_enriched += 1;
+                    }
+                    Err(e) => {
+                        warn!("Embedding failed for node {}: {}", id, e);
+                        report.embeddings_failed += 1;
+                    }
+                }
+            }
+            Ok(())
+        })();
+        if let Err(e) = result {
+            warn!("Embedding enrichment failed: {}", e);
+        }
     }
 
     fn enrich_drives(&self, report: &mut EnricherReport, dry_run: bool) {
@@ -264,6 +327,12 @@ fn report_summary(report: &EnricherReport) -> String {
     }
     if report.parents_enriched > 0 {
         parts.push(format!("parents: {}", report.parents_enriched));
+    }
+    if report.embeddings_enriched > 0 {
+        parts.push(format!("embeddings: {}", report.embeddings_enriched));
+    }
+    if report.embeddings_failed > 0 {
+        parts.push(format!("embeddings_failed: {}", report.embeddings_failed));
     }
     let mode = if report.dry_run {
         "DRY RUN"

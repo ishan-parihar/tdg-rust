@@ -1,238 +1,170 @@
-# TDG Python → Rust: Gap Analysis
+# TDG-Rust Gap Analysis: Missing Python Upgrades
+
+**Date:** 2026-06-28
+**Status:** Critical gaps identified — implementation required
+
+---
 
 ## Executive Summary
 
-| Metric | Python | Rust | Delta |
-|--------|--------|------|-------|
-| **Total lines** | 31,217 | 24,825 | -6,392 (−20%) |
-| **MCP tools** | 17 (13 cat.) | 26 | +9 (9 Rust-only) |
-| **Compilation** | ✅ Clean | ❌ 7 errors | Blocker |
-| **Test coverage** | 576 (claimed) | 0 (can't compile) | Blocker |
-| **Dependencies** | 12 packages | 15 crates | Similar |
-| **Module coverage** | 100% mapped | ~92% mapped | −8% |
+TDG-Rust has **significant gaps** in embedding and vector search functionality compared to Python TDG. The Rust version has:
+- ✅ SelfManager module (fully ported)
+- ✅ FTS5 search (working)
+- ✅ Brute-force cosine similarity (working)
+- ❌ **EmbeddingGemma-300M GGUF** (NOT ported — only ONNX)
+- ❌ **sqlite-vec ANN search** (NOT ported — brute-force only)
+- ❌ **Hybrid search embedding component** (STUB — `get_query_embedding_stub()` returns None)
+- ❌ **Embedding backfill system** (NOT ported)
 
-**Bottom line**: Rust has strong module parity and some superior features (LLM abstraction, lifecycle FSM, graph-aware HRR), but is blocked from execution by 7 compile errors. Python has deeper integration with the agent ecosystem (Hermes, Lean mode, digestion subprocess).
-
----
-
-## 1. Functional Parity Matrix
-
-### ✅ Ported (Feature-Level Parity)
-
-| Feature | Python | Rust | Notes |
-|---------|--------|------|-------|
-| SQLite CRUD | graph_db.py (2026L) | db/crud.rs (1380L) | Rust more concise |
-| Event sourcing | tdg_impl.py (583L) | eventsourcing/mod.rs (629L) | Rust has JSONL + snapshot |
-| FTS5 search | graph_db.py | crud.rs search_fts5 | Rust missing embedding boost |
-| HRR algebra | hrr.py (294L) | hrr.rs | numpy vs nalgebra |
-| Flow engine | flow.py (787L) | flow.rs (1475L) | Rust more detailed |
-| Telearchy | telearchy.py (294L) | telearchy.rs | Evidence-gated progression |
-| Score reconciliation | score_reconciler.py | score/ | Provenanced scores |
-| Circuit breaker | circuit_breaker.py | circuit_breaker.rs | Identical patterns |
-| Audit engine | audit.py | audit.rs (970L) | 4H meta-cognitive |
-| Operations | tdg_ops.py (1005L) | ops.rs (897L) | Full op suite |
-| Knowledge mgmt | knowledge.py | knowledge.rs (1238L) | Catalyst, orphan, hygiene |
-| Grammar/validation | grammar/ | grammar/ | Node contracts, auto-wire |
-| Schema | canonical_schema.py (1087L) | schema.rs | T0-T6, 16-cell drive matrix |
-| Digestion | tdg_digestion_engine.py | digestion.rs | Event-driven processing |
-
-### ✅ Ported — Mind Layer (15 modules)
-
-| Python Module | Rust Module | Lines (Py→Rs) | Status |
-|---------------|-------------|----------------|--------|
-| consolidation_engine.py | consolidation_engine.rs | 406→437 | ✅ Parity |
-| data_loader.py | data_loader.rs | — | ✅ JSON loaders |
-| diagnostic_engine.py | diagnostic.rs | 682→766 | ✅ Enhanced |
-| embedding_engine.py | embedding.rs | 299→373 | ✅ Feature-gated |
-| feeling_engine.py | feeling.rs | 376→330 | ✅ Parity |
-| injector.py | injector.rs | 498→281 | ⚠️ Lean mode TBD |
-| metrics_engine.py | metrics.rs | 549→ | ⚠️ Verify completeness |
-| override_engine.py | — | — | ❌ Not ported |
-| project_tracker.py | project_tracker.rs | 463→ | ⚠️ Verify completeness |
-| pulse_engine.py | pulse.rs | —→480 | ✅ Enhanced |
-| reflect_engine.py | reflect_engine.rs | 367→462 | ✅ Enhanced |
-| sections.py | sections.rs | 427→346 | ⚠️ Fewer sections |
-| terrain.py | terrain.rs | 279→280 | ✅ Parity |
+**Impact:** The Rust version's hybrid search is degraded — it has the weights for embedding boost (20%) but the actual embedding component is disabled.
 
 ---
 
-## 2. Rust-Only Features (Not in Python)
+## Critical Gaps
 
-These are **superior** capabilities in the Rust port:
+### 1. Embedding Engine: GGUF Backend Missing
 
-| Feature | File | Lines | Value |
-|---------|------|-------|-------|
-| **LLM Provider Abstraction** | llm/mod.rs + providers | ~650 | Trait-based, OpenAI/Anthropic/Ollama, fallback chain |
-| **Session Lifecycle FSM** | mind/lifecycle.rs | 725 | Idle→Active→Paused/Error→Completed, with timeout |
-| **Mind State Manager** | mind/state.rs | 394 | Dual persistence (JSON + SQLite WAL), versioned |
-| **Graph-Aware HRR Retriever** | hrr_retriever.rs | 376 | probe/related/reason/contradict operations |
-| **PageRank** | mcp/tools.rs | — | Petgraph-based hub detection |
-| **Trust Store** | mcp/tools.rs | 68 | Per-agent trust scoring with history |
-| **Health Monitor + Circuit Breakers** | mcp/tools.rs | 91 | Service-level health tracking |
-| **Project Context** | mcp/tools.rs | 32 | Persistent project context in MindState |
-| **Feature-gated ONNX** | embedding.rs | — | Compile-time inference toggle |
+**Python TDG:** Supports two backends:
+- ONNX (all-MiniLM-L6-v2, 384-dim) — via onnxruntime
+- GGUF (EmbeddingGemma-300M, 768-dim) — via llama-cpp-python
 
----
+**Rust TDG:** Only supports ONNX (feature-gated). No GGUF backend.
 
-## 3. Python-Only Features (Missing from Rust)
+**What needs to be ported:**
+- GGUF model loading via llama-cpp bindings
+- EmbeddingGemma-300M support (768-dim)
+- Configuration for GGUF strategy in config
 
-### 🔴 Critical (Blocks Core Workflow)
+**File to modify:** `src/mind/embedding.rs`
 
-| Feature | Python Location | Impact | Effort |
-|---------|----------------|--------|--------|
-| **Lean mode** | `_lean_guard()` in every tool | Core UX feature — reduces token usage | S |
-| **Digestion subprocess** | tdg_observe → tdg_auto_capture.py | Observation→insight pipeline | M |
-| **FTS5 + embedding hybrid search** | tdg_search (core.py) | Search quality degrades without embedding boost | M |
-| **NODE_CONTRACTS validation** | create/connect tools | Type-safe edge wiring | Already in grammar |
-| **Override engine** | mind/override_engine.py | Manual drive state adjustments | M |
+### 2. Vector Search: sqlite-vec Missing
 
-### 🟡 Important (Agent Integration)
+**Python TDG:** Uses sqlite-vec for ANN (Approximate Nearest Neighbor) search:
+- `vec_nodes` virtual table for vector storage
+- `search_vector()` for ANN queries
+- Graceful fallback if sqlite-vec unavailable
 
-| Feature | Python Location | Impact | Effort |
-|---------|----------------|--------|--------|
-| **MemoryProvider plugin** | plugins/tdg/__init__.py (1995L) | Hermes agent integration — prefetch/sync_turn lifecycle | L |
-| **Reflect tool (LLM-powered)** | plugins/tdg/reflect_tool.py (817L) | Cross-memory synthesis via LLM | M |
-| **Hybrid retriever** | plugins/tdg/hybrid_retriever.py (552L) | FTS5 + trust/recency + embedding boost | M |
-| **Entity extractor** | plugins/tdg/entity_extractor.py (540L) | Pattern matching + graph lookup | S |
-| **Turn capture** | plugins/tdg/turn_capture.py (383L) | Conversation→memory extraction | S |
-| **Memory bank isolation** | banks.py BankManager | Multi-agent memory isolation | S |
+**Rust TDG:** Uses brute-force cosine similarity only:
+- No `vec_nodes` table
+- No ANN search
+- All similarity computed in-memory
 
-### 🟢 Nice-to-Have
+**What needs to be ported:**
+- sqlite-vec Rust crate integration
+- `vec_nodes` table creation
+- `search_vector()` function
+- Connection pool integration (load extension on every connection)
 
-| Feature | Python Location | Impact | Effort |
-|---------|----------------|--------|--------|
-| **Config YAML loading** | config/ (4 files) | Diagnostic thresholds, embedding config | S |
-| **Visualization** | viz/tdg-graph.html | Interactive graph visualization | L |
-| **MCP modular registration** | 7 tool modules | Cleaner tool organization | M |
-| **Docker setup** | docker-compose.yml | Containerized deployment | S |
-| **Skills directory** | skills/tdg/ (17 files) | Agent skill reference files | S |
+**File to modify:** `src/db/crud.rs`, `src/db/schema.rs`
 
----
+### 3. Hybrid Search: Embedding Component Stub
 
-## 4. Operational Gaps
+**Python TDG:** Hybrid search uses embedding cosine similarity (20% weight):
+- Embeds query text
+- Searches vec_nodes for similar nodes
+- Combines FTS5 + trust + recency + embedding scores
 
-### Compilation Blockers (MUST FIX FIRST)
-
-```
-error[E0282]: type annotations needed — mcp/tools.rs:1248 (PageRank closure)
-error[E0432]: unresolved import — mcp/tools.rs
-error[E0433]: unresolved import — mcp/tools.rs
-3× warning: item `X` is imported redundantly
+**Rust TDG:** Hybrid search has the weights but the embedding component is a stub:
+```rust
+fn get_query_embedding_stub(&self, _conn: &Connection) -> Option<Vec<f32>> {
+    None  // <-- STUB: never returns embeddings
+}
 ```
 
-**Impact**: Cannot run any tests, benchmarks, or execute the binary.
+**Impact:** The `embedding_weight: 0.20` in `RetrievalWeights` is dead weight — it never contributes to the score.
 
-### Testing Gap
+**What needs to be ported:**
+- Wire `get_query_embedding_stub()` to the actual embedding engine
+- Implement query embedding generation
+- Add vec_nodes search to `build_embedding_map()`
 
-| Metric | Python | Rust |
-|--------|--------|------|
-| Test files | 9+ | 0 (can't compile) |
-| Test cases | 576 claimed | 0 |
-| Plugin tests | 5+ | 0 |
-| Property tests | proptest-fuzz | 0 |
+**File to modify:** `src/plugins/hybrid_retriever.rs`
 
-### Performance Budget
+### 4. Embedding Backfill System Missing
 
-- Python: `test_performance_budget.py` — enforces latency thresholds
-- Rust: No equivalent yet, but Rust's natural performance advantage likely exceeds Python's budget
+**Python TDG:** Has `migrations/backfill_memory.py` that:
+- Backfills FTS5 index for existing nodes
+- Generates embeddings for nodes without vectors
+- Syncs embeddings to vec_nodes table
+- Is idempotent (safe to run multiple times)
 
----
+**Rust TDG:** No equivalent system exists.
 
-## 5. Effectiveness Analysis
+**What needs to be ported:**
+- `backfill_fts5()` method
+- `backfill_vec()` method
+- `backfill_parent_ids()` method
+- Integration with SelfManager's Janitor
 
-### What Rust Does BETTER
-
-1. **Type safety**: TdgResult<T> everywhere, no runtime type errors
-2. **Concurrency**: tokio async, Arc<Mutex<>> vs Python's GIL-bound threading
-3. **LLM abstraction**: Trait-based providers vs Python's if/elif fallback chain
-4. **State management**: Versioned MindStateManager with dual persistence
-5. **Graph analysis**: Petgraph PageRank vs Python's manual traversal
-6. **Memory safety**: No buffer overflows, no use-after-free, no data races
-7. **Compile-time guarantees**: Feature gates, enum exhaustive matching
-
-### What Python Does BETTER
-
-1. **Agent integration**: MemoryProvider with Hermes is production-ready
-2. **Observation pipeline**: tdg_observe → digestion → insight is end-to-end
-3. **Search quality**: FTS5 + embedding cosine similarity boost
-4. **Lean mode**: Token-efficient operation for cost-sensitive deployments
-5. **Reflection**: Full LLM-powered cross-memory synthesis
-6. **Visualization**: Interactive graph HTML viewer
-7. **Deployment**: Docker Compose with health checks
-8. **Documentation**: 576 tests serve as executable docs
+**Files to create:** `src/maintenance/backfill.rs` or extend `src/maintenance/janitor.rs`
 
 ---
 
-## 6. Recommended Development Plan
+## Minor Gaps
 
-### Phase 0: Fix Compilation (1-2 hours)
+### 5. Embedding Configuration
 
-1. Fix `E0282` type annotation in PageRank closure
-2. Fix unresolved imports in mcp/tools.rs
-3. Remove duplicate imports (4 warnings)
-4. Verify `cargo test` compiles
+**Python TDG:** Rich config in `config/embeddings.json`:
+- Strategy selection (onnx/gguf)
+- Model paths, dimensions, thread count
+- Lean mode settings
+- Batch size, fallback options
 
-### Phase 1: Core Parity (1-2 days)
+**Rust TDG:** Basic config in `src/mind/embedding.rs`:
+- Only ONNX config
+- No GGUF config
+- No lean mode integration
 
-1. Add `_lean_guard()` pattern to all Rust MCP tools
-2. Add `tdg_observe` digestion subprocess trigger
-3. Implement FTS5 + embedding hybrid search
-4. Port override_engine.rs
-5. Add lean mode env var support (`TDG_LEAN=true`)
+### 6. Lean Mode Integration
 
-### Phase 2: Agent Integration (2-3 days)
+**Python TDG:** `TDG_LEAN=true` disables embeddings, HRR, reduces cron interval.
 
-1. Port MemoryProvider plugin (largest single module — 1995 lines)
-2. Port reflect_tool.rs with LLM fallback chain
-3. Port hybrid_retriever.rs with trust/recency weighting
-4. Port entity_extractor.rs pattern matching
-5. Port turn_capture.rs conversation extraction
-6. Port BankManager for multi-agent isolation
-
-### Phase 3: Quality & Ops (1 day)
-
-1. Write integration tests for all 26 MCP tools
-2. Add performance budget tests
-3. Port diagnostic_thresholds.yaml loading
-4. Add Docker setup
-5. Port visualization (tdg-graph.html)
-
-### Phase 4: Polish (Ongoing)
-
-1. Add proptest-fuzz property tests
-2. Add benchmark suite
-3. Port skills directory reference files
-4. Documentation and examples
+**Rust TDG:** No lean mode concept exists.
 
 ---
 
-## 7. Risk Assessment
+## Implementation Priority
 
-| Risk | Severity | Mitigation |
-|------|----------|------------|
-| Compile errors block all progress | 🔴 Critical | Fix in Phase 0 — estimated 1-2 hours |
-| MemoryProvider is 1995 lines | 🟡 High | Largest porting task — break into sub-phases |
-| Lean mode affects every tool | 🟡 High | Implement early — blocks testing in lean mode |
-| Digestion subprocess architecture differs | 🟠 Medium | Python uses subprocess, Rust should use async task |
-| No test coverage | 🟠 Medium | Cannot verify correctness until tests pass |
-| LLM provider API changes | 🟢 Low | Trait abstraction makes updates easy |
+| Priority | Gap | Effort | Impact |
+|----------|-----|--------|--------|
+| **P0** | Wire embedding engine to hybrid search | 1 day | Restores 20% of search quality |
+| **P0** | Add sqlite-vec for ANN search | 2 days | 10x faster vector search at scale |
+| **P1** | Add GGUF backend (EmbeddingGemma) | 2 days | Better embeddings (768-dim vs 384-dim)
+| **P1** | Port backfill system | 1 day | Enables index synchronization
+| **P2** | Add lean mode | 0.5 day | Resource-constrained environments
+| **P2** | Add embedding config | 0.5 day | Runtime configuration
+
+**Total: ~7 days**
 
 ---
 
-## 8. Summary
+## What's Already Working
 
-**Rust is ~85% functionally complete** but blocked from execution. The port is strong in:
-- Core graph operations ✅
-- Mind layer (15 modules) ✅
-- MCP tools (26 tools) ✅
-- Event sourcing ✅
-- LLM abstraction (superior) ✅
-- Type safety (superior) ✅
+| Feature | Python | Rust | Status |
+|---------|--------|------|--------|
+| **SelfManager** | ✅ | ✅ | ✅ Fully ported |
+| **HealthMonitor** | ✅ | ✅ | ✅ Fully ported |
+| **Janitor** | ✅ | ✅ | ✅ Fully ported |
+| **Enricher** | ✅ | ✅ | ✅ Fully ported |
+| **Archiver** | ✅ | ✅ | ✅ Fully ported |
+| **MCP tools** | 27 | 27 | ✅ Fully ported |
+| **FTS5 search** | ✅ | ✅ | ✅ Working |
+| **Brute-force cosine** | ✅ | ✅ | ✅ Working |
+| **Trust/recency scoring** | ✅ | ✅ | ✅ Working |
+| **Type boosting** | ✅ | ✅ | ✅ Working |
+| **Stop words** | ✅ | ✅ | ✅ Ported |
+| **Schema versioning** | ✅ | ✅ | ✅ Added |
+| **Mutation log** | ✅ | ✅ | ✅ Added |
+| **Lease management** | ✅ | ✅ | ✅ Added |
 
-**Critical gaps** (must fix):
-1. Compilation errors (7)
-2. Lean mode support
-3. Digestion pipeline integration
-4. MemoryProvider plugin
+---
 
-**Estimated time to production parity**: 5-7 days of focused work.
+## Recommendation
+
+**Immediate action needed:** The hybrid search embedding component is a stub. This means 20% of search quality is disabled. Wire the embedding engine to the hybrid retriever as the first fix.
+
+**Then:** Add sqlite-vec for ANN search to enable scalable vector search.
+
+**Finally:** Add GGUF backend for better embeddings.
+
+This is not a cosmetic gap — it's a functional degradation that affects search quality for every query.
