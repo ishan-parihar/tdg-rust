@@ -1,0 +1,25 @@
+name: tdg
+version: 2.0.0
+description: >
+  TDG-Rust memory provider — native adapter that communicates with the
+  TDG-Rust MCP server. Replaces the legacy Python TDG core with a
+  high-performance Rust backend.
+
+author: Hermes Agent
+homepage: https://github.com/ishan-parihar/tdg-rust
+
+dependencies:
+  - tdg-rust MCP server (configured in mcp_servers.tdg)
+
+config:
+  tdg_rust_bin:
+    description: Path to tdg-rust binary
+    default: "$HERMES_HOME/tdg-rust/tdg-rust"
+  tdg_mcp_timeout:
+    description: MCP call timeout in seconds
+    default: "30"
+
+tools:
+  - tdg_memory_search
+  - tdg_memory_record
+  - tdg_memory_status
