@@ -167,7 +167,6 @@ impl<'a> Enricher<'a> {
                                  VALUES (?1, ?2, 'onnx', datetime('now'))",
                                 rusqlite::params![id, blob],
                             )?;
-                            let _ = crate::db::crud::store_to_vec(&self.conn, id, &result.vector);
                         }
                         report.embeddings_enriched += 1;
                     }

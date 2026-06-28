@@ -19,7 +19,6 @@ tracing-appender = "0.2"
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
-sqlite-vec = "0.1"
 
 # HTTP/SSE (MCP transport)
 axum = { version = "0.8", features = ["json"] }

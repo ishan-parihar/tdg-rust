@@ -45,12 +45,4 @@ pub mod write_guard;
 pub use pool::ConnectionPool;
 pub use schema::{init_fts, init_schema, run_migrations};
 
-/// Initialize sqlite-vec extension for vector search.
-/// Must be called once before any database connections are created.
-pub fn init_vec_extension() {
-    unsafe {
-        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
-            sqlite_vec::sqlite3_vec_init as *const (),
-        )));
-    }
-}
+
