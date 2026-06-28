@@ -89,7 +89,7 @@ pub struct MindMetrics {
 ///
 /// # Persistence strategy
 ///
-/// 1. **JSON file** (`{state_dir}/mind-state.json`) — primary human-readable snapshot.
+/// 1. **JSON file** (`{state_dir}/tdg-mind-state.json`) — primary human-readable snapshot.
 ///    Written atomically (temp-file + rename) on every mutation.
 /// 2. **SQLite WAL** — recovery layer (future: eventsourcing).
 ///
@@ -107,7 +107,7 @@ pub struct MindStateManager {
 impl MindStateManager {
     /// Create a new manager, loading state from disk or initialising a default.
     pub fn new(config: Config) -> Self {
-        let state_path = config.state_dir.join("mind-state.json");
+        let state_path = config.state_dir.join("tdg-mind-state.json");
         let state = Self::load_or_default(&state_path);
 
         Self {

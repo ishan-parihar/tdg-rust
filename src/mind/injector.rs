@@ -6,6 +6,7 @@
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::sync::atomic::AtomicUsize;
+use tracing::warn;
 
 use crate::config::Config;
 use crate::error::TdgResult;
@@ -22,7 +23,6 @@ pub fn generate_prompt(conn: &Connection, cfg: &Config) -> TdgResult<String> {
     let lean = cfg.lean;
     let mut sections = Vec::new();
 
-    let _meta_view = load_meta_view(cfg);
     let working_memory = load_working_memory(cfg);
     let loop_state = load_loop_state(cfg);
 
@@ -118,19 +118,25 @@ pub fn generate_prompt(conn: &Connection, cfg: &Config) -> TdgResult<String> {
 
     if !lean {
         let diag_engine = DiagnosticEngine::new();
-        if let Ok(report) = diag_engine.analyze(conn, &[], &[]) {
-            let diag_section = diag_engine.diagnostic_prompt_section(&report);
-            if !diag_section.is_empty() {
-                sections.push(diag_section);
+        match diag_engine.analyze(conn, &[], &[]) {
+            Ok(report) => {
+                let diag_section = diag_engine.diagnostic_prompt_section(&report);
+                if !diag_section.is_empty() {
+                    sections.push(diag_section);
+                }
             }
+            Err(e) => warn!("DiagnosticEngine failed: {e}"),
         }
 
         let feeling_engine = FeelingEngine::new();
-        if let Ok(report) = feeling_engine.generate(conn, &[]) {
-            let feeling_section = feeling_state_prompt(&report);
-            if !feeling_section.is_empty() {
-                sections.push(feeling_section);
+        match feeling_engine.generate(conn, &[]) {
+            Ok(report) => {
+                let feeling_section = feeling_state_prompt(&report);
+                if !feeling_section.is_empty() {
+                    sections.push(feeling_section);
+                }
             }
+            Err(e) => warn!("FeelingEngine failed: {e}"),
         }
 
         let social_section = generate_social_terrain_section(conn);

@@ -143,7 +143,8 @@ proptest! {
             ..Default::default()
         };
         let results = crud::query_nodes(&conn, &query).unwrap();
-        prop_assert_eq!(results.len(), names.len());
+        let unique_names: std::collections::HashSet<&str> = names.iter().map(|s| s.as_str()).collect();
+        prop_assert_eq!(results.len(), unique_names.len());
         for r in &results {
             prop_assert_eq!(&r.node_type, "skill");
         }

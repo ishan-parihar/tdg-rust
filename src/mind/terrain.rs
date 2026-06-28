@@ -24,11 +24,24 @@ pub fn discover_skills_for_terrain(conn: &Connection) -> TdgResult<Vec<String>> 
     let top_types: Vec<&String> = sorted.iter().take(3).map(|(k, _)| *k).collect();
 
     let mut skills = Vec::new();
-    for _ntype in &top_types {
-        let skill_edges = crud::get_edges(conn, None, None, Some("ENABLES"), None, 100)?;
+    for ntype in &top_types {
+        // Find skills connected via ENABLES edges to nodes of this type
+        let skill_edges: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT e.source_id
+                 FROM edges e
+                 JOIN nodes n ON e.target_id = n.id
+                 WHERE e.edge_type = 'ENABLES'
+                   AND e.valid_to IS NULL
+                   AND n.node_type = ?1
+                   AND n.valid_to IS NULL",
+            )?;
+            let rows = stmt.query_map([ntype.as_str()], |row| row.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
 
-        for edge in &skill_edges {
-            if let Ok(Some(node)) = crud::get_node(conn, &edge.source_id) {
+        for source_id in &skill_edges {
+            if let Ok(Some(node)) = crud::get_node(conn, source_id) {
                 if node.node_type == "skill" && !skills.contains(&node.name) {
                     skills.push(node.name);
                 }
@@ -39,10 +52,23 @@ pub fn discover_skills_for_terrain(conn: &Connection) -> TdgResult<Vec<String>> 
             break;
         }
 
-        let fallback_edges = crud::get_edges(conn, None, None, Some("PACKAGES"), None, 50)?;
+        // Fallback: PACKAGES edges to nodes of this type
+        let fallback_edges: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT e.source_id
+                 FROM edges e
+                 JOIN nodes n ON e.target_id = n.id
+                 WHERE e.edge_type = 'PACKAGES'
+                   AND e.valid_to IS NULL
+                   AND n.node_type = ?1
+                   AND n.valid_to IS NULL",
+            )?;
+            let rows = stmt.query_map([ntype.as_str()], |row| row.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
 
-        for edge in &fallback_edges {
-            if let Ok(Some(node)) = crud::get_node(conn, &edge.source_id) {
+        for source_id in &fallback_edges {
+            if let Ok(Some(node)) = crud::get_node(conn, source_id) {
                 if node.node_type == "skill" && !skills.contains(&node.name) {
                     skills.push(node.name);
                 }

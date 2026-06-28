@@ -2340,6 +2340,20 @@ Do NOT include any text outside the JSON block."#
         }))
         .unwrap_or_default())
     }
+
+    #[tool(description = "Generate terrain-first context prompt for LLM consumption")]
+    pub(crate) async fn tdg_context(&self) -> Result<String, McpError> {
+        if self.lean_guard()? {
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
+        }
+        let conn = get_conn(&self.pool)?;
+        let cfg = Config::from_env();
+        let prompt =
+            crate::mind::injector::generate_prompt(&conn, &cfg).map_err(mcp_err)?;
+        Ok(prompt)
+    }
 }
 
 async fn try_llm_providers(

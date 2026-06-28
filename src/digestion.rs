@@ -43,7 +43,7 @@ impl<'a> DigestionEngine<'a> {
             self.conn,
             &NewNode {
                 node_type: "observation".to_string(),
-                name: format!("{} observation", catalyst_type),
+                name: format!("{} observation: {}", catalyst_type, &description[..description.len().min(50)]),
                 description: Some(description.to_string()),
                 properties: Some(serde_json::json!({
                     "catalyst_type": catalyst_type.to_string(),

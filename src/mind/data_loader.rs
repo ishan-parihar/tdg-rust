@@ -28,17 +28,6 @@ pub fn load_meta_view(cfg: &Config) -> Value {
     robust_json_load(&cfg.meta_view_cache_path(), serde_json::json!({}))
 }
 
-/// Load drive matrix from meta view.
-///
-/// Python: `load_drive_matrix()` — extracts drive_landscape from meta_view.
-pub fn load_drive_matrix(cfg: &Config) -> Value {
-    let meta = load_meta_view(cfg);
-    meta.get("drive_landscape")
-        .or_else(|| meta.get("drive_matrix"))
-        .cloned()
-        .unwrap_or(serde_json::json!({}))
-}
-
 /// Load constraints from state file.
 ///
 /// Python: `load_constraints()` — reads `hermes-constraints.json`.
@@ -58,33 +47,6 @@ pub fn load_working_memory(cfg: &Config) -> Value {
 /// Python: `load_loop_state()` — reads `hermes-loop-state.json`.
 pub fn load_loop_state(cfg: &Config) -> Value {
     robust_json_load(&cfg.loop_state_path(), serde_json::json!({}))
-}
-
-/// Load polarity state (currently returns empty — placeholder).
-///
-/// Python: `load_polarity()` — reads polarity state file.
-pub fn load_polarity(cfg: &Config) -> Value {
-    let path = cfg.state_dir.join("hermes-polarity.json");
-    robust_json_load(&path, serde_json::json!({}))
-}
-
-/// Load hygiene state (currently returns empty — placeholder).
-///
-/// Python: `load_hygiene()` — reads hygiene state file.
-pub fn load_hygiene(cfg: &Config) -> Value {
-    let path = cfg.state_dir.join("hermes-hygiene.json");
-    robust_json_load(&path, serde_json::json!({}))
-}
-
-/// Load micro slice from meta view.
-///
-/// Python: `load_micro_slice()` — extracts tactical view from meta_view.
-pub fn load_micro_slice(cfg: &Config) -> Value {
-    let meta = load_meta_view(cfg);
-    meta.get("micro_slice")
-        .or_else(|| meta.get("tactical_view"))
-        .cloned()
-        .unwrap_or(serde_json::json!({}))
 }
 
 /// Load recent graph events since last cycle.
