@@ -13,6 +13,75 @@ use crate::models::Node;
 use crate::util::math::cosine_similarity;
 use crate::util::stopwords::STOP_WORDS;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum QueryIntent {
+    Factual,   // Entity lookup → FTS5-first
+    Semantic,  // Concept search → Embedding-first
+    Global,    // Pattern scan → PageRank-like
+    Hybrid,    // Default balanced
+}
+
+fn route_query(query: &str) -> QueryIntent {
+    let lower = query.to_lowercase();
+
+    // Factual: proper nouns, IDs, specific names
+    let uppercase_words = query
+        .split_whitespace()
+        .filter(|w| w.chars().next().map_or(false, |c| c.is_uppercase()))
+        .count();
+    if uppercase_words >= 2 || lower.contains("id:") || lower.contains("node_") {
+        return QueryIntent::Factual;
+    }
+
+    // Global: aggregate/pattern queries
+    let global_words = [
+        "all", "list", "every", "pattern", "trend", "most common", "overview", "summary",
+    ];
+    if global_words.iter().any(|w| lower.contains(w)) {
+        return QueryIntent::Global;
+    }
+
+    // Semantic: abstract concepts
+    let semantic_words = [
+        "how", "why", "explain", "relationship", "concept", "idea", "think", "meaning",
+    ];
+    if semantic_words.iter().any(|w| lower.contains(w)) {
+        return QueryIntent::Semantic;
+    }
+
+    QueryIntent::Hybrid
+}
+
+fn weights_for_intent(intent: QueryIntent) -> RetrievalWeights {
+    match intent {
+        QueryIntent::Factual => RetrievalWeights {
+            fts_weight: 0.60,
+            trust_weight: 0.20,
+            recency_weight: 0.05,
+            term_overlap_weight: 0.10,
+            type_boost_weight: 0.05,
+            embedding_weight: 0.20,
+        },
+        QueryIntent::Semantic => RetrievalWeights {
+            fts_weight: 0.20,
+            trust_weight: 0.25,
+            recency_weight: 0.10,
+            term_overlap_weight: 0.05,
+            type_boost_weight: 0.10,
+            embedding_weight: 0.50,
+        },
+        QueryIntent::Global => RetrievalWeights {
+            fts_weight: 0.10,
+            trust_weight: 0.30,
+            recency_weight: 0.10,
+            term_overlap_weight: 0.05,
+            type_boost_weight: 0.05,
+            embedding_weight: 0.20,
+        },
+        QueryIntent::Hybrid => RetrievalWeights::default(),
+    }
+}
+
 /// Search result with scoring.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
@@ -78,6 +147,9 @@ impl HybridRetriever {
     ) -> TdgResult<Vec<SearchResult>> {
         let limit = limit.min(50);
 
+        let intent = route_query(query);
+        let weights = weights_for_intent(intent);
+
         let fts_query = self.prepare_fts_query(query);
         let fts_results = self.fts_search(conn, &fts_query, limit * 2)?;
 
@@ -128,12 +200,12 @@ impl HybridRetriever {
 
                 let cosine = embedding_map.get(&node.id).copied().unwrap_or(0.0);
 
-                let total_score = self.weights.fts_weight * fts_score
-                    + self.weights.trust_weight * trust_score
-                    + self.weights.recency_weight * recency
-                    + self.weights.term_overlap_weight * overlap
-                    + self.weights.type_boost_weight * type_boost
-                    + self.weights.embedding_weight * cosine;
+                let total_score = weights.fts_weight * fts_score
+                    + weights.trust_weight * trust_score
+                    + weights.recency_weight * recency
+                    + weights.term_overlap_weight * overlap
+                    + weights.type_boost_weight * type_boost
+                    + weights.embedding_weight * cosine;
 
                 let method = if cosine > 0.0 {
                     "hybrid+embedding"
@@ -153,6 +225,17 @@ impl HybridRetriever {
         let mut seen = HashSet::new();
         scored.retain(|r| seen.insert(r.node.id.clone()));
 
+        self.graph_rerank(conn, &mut scored, 0.15);
+
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // 1-hop graph expansion
+        scored = self.expand_1_hop(conn, &scored, 20, 0.3);
+
         scored.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -165,6 +248,30 @@ impl HybridRetriever {
         }
 
         Ok(scored)
+    }
+
+    fn graph_rerank(
+        &self,
+        conn: &Connection,
+        results: &mut Vec<SearchResult>,
+        weight: f64,
+    ) {
+        use crate::db::crud::get_edges;
+
+        for result in results.iter_mut() {
+            let out_edges = get_edges(conn, Some(&result.node.id), None, None, None, 100)
+                .map(|e| e.len() as f64)
+                .unwrap_or(0.0);
+            let in_edges = get_edges(conn, None, Some(&result.node.id), None, None, 100)
+                .map(|e| e.len() as f64)
+                .unwrap_or(0.0);
+            let degree = out_edges + in_edges;
+
+            // Normalize: cap at 20 edges → centrality in [0, 1]
+            let centrality = (degree / 20.0).min(1.0);
+
+            result.score = (1.0 - weight) * result.score + weight * centrality;
+        }
     }
 
     fn build_embedding_map(
@@ -397,6 +504,93 @@ impl HybridRetriever {
         } else {
             0.5 // default mid-score
         }
+    }
+
+    /// Expand top-K results with 1-hop graph neighbors.
+    ///
+    /// For each node in `results`, fetches outgoing and incoming edges,
+    /// retrieves neighbor nodes, and adds them with a decayed score.
+    /// Only edges with weight >= `min_edge_weight` are considered.
+    fn expand_1_hop(
+        &self,
+        conn: &Connection,
+        results: &[SearchResult],
+        max_expansion: usize,
+        min_edge_weight: f64,
+    ) -> Vec<SearchResult> {
+        let mut expanded: Vec<SearchResult> = results.to_vec();
+        let mut seen: HashSet<String> = results.iter().map(|r| r.node.id.clone()).collect();
+        let mut added = 0usize;
+
+        for parent in results {
+            if added >= max_expansion {
+                break;
+            }
+
+            // Outgoing edges (node is source)
+            if let Ok(out_edges) = crate::db::crud::get_edges(
+                conn,
+                Some(&parent.node.id),
+                None,
+                None,
+                None,
+                50,
+            ) {
+                for edge in &out_edges {
+                    if added >= max_expansion {
+                        break;
+                    }
+                    if edge.weight < min_edge_weight || seen.contains(&edge.target_id) {
+                        continue;
+                    }
+                    if let Ok(Some(neighbor)) =
+                        crate::db::crud::get_node(conn, &edge.target_id)
+                    {
+                        let score = parent.score * 0.7;
+                        seen.insert(neighbor.id.clone());
+                        added += 1;
+                        expanded.push(SearchResult {
+                            node: neighbor,
+                            score,
+                            method: "1-hop".to_string(),
+                        });
+                    }
+                }
+            }
+
+            // Incoming edges (node is target)
+            if let Ok(in_edges) = crate::db::crud::get_edges(
+                conn,
+                None,
+                Some(&parent.node.id),
+                None,
+                None,
+                50,
+            ) {
+                for edge in &in_edges {
+                    if added >= max_expansion {
+                        break;
+                    }
+                    if edge.weight < min_edge_weight || seen.contains(&edge.source_id) {
+                        continue;
+                    }
+                    if let Ok(Some(neighbor)) =
+                        crate::db::crud::get_node(conn, &edge.source_id)
+                    {
+                        let score = parent.score * 0.7;
+                        seen.insert(neighbor.id.clone());
+                        added += 1;
+                        expanded.push(SearchResult {
+                            node: neighbor,
+                            score,
+                            method: "1-hop".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        expanded
     }
 }
 

@@ -149,14 +149,12 @@ impl<'a> Enricher<'a> {
             }
 
             for (id, name, description) in &rows {
-                let text = format!(
-                    "{} {}",
-                    name,
-                    if description.is_empty() {
-                        ""
-                    } else {
-                        description
-                    }
+                let text = crate::mind::embedding::build_embedding_text(
+                    &self.conn,
+                    &id,
+                    &name,
+                    &description,
+                    3,
                 );
                 match crate::mind::embedding::embed(&text) {
                     Ok(result) => {

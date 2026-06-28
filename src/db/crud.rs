@@ -65,12 +65,62 @@ pub(crate) fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
+/// Compute live confidence with temporal decay and access reinforcement.
+///
+/// Uses sub-exponential decay (0.8 exponent) to model the human forgetting curve,
+/// plus logarithmic reinforcement from retrieval/helpful counts.
+pub fn compute_live_confidence(
+    base_confidence: f64,
+    created_at: &str,
+    helpful_count: i64,
+    retrieval_count: i64,
+) -> f64 {
+    let now = chrono::Utc::now().naive_utc();
+    let created = chrono::NaiveDateTime::parse_from_str(
+        created_at.replace('Z', "").as_str(),
+        "%Y-%m-%dT%H:%M:%S%.f",
+    )
+    .unwrap_or(now);
+
+    let age_days = (now - created).num_days() as f64;
+
+    // Sub-exponential decay (0.8 exponent matches human forgetting curve)
+    let decay_rate = 0.05; // per-day lambda
+    let decay = (-decay_rate * age_days.powf(0.8)).exp();
+
+    // Access reinforcement: more retrievals = more confidence
+    let reinforcement = 0.1 * (1.0 + (helpful_count + retrieval_count) as f64).ln();
+
+    (base_confidence * decay + reinforcement).clamp(0.0, 1.0)
+}
+
 // ─── Node CRUD ───────────────────────────────────────────────────────────────
 
 /// Create a new node. Returns the created node.
+///
+/// **Entity Resolution**: If a node with the same name and type already exists,
+/// returns the existing node instead of creating a duplicate.
 pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
     check_circuit_breaker()?;
     let _guard = acquire_write_guard(conn)?;
+
+    // Entity resolution: check for existing node with same name and type
+    let existing_id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM nodes WHERE name = ?1 AND node_type = ?2 AND valid_to IS NULL LIMIT 1",
+            params![new.name, new.node_type],
+            |row| row.get(0),
+        )
+        .ok();
+
+    if let Some(existing_id) = existing_id {
+        return get_node(conn, &existing_id)?.ok_or_else(|| {
+            TdgError::Custom(format!(
+                "Entity resolution: node {} exists but could not be retrieved",
+                existing_id
+            ))
+        });
+    }
 
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL",
@@ -152,6 +202,26 @@ pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
     match result {
         Ok(_) => {
             record_write_success();
+
+            // Inline embedding generation (non-blocking, best-effort)
+            #[cfg(feature = "onnx")]
+            {
+                let embed_text = format!(
+                    "{} {}",
+                    new.name,
+                    new.description.as_deref().unwrap_or("")
+                );
+                if let Ok(result) = crate::mind::embedding::embed(&embed_text) {
+                    let blob = serialize_vector(&result.vector);
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO embeddings (node_id, vector, model, updated_at)
+                         VALUES (?1, ?2, 'onnx', datetime('now'))",
+                        rusqlite::params![id, blob],
+                    );
+                }
+                // If embedding fails, node is still created — enricher will backfill later
+            }
+
             get_node(conn, &id)?.ok_or_else(|| {
                 crate::error::TdgError::Custom("Failed to retrieve created node".to_string())
             })
@@ -887,6 +957,11 @@ pub fn query_nodes(conn: &Connection, query: &NodeQuery) -> TdgResult<Vec<Node>>
         param_values.push(Box::new(aid.clone()));
         idx += 1;
     }
+    if let Some(ref q) = query.quadrant {
+        conditions.push(format!("json_extract(quadrants_json, '$.primary') = ?{idx}"));
+        param_values.push(Box::new(q.clone()));
+        idx += 1;
+    }
 
     let where_clause = if conditions.is_empty() {
         String::new()
@@ -919,7 +994,14 @@ pub fn query_nodes(conn: &Connection, query: &NodeQuery) -> TdgResult<Vec<Node>>
 
     let mut nodes = Vec::new();
     for row in rows {
-        nodes.push(row?);
+        let mut node = row?;
+        node.confidence = compute_live_confidence(
+            node.confidence,
+            &node.created_at,
+            node.helpful_count as i64,
+            node.retrieval_count as i64,
+        );
+        nodes.push(node);
     }
     Ok(nodes)
 }

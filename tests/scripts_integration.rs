@@ -328,9 +328,10 @@ fn scripts_reconcile_constraints_empty() {
 fn scripts_reconcile_constraints_dedup() {
     let pool = make_pool();
     pool.with_connection(|conn| {
-        // Create 3 constraints with the same name
+        // Create 3 constraints with the same name — entity resolution returns existing node
+        let mut ids = Vec::new();
         for _ in 0..3 {
-            tdg_rust::db::crud::add_node(
+            let node = tdg_rust::db::crud::add_node(
                 conn,
                 &NewNode {
                     node_type: "constraint".to_string(),
@@ -338,16 +339,20 @@ fn scripts_reconcile_constraints_dedup() {
                     ..Default::default()
                 },
             )?;
+            ids.push(node.id);
         }
+        // All IDs should be the same (entity resolution deduplicates)
+        assert_eq!(ids[0], ids[1]);
+        assert_eq!(ids[1], ids[2]);
         Ok(())
     })
     .unwrap();
 
+    // Reconcile should find no duplicates to dedup (entity resolution prevents them)
     let result = pool
         .with_connection(|conn| scripts::reconcile_constraints(conn))
         .unwrap();
-    // Should have deduped 2 constraints (kept 1, archived 2)
-    assert_eq!(result["constraints_deduped"], 2);
+    assert_eq!(result["constraints_deduped"], 0);
 }
 
 // ─── Sync Skills Script ──────────────────────────────────────────────────────

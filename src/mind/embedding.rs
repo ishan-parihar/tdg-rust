@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "onnx")]
 use std::sync::{Arc, Mutex, OnceLock};
 
+use rusqlite::Connection;
+
 use serde::{Deserialize, Serialize};
 
 // ── Constants ─────────────────────────────────────────────────────────
@@ -404,6 +406,46 @@ pub mod onnx_impl {
 
 #[allow(unused_imports)]
 pub use onnx_impl::*;
+
+/// Build contextual text for embedding.
+/// Combines node name, description, and top-K edge relationships.
+pub fn build_embedding_text(
+    conn: &Connection,
+    node_id: &str,
+    node_name: &str,
+    node_description: &str,
+    max_edges: usize,
+) -> String {
+    let mut parts = Vec::new();
+
+    parts.push(node_name.to_string());
+
+    if !node_description.is_empty() {
+        parts.push(node_description.to_string());
+    }
+
+    if let Ok(edges) =
+        crate::db::crud::get_edges(conn, Some(node_id), None, None, None, max_edges as i64)
+    {
+        let edge_texts: Vec<String> = edges
+            .iter()
+            .take(max_edges)
+            .map(|e| {
+                if let Ok(Some(target)) = crate::db::crud::get_node(conn, &e.target_id) {
+                    format!("{}: {}", e.edge_type, target.name)
+                } else {
+                    format!("{}: {}", e.edge_type, e.target_id)
+                }
+            })
+            .collect();
+
+        if !edge_texts.is_empty() {
+            parts.push(format!("Relationships: {}", edge_texts.join("; ")));
+        }
+    }
+
+    parts.join(" | ")
+}
 
 #[cfg(test)]
 mod tests {
