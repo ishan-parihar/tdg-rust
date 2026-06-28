@@ -2,7 +2,38 @@
 
 Rust implementation of the **Teleological Developmental Graph (TDG)** — a memory infrastructure for AI agents.
 
-> **v0.2.0** | 626 tests passing | 0 clippy warnings | ~98% Python parity
+> **v0.2.1** | 511 tests passing | GraphRAG upgrade | ~98% Python parity
+
+## Quick Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ishan-parihar/tdg-rust/main/install.sh | bash
+```
+
+This downloads the pre-built binary (no compilation needed) and configures the Hermes agent.
+
+<details>
+<summary>Manual install</summary>
+
+```bash
+# Download binary
+curl -LO https://github.com/ishan-parihar/tdg-rust/releases/latest/download/tdg-rust
+chmod +x tdg-rust
+
+# Move to Hermes
+mkdir -p ~/.hermes/tdg-rust
+mv tdg-rust ~/.hermes/tdg-rust/
+
+# Install adapter
+mkdir -p ~/.hermes/plugins/tdg
+curl -fsSL https://raw.githubusercontent.com/ishan-parihar/tdg-rust/main/plugins/tdg/__init__.py -o ~/.hermes/plugins/tdg/__init__.py
+curl -fsSL https://raw.githubusercontent.com/ishan-parihar/tdg-rust/main/plugins/tdg/plugin.yaml -o ~/.hermes/plugins/tdg/plugin.yaml
+
+# Initialize database
+~/.hermes/tdg-rust/tdg-rust init
+```
+
+</details>
 
 ## What is TDG?
 
@@ -269,20 +300,37 @@ cargo bench
 
 ## Deployment
 
+### Hermes Agent (Recommended)
+
+```bash
+# One-command install
+curl -fsSL https://raw.githubusercontent.com/ishan-parihar/tdg-rust/main/install.sh | bash
+
+# Or uninstall
+TDG_UNINSTALL=1 bash install.sh
+```
+
+### Pre-built Binary
+
+Download from [GitHub Releases](https://github.com/ishan-parihar/tdg-rust/releases):
+
+```bash
+# Linux x86_64
+curl -LO https://github.com/ishan-parihar/tdg-rust/releases/latest/download/tdg-rust
+chmod +x tdg-rust
+./tdg-rust --version
+```
+
 ### Docker
 
 ```bash
 docker-compose up -d
 ```
 
-### Binary Deployment
+### Build from Source (Development Only)
 
 ```bash
-# Build static musl binary
 cargo build --release --target x86_64-unknown-linux-musl
-
-# Binary location
-ls -la target/x86_64-unknown-linux-musl/release/tdg-rust
 ```
 
 ### Render.com
