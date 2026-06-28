@@ -27,9 +27,8 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
 
-# Linear algebra (HRR)
+# Linear algebra
 ndarray = { version = "0.16", features = ["serde"] }
-rustfft = "6.1"
 
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
@@ -67,8 +66,7 @@ tempfile = "3"
 
 # Graph algorithms
 petgraph = { version = "0.8", features = ["serde-1"] }
-rustworkx-core = "0.17"
-leiden-rs = "0.8"
+
 
 # MCP protocol
 rmcp = { version = "1.7.0", features = ["server", "schemars", "transport-io", "transport-streamable-http-server"] }

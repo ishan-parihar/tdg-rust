@@ -22,7 +22,7 @@
 //! │  consolidation · reflect · terrain · injector    │
 //! ├─────────────────────────────────────────────────┤
 //! │              Core Graph Engine                   │
-//! │  grammar · flow · hrr                           │
+//! │  grammar · flow                                  │
 //! ├─────────────────────────────────────────────────┤
 //! │              Persistence Layer                   │
 //! │  db (SQLite+WAL) · schema                       │
@@ -43,7 +43,6 @@
 //! | [`mind`] | Consolidation, reflection, terrain context, mind injection |
 //! | [`knowledge`] | Knowledge engine for reasoning over the graph |
 //! | [`flow`] | Execution flow engine for graph traversals |
-//! | [`hrr`] | Holographic Reduced Representation vectors (1024-dim) |
 //! | [`graph_projection`] | Subgraph projection and visualization |
 //! | [`models`] | Core data types: [`Node`], [`Edge`], [`NewNode`], [`NewEdge`] |
 //! | [`schema`] | Enums: [`Stage`], [`Quadrant`], [`CatalystType`], [`TelosLevel`] |
@@ -55,7 +54,6 @@
 //! | [`digestion`] | Digestion engine for processing raw observations |
 //! | [`llm`] | LLM integration for reflection and synthesis |
 //! | [`scripts`] | CLI scripts and automation |
-//! | [`visualization`] | Graph visualization output |
 //! | [`validation`] | Node contract validation |
 //!
 //! ## Quick Start
@@ -111,7 +109,6 @@ pub mod error;
 pub mod flow;
 pub mod grammar;
 pub mod graph_projection;
-pub mod hrr;
 pub mod knowledge;
 pub mod llm;
 pub mod maintenance;
@@ -124,7 +121,6 @@ pub mod scripts;
 pub mod telearchy;
 pub mod util;
 pub mod validation;
-pub mod visualization;
 
 pub use audit::{Anomaly, AnomalyRegistry, AuditBundle, AuditEngine, AuditReport, HealthStatus};
 pub use circuit_breaker::{CircuitBreaker, CircuitState};
