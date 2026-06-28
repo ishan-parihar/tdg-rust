@@ -22,10 +22,10 @@
 //! │  consolidation · reflect · terrain · injector    │
 //! ├─────────────────────────────────────────────────┤
 //! │              Core Graph Engine                   │
-//! │  grammar · flow · hrr · graph_algorithms         │
+//! │  grammar · flow · hrr                           │
 //! ├─────────────────────────────────────────────────┤
 //! │              Persistence Layer                   │
-//! │  db (SQLite+WAL) · eventsourcing · schema        │
+//! │  db (SQLite+WAL) · schema                       │
 //! ├─────────────────────────────────────────────────┤
 //! │              Observability                       │
 //! │  audit · circuit_breaker · validation              │
@@ -44,7 +44,6 @@
 //! | [`knowledge`] | Knowledge engine for reasoning over the graph |
 //! | [`flow`] | Execution flow engine for graph traversals |
 //! | [`hrr`] | Holographic Reduced Representation vectors (1024-dim) |
-//! | [`graph_algorithms`] | PageRank, shortest path, community detection |
 //! | [`graph_projection`] | Subgraph projection and visualization |
 //! | [`models`] | Core data types: [`Node`], [`Edge`], [`NewNode`], [`NewEdge`] |
 //! | [`schema`] | Enums: [`Stage`], [`Quadrant`], [`CatalystType`], [`TelosLevel`] |
@@ -52,11 +51,9 @@
 //! | [`error`] | Unified error type [`TdgError`] and [`TdgResult`] |
 //! | [`audit`] | Anomaly detection, health checks, audit bundles |
 //! | [`circuit_breaker`] | Failure-threshold circuit breaker for write operations |
-//! | [`eventsourcing`] | Event journal, replay engine, snapshot management |
 //! | [`telearchy`] | Telearchy engine for evidence collection and reporting |
 //! | [`digestion`] | Digestion engine for processing raw observations |
 //! | [`llm`] | LLM integration for reflection and synthesis |
-//! | [`ops`] | Operational utilities |
 //! | [`scripts`] | CLI scripts and automation |
 //! | [`visualization`] | Graph visualization output |
 //! | [`validation`] | Node contract validation |
@@ -111,37 +108,30 @@ pub mod config;
 pub mod db;
 pub mod digestion;
 pub mod error;
-pub mod eventsourcing;
 pub mod flow;
 pub mod grammar;
-pub mod graph_algorithms;
 pub mod graph_projection;
 pub mod hrr;
-pub mod hrr_retriever;
 pub mod knowledge;
 pub mod llm;
 pub mod maintenance;
 pub mod mcp;
 pub mod mind;
 pub mod models;
-pub mod ops;
 pub mod plugins;
 pub mod schema;
 pub mod scripts;
 pub mod telearchy;
-#[cfg(test)]
-pub mod test_utils;
 pub mod util;
 pub mod validation;
 pub mod visualization;
 
 pub use audit::{Anomaly, AnomalyRegistry, AuditBundle, AuditEngine, AuditReport, HealthStatus};
-pub use circuit_breaker::{CircuitBreaker, CircuitState, PreWriteSnapshot, TransactionSnapshot};
+pub use circuit_breaker::{CircuitBreaker, CircuitState};
 pub use config::Config;
 pub use db::{init_fts, init_schema, run_migrations, ConnectionPool};
 pub use digestion::DigestionEngine;
 pub use error::{TdgError, TdgResult};
-pub use eventsourcing::{EventJournal, ReplayEngine, SnapshotManager};
 pub use grammar::{auto_wire_edges, NodeBlueprint, NodeGrammar};
 pub use graph_projection::GraphProjection;
 pub use mind::consolidation_engine::{ConsolidationEngine, ConsolidationReport};

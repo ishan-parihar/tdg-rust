@@ -5,8 +5,6 @@
 use tdg_rust::db::{init_fts, init_schema, run_migrations, ConnectionPool};
 use tdg_rust::knowledge;
 use tdg_rust::models::{NewEdge, NewNode, NodeQuery};
-use tdg_rust::ops;
-// scripts module tested via ops pipeline
 use serde_json::json;
 use tdg_rust::flow::FlowDriveState;
 use tdg_rust::mind::diagnostic::DiagnosticEngine;
@@ -328,75 +326,6 @@ fn integration_mind_pulse_diagnostic() {
     .unwrap();
 }
 
-// ─── Ops Pipeline ────────────────────────────────────────────────────────────
-
-#[test]
-fn integration_ops_reconcile_micro_macro() {
-    let pool = make_pool();
-    pool.with_connection(|conn| {
-        let telos = tdg_rust::db::crud::add_node(
-            conn,
-            &NewNode {
-                node_type: "telos".to_string(),
-                name: "Ops Telos".to_string(),
-                ..Default::default()
-            },
-        )?;
-        let action = tdg_rust::db::crud::add_node(
-            conn,
-            &NewNode {
-                node_type: "action".to_string(),
-                name: "Ops Action".to_string(),
-                ..Default::default()
-            },
-        )?;
-        tdg_rust::db::crud::add_edge(
-            conn,
-            &NewEdge {
-                source_id: telos.id.clone(),
-                target_id: action.id.clone(),
-                edge_type: "DECOMPOSES_TO".to_string(),
-                ..Default::default()
-            },
-        )?;
-
-        // Reconcile
-        let reconciled = ops::reconcile(conn)?;
-        assert_eq!(reconciled["status"], "completed");
-
-        // Micro slice
-        let micro = ops::micro_slice(conn)?;
-        assert_eq!(micro["summary"]["total_actions"], 1);
-
-        // Macro slice
-        let macro_result = ops::macro_slice(conn, None)?;
-        assert!(macro_result.get("health").is_some());
-
-        // Stage status
-        let stage = ops::stage_status(conn)?;
-        assert_eq!(stage["total_teloi"], 1);
-
-        // Drive matrix
-        let matrix = ops::drive_matrix_report(conn, Some(&telos.id))?;
-        assert!(matrix.get("cells").is_some());
-
-        // Record action
-        let recorded = ops::record_action(conn, "test_action", Some("UR"), None, Some("notes"))?;
-        assert!(recorded.get("action_id").is_some());
-
-        // Flow up
-        let flowed = ops::flow_up(conn, &action.id)?;
-        assert!(flowed["parents_updated"].as_i64().unwrap() >= 0);
-
-        // Hygiene
-        let hygiene = ops::hygiene(conn)?;
-        assert!(hygiene.get("orphans").is_some());
-
-        Ok(())
-    })
-    .unwrap();
-}
-
 // ─── End-to-End: Create → Connect → Query → Knowledge → Archive ──────────────
 
 #[test]
@@ -481,29 +410,23 @@ fn integration_end_to_end_workflow() {
             rusqlite::params![drive_state.to_json().to_string(), telos.id],
         )?;
 
-        // 6. Run reconcile
-        ops::reconcile(conn)?;
-
-        // 7. Run hygiene
-        ops::hygiene(conn)?;
-
-        // 8. Run diagnostics
+        // 6. Run diagnostics
         let diag = DiagnosticEngine::new();
         let report = diag.analyze(conn, &[], &[])?;
         assert!(report.ghost_nodes >= 0);
 
-        // 9. Run pulse
+        // 7. Run pulse
         let pulse = PulseEngine::new();
         let pulses = pulse.pulse(conn, &[])?;
         let summary = pulse.summarize(&pulses);
         assert!(summary.get("total_gaps").is_some());
 
-        // 10. Generate hygiene report
+        // 8. Generate hygiene report
         let hygiene = knowledge::generate_hygiene_report(conn)?;
         assert!(hygiene.total_nodes >= 4);
         assert!(hygiene.total_edges >= 3);
 
-        // 11. Full stats check
+        // 9. Full stats check
         let node_count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL",
             [],
