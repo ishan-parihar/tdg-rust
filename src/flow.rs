@@ -421,53 +421,6 @@ fn intrinsic_signatures() -> HashMap<&'static str, IntrinsicSig> {
     m
 }
 
-/// Compute quadrant-modulated intrinsic signature for a node type.
-///
-/// `quadrant` defaults to "LR" if not found.
-pub fn get_intrinsic_signature(node_type: &str, quadrant: &str) -> FlowDriveState {
-    let sigs = intrinsic_signatures();
-    let base = sigs
-        .get(node_type)
-        .unwrap_or_else(|| sigs.get("observation").unwrap());
-    let mods = QUADRANT_MODULATORS
-        .get(quadrant)
-        .unwrap_or_else(|| QUADRANT_MODULATORS.get("LR").unwrap());
-
-    let mod_eros = mods.get("eros").copied().unwrap_or(0.5);
-    let mod_agape = mods.get("agape").copied().unwrap_or(0.5);
-    let mod_agency = mods.get("agency").copied().unwrap_or(0.5);
-    let mod_communion = mods.get("communion").copied().unwrap_or(0.5);
-
-    FlowDriveState {
-        eros: DualPoleDrive {
-            positive_pole: (base.eros.0 * mod_eros * 2.0).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
-            negative_pole: (base.eros.1 * mod_eros).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
-            availability: (mod_eros * 2.0).min(1.0),
-            blind_spot: false,
-        },
-        agape: DualPoleDrive {
-            positive_pole: (base.agape.0 * mod_agape * 2.0).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
-            negative_pole: (base.agape.1 * mod_agape).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
-            availability: (mod_agape * 2.0).min(1.0),
-            blind_spot: false,
-        },
-        agency: DualPoleDrive {
-            positive_pole: (base.agency.0 * mod_agency * 2.0)
-                .clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
-            negative_pole: (base.agency.1 * mod_agency).clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
-            availability: (mod_agency * 2.0).min(1.0),
-            blind_spot: false,
-        },
-        communion: DualPoleDrive {
-            positive_pole: (base.communion.0 * mod_communion * 2.0)
-                .clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
-            negative_pole: (base.communion.1 * mod_communion)
-                .clamp(MIN_DRIVE_VALUE, MAX_DRIVE_VALUE),
-            availability: (mod_communion * 2.0).min(1.0),
-            blind_spot: false,
-        },
-    }
-}
 
 // ─── Edge Contracts ──────────────────────────────────────────────────────────
 
@@ -1359,19 +1312,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn get_intrinsic_signature_quadrant_modulation() {
-        // LR quadrant (default) — action node
-        let lr = get_intrinsic_signature("action", "LR");
-        // UL quadrant — should differ from LR
-        let ul = get_intrinsic_signature("action", "UL");
-        // Modulators differ, so drive values should differ
-        assert_ne!(lr.eros.positive_pole, ul.eros.positive_pole);
-
-        // Unknown quadrant falls back to LR
-        let fallback = get_intrinsic_signature("action", "XX");
-        assert_eq!(fallback.eros.positive_pole, lr.eros.positive_pole);
-    }
 
     #[test]
     fn missing_intrinsic_signatures_added() {

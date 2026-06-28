@@ -4,12 +4,10 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use tdg_rust::db::{init_fts, init_schema, run_migrations, ConnectionPool};
-use tdg_rust::hrr;
 use tdg_rust::knowledge;
 use tdg_rust::mind::diagnostic::DiagnosticEngine;
 use tdg_rust::mind::pulse::PulseEngine;
 use tdg_rust::models::{NewEdge, NewNode};
-use tdg_rust::ops;
 
 /// Create an in-memory pool with schema initialized.
 fn make_pool() -> ConnectionPool {
@@ -187,37 +185,6 @@ fn bench_pathfind(c: &mut Criterion) {
     });
 }
 
-fn bench_pathfind_petgraph(c: &mut Criterion) {
-    let pool = make_pool();
-    populate(&pool, 50);
-
-    let (first, last): (String, String) = pool
-        .with_connection(|conn| {
-            let ids: Vec<String> = conn
-                .prepare(
-                    "SELECT id FROM nodes WHERE valid_to IS NULL ORDER BY created_at ASC LIMIT 2",
-                )?
-                .query_map([], |r| r.get(0))?
-                .filter_map(|r| r.ok())
-                .collect();
-            Ok((ids[0].clone(), ids[ids.len() - 1].clone()))
-        })
-        .unwrap();
-
-    let proj = pool
-        .with_connection(|conn| {
-            tdg_rust::graph_projection::GraphProjection::build(conn)
-                .map_err(|e| tdg_rust::TdgError::Custom(e))
-        })
-        .unwrap();
-
-    c.bench_function("petgraph_pathfind", |b| {
-        b.iter(|| {
-            let _ = proj.shortest_path(&first, &last);
-        });
-    });
-}
-
 // ─── Flow Benchmarks ─────────────────────────────────────────────────────────
 
 fn bench_renormalize_graph(c: &mut Criterion) {
@@ -367,79 +334,6 @@ fn bench_diagnostic(c: &mut Criterion) {
     });
 }
 
-// ─── HRR Benchmarks ──────────────────────────────────────────────────────────
-
-fn bench_hrr_bind(c: &mut Criterion) {
-    let dim = hrr::HRR_DIM;
-    let vec_a = hrr::random_key(dim);
-    let vec_b = hrr::random_key(dim);
-
-    c.bench_function("hrr_bind", |bench| {
-        bench.iter(|| {
-            let _ = hrr::bind(&vec_a, &vec_b);
-        });
-    });
-}
-
-fn bench_hrr_bundle(c: &mut Criterion) {
-    let mut group = c.benchmark_group("hrr_bundle");
-    for count in [4, 16, 64] {
-        group.bench_with_input(BenchmarkId::new("vectors", count), &count, |b, &count| {
-            let vectors: Vec<_> = (0..count).map(|_| hrr::random_key(hrr::HRR_DIM)).collect();
-            b.iter(|| {
-                let _ = hrr::bundle(&vectors);
-            });
-        });
-    }
-    group.finish();
-}
-
-fn bench_hrr_probe(c: &mut Criterion) {
-    let mut bank = hrr::HrrMemoryBank::new();
-    for i in 0..100 {
-        bank.store(format!("item_{i}"), hrr::random_key(hrr::HRR_DIM));
-    }
-    let query = hrr::random_key(hrr::HRR_DIM);
-
-    c.bench_function("hrr_probe_100_items", |b| {
-        b.iter(|| {
-            let _ = bank.probe(&query);
-        });
-    });
-}
-
-// ─── Ops Benchmarks ──────────────────────────────────────────────────────────
-
-fn bench_reconcile(c: &mut Criterion) {
-    let pool = make_pool();
-    populate(&pool, 100);
-
-    c.bench_function("ops_reconcile", |b| {
-        b.iter(|| {
-            pool.with_connection(|conn| {
-                ops::reconcile(conn)?;
-                Ok(())
-            })
-            .unwrap();
-        });
-    });
-}
-
-fn bench_micro_slice(c: &mut Criterion) {
-    let pool = make_pool();
-    populate(&pool, 100);
-
-    c.bench_function("ops_micro_slice", |b| {
-        b.iter(|| {
-            pool.with_connection(|conn| {
-                ops::micro_slice(conn)?;
-                Ok(())
-            })
-            .unwrap();
-        });
-    });
-}
-
 // ─── Criterion Group ─────────────────────────────────────────────────────────
 
 criterion_group!(
@@ -448,7 +342,6 @@ criterion_group!(
     bench_get_node,
     bench_search,
     bench_pathfind,
-    bench_pathfind_petgraph,
     bench_renormalize_graph,
     bench_aggregate_upward,
     bench_detect_orphans,
@@ -456,11 +349,6 @@ criterion_group!(
     bench_classify_catalyst,
     bench_pulse,
     bench_diagnostic,
-    bench_hrr_bind,
-    bench_hrr_bundle,
-    bench_hrr_probe,
-    bench_reconcile,
-    bench_micro_slice,
 );
 
 criterion_main!(benches);

@@ -1,11 +1,6 @@
-use ndarray::Array1;
 use proptest::prelude::*;
 use tdg_rust::db::crud;
 use tdg_rust::models::{NewNode, NodeQuery};
-
-fn vec_f64(min: f64, max: f64, len: usize) -> impl Strategy<Value = Array1<f64>> {
-    prop::collection::vec(min..max, len).prop_map(Array1::from_vec)
-}
 
 fn arb_node_name() -> impl Strategy<Value = String> {
     "[A-Za-z0-9 ]{1,50}"
@@ -95,16 +90,6 @@ proptest! {
         for (a, b) in v1.iter().zip(v2.iter()) {
             prop_assert_eq!(&a.0.id, &b.0.id);
         }
-    }
-
-    #[test]
-    fn cosine_similarity_symmetry(
-        a in vec_f64(-10.0, 10.0, 64),
-        b in vec_f64(-10.0, 10.0, 64),
-    ) {
-        let sim_ab = tdg_rust::hrr::cosine_similarity(&a, &b);
-        let sim_ba = tdg_rust::hrr::cosine_similarity(&b, &a);
-        prop_assert!((sim_ab - sim_ba).abs() < 1e-10, "sim(a,b)={}, sim(b,a)={}", sim_ab, sim_ba);
     }
 
     #[test]

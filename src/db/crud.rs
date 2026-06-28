@@ -307,31 +307,6 @@ pub fn delete_node(conn: &Connection, node_id: &str) -> TdgResult<bool> {
     }
 }
 
-/// Hard-delete a node (actually remove from DB).
-pub fn hard_delete_node(conn: &Connection, node_id: &str) -> TdgResult<bool> {
-    check_circuit_breaker()?;
-    let _guard = acquire_write_guard(conn)?;
-
-    conn.execute(
-        "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
-        params![node_id],
-    )?;
-    conn.execute(
-        "DELETE FROM embeddings WHERE node_id = ?1",
-        params![node_id],
-    )?;
-
-    match conn.execute("DELETE FROM nodes WHERE id = ?1", params![node_id]) {
-        Ok(affected) => {
-            record_write_success();
-            Ok(affected > 0)
-        }
-        Err(e) => {
-            record_write_failure();
-            Err(e.into())
-        }
-    }
-}
 
 // ─── Edge CRUD ───────────────────────────────────────────────────────────────
 
@@ -1385,10 +1360,6 @@ fn update_parent_ids_on_decompose(conn: &Connection, target_id: &str) -> TdgResu
     Ok(())
 }
 
-/// Serialize f32 vector to bytes.
-pub fn serialize_embedding(vector: &[f32]) -> Vec<u8> {
-    vector.iter().flat_map(|f| f.to_le_bytes()).collect()
-}
 
 /// Deserialize bytes to f32 vector.
 pub fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
@@ -1499,16 +1470,6 @@ mod tests {
             .is_some());
     }
 
-    #[test]
-    fn test_hard_delete_node() {
-        let conn = setup_db();
-        let node = add_node(&conn, &make_node("artifact", "Gone")).unwrap();
-        assert!(hard_delete_node(&conn, &node.id).unwrap());
-        assert!(get_node(&conn, &node.id).unwrap().is_none());
-        assert!(get_node_including_deleted(&conn, &node.id)
-            .unwrap()
-            .is_none());
-    }
 
     #[test]
     fn add_and_get_edge() {
@@ -1736,7 +1697,7 @@ mod tests {
     #[test]
     fn embedding_roundtrip() {
         let vec = vec![0.1, 0.2, -0.3, 0.0];
-        let bytes = serialize_embedding(&vec);
+        let bytes = serialize_vector(&vec);
         let recovered = deserialize_embedding(&bytes);
         assert_eq!(vec.len(), recovered.len());
         for (a, b) in vec.iter().zip(recovered.iter()) {
