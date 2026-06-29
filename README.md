@@ -2,7 +2,7 @@
 
 Rust implementation of the **Teleological Developmental Graph (TDG)** — a memory infrastructure for AI agents.
 
-> **v0.2.1** | 511 tests passing | GraphRAG upgrade | ~98% Python parity
+> **v0.4.0** | EmbeddingGemma ONNX backend | Configurable Q4/Q8 | Non-destructive migration
 
 ## Quick Install
 
@@ -80,7 +80,8 @@ TDG is a graph-based memory system that gives AI agents persistent, structured k
 - Diagnostic engine (behavioral pattern analysis)
 - Feeling engine (drive state → experiential statements)
 - Pulse engine (structural gap detection)
-- ONNX embeddings (all-MiniLM-L6-v2, 384-dim, feature-gated)
+- ONNX embeddings (EmbeddingGemma-300M, 768-dim, Q4/Q8 configurable)
+- Non-destructive embedding migration (mixed dimensions supported)
 
 ### MCP Server
 - 26 tools via rmcp SDK with auto schema generation
@@ -112,21 +113,27 @@ sudo mv tdg-rust /usr/local/bin/
 ### From Source
 
 ```bash
-# Prerequisites: Rust 1.70+, musl-tools (for static build)
+# Prerequisites: Rust 1.70+, cargo-zigbuild, zig
 git clone https://github.com/ishan-parihar/tdg-rust.git
 cd tdg-rust
 
-# Standard build
+# Standard build (no ONNX)
 cargo build --release
 
-# Static musl build (for deployment)
-cargo build --release --target x86_64-unknown-linux-musl
+# Build with ONNX embedding support
+cargo build --release --features onnx
 ```
 
-### With ONNX Embeddings
+### VPS Deployment (glibc 2.36)
 
 ```bash
-cargo build --release --features onnx
+# Build for VPS (Debian 12, glibc 2.36)
+export ORT_LIB_LOCATION=/tmp/onnxruntime-linux-x64-1.20.1/lib
+cargo zigbuild --release --features onnx --target x86_64-unknown-linux-gnu.2.36
+
+# Deploy binary and ORT library
+scp target/x86_64-unknown-linux-gnu.2.36/release/tdg-rust nerd@racknerd:~/tdg-rust
+scp /tmp/onnxruntime-linux-x64-1.20.1/lib/libonnxruntime.so.1.20.1 nerd@racknerd:~/libonnxruntime.so.1.20.1
 ```
 
 ## Usage
@@ -174,6 +181,7 @@ tdg-rust backup -o backup.db
 | `create -n <type> -N <name>` | Create node from CLI |
 | `maintenance-check` | Orphan + stale node detection |
 | `repair-orphans` | Link or archive orphan nodes |
+| `embed [--rebuild]` | Generate/update embeddings for all nodes |
 
 ### MCP Tools (26)
 
@@ -209,6 +217,17 @@ TDG uses hierarchical configuration loading:
 | `TDG_STATE_DIR` | `{home}/state` | State files directory |
 | `TDG_SKILLS_DIR` | `~/.hermes/skills` | Skills directory |
 | `TDG_LEAN` | `false` | Reduced memory mode |
+
+### Embedding Configuration
+
+Configure the embedding system in `tdg.yaml`:
+
+```yaml
+embedding:
+  model: gemma  # or minilm
+  quantization: q4  # q4 or q8
+  dimension: 768  # 768 for gemma, 384 for minilm
+```
 
 ### Diagnostic Thresholds
 
@@ -273,7 +292,7 @@ src/
 | **LLM** | reqwest (json) |
 | **CLI** | clap (derive) |
 | **Config** | figment (yaml/json/env) |
-| **Optional** | ort, tokenizers (feature: onnx) |
+| **Optional** | ort (ONNX Runtime), tokenizers (feature: onnx) |
 
 ## Testing
 
@@ -293,7 +312,7 @@ cargo bench
 
 ### Test Coverage
 
-- 626 tests (438 unit + 188 integration)
+- 511+ tests (unit + integration)
 - Property-based tests (proptest) for graph operations
 - Snapshot tests (insta) for output verification
 - Criterion benchmarks for performance regression
@@ -330,7 +349,15 @@ docker-compose up -d
 ### Build from Source (Development Only)
 
 ```bash
-cargo build --release --target x86_64-unknown-linux-musl
+# Standard build
+cargo build --release
+
+# With ONNX embeddings
+cargo build --release --features onnx
+
+# For VPS deployment (glibc 2.36)
+export ORT_LIB_LOCATION=/tmp/onnxruntime-linux-x64-1.20.1/lib
+cargo zigbuild --release --features onnx --target x86_64-unknown-linux-gnu.2.36
 ```
 
 ### Render.com
@@ -352,20 +379,22 @@ services:
 |--------|-------|
 | Startup time | ~10ms |
 | Turn overhead | <1ms |
-| Binary size | ~15MB (release) |
+| Binary size | ~12MB (ONNX-enabled) |
 | Memory (lean mode) | <50MB RSS |
 | Concurrent writes | Serialized via WriteGuard |
+| Embedding speed | ~8-10 nodes/min (VPS) |
 
 ## Comparison with Python
 
 | Metric | Python | Rust |
 |--------|--------|------|
-| Total lines | 29,000+ | 28,080 |
-| Tests | 576 | 626 |
+| Total lines | 29,000+ | 28,000+ |
+| Tests | 576 | 511+ |
 | MCP tools | 16 | 26 |
 | Startup time | ~200ms | ~10ms |
 | Memory usage | ~200MB | ~50MB |
-| Binary size | N/A | ~15MB |
+| Binary size | N/A | ~12MB |
+| Embeddings | MiniLM | EmbeddingGemma |
 
 ## License
 
