@@ -14,6 +14,92 @@ pub enum ConfigError {
     Validation(String),
 }
 
+/// Embedding model selection.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EmbeddingModel {
+    /// all-MiniLM-L6-v2 (384-dim, fast, good quality).
+    Minilm,
+    /// EmbeddingGemma-300M (768-dim, superior quality via MRL).
+    Gemma,
+}
+
+impl Default for EmbeddingModel {
+    fn default() -> Self {
+        Self::Minilm
+    }
+}
+
+/// Embedding quantization for Gemma model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EmbeddingQuantization {
+    /// Q4 quantization (197 MB, ~0.45 MTEB loss vs FP32).
+    Q4,
+    /// Q8 quantization (389 MB, negligible quality loss).
+    Q8,
+}
+
+impl Default for EmbeddingQuantization {
+    fn default() -> Self {
+        Self::Q4
+    }
+}
+
+/// Embedding configuration section.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingSection {
+    /// Embedding model to use. Override with `TDG_EMBEDDING_MODEL`.
+    #[serde(default)]
+    pub model: EmbeddingModel,
+    /// Quantization level for Gemma model (ignored for MiniLM). Override with `TDG_EMBEDDING_QUANTIZATION`.
+    #[serde(default)]
+    pub quantization: EmbeddingQuantization,
+    /// Embedding dimension (derived from model, not user-set).
+    /// MiniLM: 384, Gemma: 768 (or 384 with MRL truncation).
+    #[serde(default)]
+    pub dimension: Option<usize>,
+}
+
+impl EmbeddingSection {
+    /// Get the effective embedding dimension.
+    pub fn effective_dimension(&self) -> usize {
+        match self.model {
+            EmbeddingModel::Minilm => 384,
+            EmbeddingModel::Gemma => self.dimension.unwrap_or(768),
+        }
+    }
+
+    /// Get the model directory name for storage.
+    pub fn model_dir_name(&self) -> &'static str {
+        match self.model {
+            EmbeddingModel::Minilm => "all-MiniLM-L6-v2",
+            EmbeddingModel::Gemma => "embeddinggemma-300m",
+        }
+    }
+
+    /// Get the ONNX model filename based on quantization.
+    pub fn onnx_filename(&self) -> &'static str {
+        match self.model {
+            EmbeddingModel::Minilm => "model_quantized.onnx",
+            EmbeddingModel::Gemma => match self.quantization {
+                EmbeddingQuantization::Q4 => "embeddinggemma-300m-Q4_0.onnx",
+                EmbeddingQuantization::Q8 => "embeddinggemma-300m-Q8_0.onnx",
+            },
+        }
+    }
+}
+
+impl Default for EmbeddingSection {
+    fn default() -> Self {
+        Self {
+            model: EmbeddingModel::default(),
+            quantization: EmbeddingQuantization::default(),
+            dimension: None,
+        }
+    }
+}
+
 /// TDG configuration, loaded from config files and environment variables with sensible defaults.
 ///
 /// Mirrors the Python `TDGConfig` class from `core/config.py`.
@@ -32,6 +118,9 @@ pub struct Config {
     pub skills_dir: PathBuf,
     /// Lean mode flag. Override with `TDG_LEAN`.
     pub lean: bool,
+    /// Embedding configuration section.
+    #[serde(default)]
+    pub embedding: EmbeddingSection,
 }
 
 impl Default for Config {
@@ -51,6 +140,7 @@ impl Config {
             state_dir: home.join("state"),
             skills_dir: home.join("skills"),
             lean: false,
+            embedding: EmbeddingSection::default(),
         }
     }
 
@@ -129,6 +219,25 @@ impl Config {
     /// Loop state path: `{state_dir}/hermes-loop-state.json`
     pub fn loop_state_path(&self) -> PathBuf {
         self.state_dir.join("hermes-loop-state.json")
+    }
+
+    /// Embedding models directory: `{tdg_dir}/models`
+    pub fn models_dir(&self) -> PathBuf {
+        self.tdg_dir.join("models")
+    }
+
+    /// Full path to the ONNX embedding model file.
+    pub fn embedding_model_path(&self) -> PathBuf {
+        self.models_dir()
+            .join(self.embedding.model_dir_name())
+            .join(self.embedding.onnx_filename())
+    }
+
+    /// Full path to the tokenizer file.
+    pub fn embedding_tokenizer_path(&self) -> PathBuf {
+        self.models_dir()
+            .join(self.embedding.model_dir_name())
+            .join("tokenizer.json")
     }
 
     /// Meta view cache path: `{state_dir}/hermes-meta-view-cache.json`
