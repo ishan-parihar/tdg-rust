@@ -340,7 +340,7 @@ fn main() -> anyhow::Result<()> {
         }
         #[cfg(feature = "onnx")]
         Commands::Embed { rebuild } => {
-            use tdg_rust::mind::embedding::{self, EmbeddingConfig, GEMMA_EMBEDDING_DIM};
+            use tdg_rust::mind::embedding::{self, EmbeddingConfig};
 
             let pool = ConnectionPool::new(
                 config
