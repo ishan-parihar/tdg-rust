@@ -84,6 +84,12 @@ enum Commands {
     MaintenanceCheck,
     /// Repair orphan nodes (link or archive)
     RepairOrphans,
+    /// Embed nodes using ONNX model
+    Embed {
+        /// Rebuild all embeddings from scratch
+        #[arg(long)]
+        rebuild: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -331,6 +337,117 @@ fn main() -> anyhow::Result<()> {
             let result = pool.with_connection(scripts::repair_orphans)?;
             println!("{}", serde_json::to_string_pretty(&result)?);
             pool.close();
+        }
+        #[cfg(feature = "onnx")]
+        Commands::Embed { rebuild } => {
+            use tdg_rust::mind::embedding::{self, EmbeddingConfig, GEMMA_EMBEDDING_DIM};
+
+            let pool = ConnectionPool::new(
+                config
+                    .db_path
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?,
+                5,
+                30000,
+            )?;
+
+            // Download model files if needed
+            embedding::ensure_model_files(&config)?;
+
+            // Initialize embedding engine
+            let emb_config = EmbeddingConfig::from_app_config(&config);
+            embedding::init(emb_config)?;
+
+            let target_dim = config.embedding.effective_dimension();
+            println!("Embedding nodes with {}-dim vectors...", target_dim);
+
+            pool.with_connection(|conn| {
+                // Get all nodes without embeddings or with --rebuild
+                let nodes: Vec<(String, String, String)> = if rebuild {
+                    let mut stmt = conn.prepare(
+                        "SELECT id, name, COALESCE(description, '') FROM nodes WHERE valid_to IS NULL"
+                    )?;
+                    let rows = stmt.query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    })?;
+                    rows.filter_map(|r| r.ok()).collect()
+                } else {
+                    let mut stmt = conn.prepare(
+                        "SELECT n.id, n.name, COALESCE(n.description, '') FROM nodes n
+                         LEFT JOIN embeddings e ON n.id = e.node_id
+                         WHERE n.valid_to IS NULL AND e.node_id IS NULL"
+                    )?;
+                    let rows = stmt.query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    })?;
+                    rows.filter_map(|r| r.ok()).collect()
+                };
+
+                let total = nodes.len();
+                println!("Found {} nodes to embed", total);
+
+                // Process in batches of 100
+                let batch_size = 100;
+                for (i, chunk) in nodes.chunks(batch_size).enumerate() {
+                    let start = i * batch_size;
+                    let end = std::cmp::min(start + batch_size, total);
+                    print!("  Batch {}/{}...", start + 1, end);
+
+                    for (node_id, name, description) in chunk {
+                        let text = embedding::build_embedding_text(
+                            conn,
+                            node_id,
+                            name,
+                            description,
+                            5,
+                        );
+                        let result = embedding::embed(&text)?;
+                        let vector_bytes = unsafe {
+                            std::slice::from_raw_parts(
+                                result.vector.as_ptr() as *const u8,
+                                result.vector.len() * std::mem::size_of::<f32>(),
+                            )
+                        };
+
+                        conn.execute(
+                            "INSERT INTO embeddings (node_id, vector, dimension, model, updated_at)
+                             VALUES (?1, ?2, ?3, ?4, datetime('now'))
+                             ON CONFLICT(node_id) DO UPDATE SET
+                                vector = excluded.vector,
+                                dimension = excluded.dimension,
+                                model = excluded.model,
+                                updated_at = datetime('now')",
+                            rusqlite::params![
+                                node_id,
+                                vector_bytes,
+                                target_dim as i64,
+                                config.embedding.model_dir_name(),
+                            ],
+                        )?;
+                    }
+
+                    println!(" done");
+                }
+
+                println!("Embedding complete: {} nodes processed", total);
+                Ok(())
+            })?;
+
+            pool.close();
+        }
+        #[cfg(not(feature = "onnx"))]
+        Commands::Embed { .. } => {
+            eprintln!("Error: Embed command requires the 'onnx' feature. Rebuild with:");
+            eprintln!("  cargo build --features onnx");
+            std::process::exit(1);
         }
         Commands::Serve { port } => {
             tracing::info!("Starting MCP server on port {port}");

@@ -1,0 +1,9 @@
+# TDG Configuration Example
+# Copy to ~/.hermes/tdg/tdg.yaml or run `tdg init`
+
+home: ~/.hermes
+lean: false
+
+embedding:
+  model: gemma           # "minilm" (384-dim) or "gemma" (768-dim, best quality)
+  quantization: q4       # "q4" (197 MB) or "q8" (389 MB, negligible loss)

@@ -46,7 +46,7 @@ shellexpand = "3"
 figment = { version = "0.10", features = ["yaml", "toml", "json", "env"] }
 
 # LLM (Ollama)
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 
 # Random (for HRR)
 rand = "0.8"

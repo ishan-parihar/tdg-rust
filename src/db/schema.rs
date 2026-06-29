@@ -56,6 +56,11 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     // Phase 5: New tables (mutation_log, schema_meta, leases)
     conn.execute_batch(MIGRATE_NEW_TABLES)?;
 
+    // Phase 6: Embedding dimension column (for mixed-size vector storage)
+    conn.execute_batch(
+        "ALTER TABLE embeddings ADD COLUMN dimension INTEGER DEFAULT 384"
+    ).ok();
+
     Ok(())
 }
 

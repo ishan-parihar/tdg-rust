@@ -15,32 +15,49 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use rusqlite::Connection;
-
 use serde::{Deserialize, Serialize};
+
+use crate::error::{TdgError, TdgResult};
 
 // ── Constants ─────────────────────────────────────────────────────────
 
-/// Default embedding dimension (all-MiniLM-L6-v2).
 pub const DEFAULT_EMBEDDING_DIM: usize = 384;
-
-/// Maximum sequence length for tokenizer.
+pub const GEMMA_EMBEDDING_DIM: usize = 768;
 pub const MAX_SEQUENCE_LENGTH: usize = 256;
-
-/// Default padding token ID.
 pub const DEFAULT_PAD_ID: i32 = 0;
+
+#[cfg(feature = "onnx")]
+pub const MINILM_MODEL_DIR: &str = "all-MiniLM-L6-v2";
+#[cfg(feature = "onnx")]
+pub const MINILM_ONNX_FILE: &str = "model_quantized.onnx";
+#[cfg(feature = "onnx")]
+pub const GEMMA_MODEL_DIR: &str = "embeddinggemma-300m";
+#[cfg(feature = "onnx")]
+pub const GEMMA_Q4_FILE: &str = "embeddinggemma-300m-Q4_0.onnx";
+#[cfg(feature = "onnx")]
+pub const GEMMA_Q8_FILE: &str = "embeddinggemma-300m-Q8_0.onnx";
+
+#[cfg(feature = "onnx")]
+const GEMMA_REPO_URL: &str =
+    "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/tree/main/onnx";
+#[cfg(feature = "onnx")]
+const MINILM_REPO_URL: &str =
+    "https://huggingface.co/xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx";
+
+#[cfg(feature = "onnx")]
+const Q4_DOWNLOAD_URL: &str =
+    "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/embeddinggemma-300m-Q4_0.onnx";
+#[cfg(feature = "onnx")]
+const Q8_DOWNLOAD_URL: &str =
+    "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/embeddinggemma-300m-Q8_0.onnx";
 
 // ── Public Types ──────────────────────────────────────────────────────
 
-/// Configuration for the embedding engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingConfig {
-    /// Path to the ONNX model file.
     pub model_path: PathBuf,
-    /// Path to the tokenizer JSON file.
     pub tokenizer_path: PathBuf,
-    /// Embedding dimension (default: 384).
     pub embedding_dim: usize,
-    /// Maximum sequence length (default: 256).
     pub max_length: usize,
 }
 
@@ -50,6 +67,22 @@ impl Default for EmbeddingConfig {
             model_path: PathBuf::new(),
             tokenizer_path: PathBuf::new(),
             embedding_dim: DEFAULT_EMBEDDING_DIM,
+            max_length: MAX_SEQUENCE_LENGTH,
+        }
+    }
+}
+
+#[cfg(feature = "onnx")]
+impl EmbeddingConfig {
+    /// Create config from the application's embedding section.
+    pub fn from_app_config(config: &crate::config::Config) -> Self {
+        let model_dir = config.models_dir().join(config.embedding.model_dir_name());
+        let onnx_file = config.embedding.onnx_filename();
+
+        Self {
+            model_path: model_dir.join(onnx_file),
+            tokenizer_path: model_dir.join("tokenizer.json"),
+            embedding_dim: config.embedding.effective_dimension(),
             max_length: MAX_SEQUENCE_LENGTH,
         }
     }
@@ -70,8 +103,8 @@ pub struct EmbeddingResult {
 mod onnx_impl {
     use super::*;
     use crate::error::{TdgError, TdgResult};
-    use ndarray::{Array1, Array2, Axis};
     use ort::session::Session;
+    use ort::value::Tensor;
     use tokenizers::Tokenizer;
 
     /// Global model cache — loaded once, reused across calls.
@@ -156,22 +189,23 @@ mod onnx_impl {
 
         // Configure tokenizer for this encoding
         let mut tok = cached.tokenizer.clone();
-        tok.enable_truncation(cached.config.max_length)
+        tok.with_truncation(Some(tokenizers::TruncationParams {
+            max_length: cached.config.max_length,
+            ..Default::default()
+        }))
             .map_err(|e| TdgError::Custom(format!("Truncation config failed: {e}")))?;
-        tok.enable_padding(
-            tokenizers::PaddingParams::default()
-                .with_length(cached.config.max_length)
-                .with_pad_id(DEFAULT_PAD_ID as u32)
-                .with_strategy(tokenizers::PaddingStrategy::Fixed),
-        )
-        .map_err(|e| TdgError::Custom(format!("Padding config failed: {e}")))?;
-
-        // Tokenize
+        tok.with_padding(Some(tokenizers::PaddingParams {
+            strategy: tokenizers::PaddingStrategy::Fixed(cached.config.max_length),
+            pad_id: 0,
+            pad_type_id: 0,
+            pad_token: "[PAD]".to_string(),
+            pad_to_multiple_of: None,
+            direction: tokenizers::PaddingDirection::Right,
+        }));
         let encoding = tok
             .encode(text, true)
             .map_err(|e| TdgError::Custom(format!("Tokenization failed: {e}")))?;
-
-        let seq_len = encoding.len();
+        let seq_len = encoding.get_ids().len();
         let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
         let attention_mask: Vec<i64> = encoding
             .get_attention_mask()
@@ -180,60 +214,73 @@ mod onnx_impl {
             .collect();
         let token_type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|&t| t as i64).collect();
 
+        // Keep a copy for mean pooling (tensor consumes the original)
+        let mask_for_pooling = attention_mask.clone();
+
         // Build tensors: shape [1, seq_len]
-        let input_ids_tensor = Array2::from_shape_vec((1, seq_len), input_ids)
-            .map_err(|e| TdgError::Custom(format!("input_ids tensor error: {e}")))?;
-        let attention_mask_tensor = Array2::from_shape_vec((1, seq_len), attention_mask)
-            .map_err(|e| TdgError::Custom(format!("attention_mask tensor error: {e}")))?;
-        let token_type_ids_tensor = Array2::from_shape_vec((1, seq_len), token_type_ids)
-            .map_err(|e| TdgError::Custom(format!("token_type_ids tensor error: {e}")))?;
+        let input_ids_tensor =
+            Tensor::from_array(([1, seq_len], input_ids)).map_err(|e| {
+                TdgError::Custom(format!("input_ids tensor error: {e}"))
+            })?;
+        let attention_mask_tensor =
+            Tensor::from_array(([1, seq_len], attention_mask)).map_err(|e| {
+                TdgError::Custom(format!("attention_mask tensor error: {e}"))
+            })?;
+        let token_type_ids_tensor =
+            Tensor::from_array(([1, seq_len], token_type_ids)).map_err(|e| {
+                TdgError::Custom(format!("token_type_ids tensor error: {e}"))
+            })?;
 
         // Run ONNX inference
+        let inputs = ort::inputs![
+            "input_ids" => input_ids_tensor,
+            "attention_mask" => attention_mask_tensor,
+            "token_type_ids" => token_type_ids_tensor,
+        ];
         let outputs = cached
             .session
-            .run(ort::inputs![
-                "input_ids" => input_ids_tensor,
-                "attention_mask" => attention_mask_tensor,
-                "token_type_ids" => token_type_ids_tensor,
-            ])
+            .run(inputs)
             .map_err(|e| TdgError::Custom(format!("ONNX inference failed: {e}")))?;
 
         // Extract token embeddings: shape [1, seq_len, hidden_dim]
-        let token_embeddings = outputs["last_hidden_state"]
+        let (shape, data) = outputs["last_hidden_state"]
             .try_extract_tensor::<f32>()
             .map_err(|e| TdgError::Custom(format!("Failed to extract last_hidden_state: {e}")))?;
 
-        // Mean pooling: average over non-padding tokens
-        let hidden_dim = token_embeddings.shape()[2];
-        let mask_slice = attention_mask_tensor
-            .index_axis(ndarray::Axis(0), 0)
-            .to_owned();
+        let seq_len = shape[1] as usize;
+        let hidden_dim = shape[2] as usize;
 
-        let mut pooled = Array1::<f32>::zeros(hidden_dim);
+        // Mean pooling: average over non-padding tokens
+        let mut pooled = vec![0.0f32; hidden_dim];
         let mut mask_sum: f32 = 0.0;
 
         for t in 0..seq_len {
-            let m = mask_slice[t];
-            if m > 0 {
-                mask_sum += m as f32;
+            let m = mask_for_pooling[t] as f32;
+            if m > 0.0 {
+                mask_sum += m;
+                let offset = t * hidden_dim;
                 for d in 0..hidden_dim {
-                    pooled[d] += token_embeddings[[0, t, d]] * m as f32;
+                    pooled[d] += data[offset + d] * m;
                 }
             }
         }
 
         if mask_sum > 0.0 {
-            pooled.mapv_inplace(|v| v / mask_sum);
+            for v in &mut pooled {
+                *v /= mask_sum;
+            }
         }
 
         // L2 normalize
-        let norm: f32 = pooled.mapv(|v| v * v).sum().sqrt();
+        let norm: f32 = pooled.iter().map(|v| v * v).sum::<f32>().sqrt();
         if norm > 1e-12 {
-            pooled.mapv_inplace(|v| v / norm);
+            for v in &mut pooled {
+                *v /= norm;
+            }
         }
 
         Ok(EmbeddingResult {
-            vector: pooled.to_vec(),
+            vector: pooled,
             token_count: seq_len,
         })
     }
@@ -445,6 +492,75 @@ pub fn build_embedding_text(
     }
 
     parts.join(" | ")
+}
+
+#[cfg(feature = "onnx")]
+pub fn ensure_model_files(config: &crate::config::Config) -> TdgResult<()> {
+    use std::fs;
+
+    let models_dir = config.models_dir();
+    let model_dir = models_dir.join(config.embedding.model_dir_name());
+
+    fs::create_dir_all(&model_dir)
+        .map_err(|e| TdgError::Custom(format!("Failed to create models dir: {e}")))?;
+
+    let onnx_path = model_dir.join(config.embedding.onnx_filename());
+    if !onnx_path.exists() {
+        eprintln!(
+            "Downloading {} ({})...",
+            config.embedding.model_dir_name(),
+            config.embedding.onnx_filename()
+        );
+        download_file(&gemma_download_url(config), &onnx_path)?;
+    }
+
+    let tokenizer_path = model_dir.join("tokenizer.json");
+    if !tokenizer_path.exists() {
+        eprintln!("Downloading tokenizer.json...");
+        download_file(&gemma_tokenizer_url(config), &tokenizer_path)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "onnx")]
+fn gemma_download_url(config: &crate::config::Config) -> String {
+    match config.embedding.quantization {
+        crate::config::EmbeddingQuantization::Q4 => Q4_DOWNLOAD_URL.to_string(),
+        crate::config::EmbeddingQuantization::Q8 => Q8_DOWNLOAD_URL.to_string(),
+    }
+}
+
+#[cfg(feature = "onnx")]
+fn gemma_tokenizer_url(_config: &crate::config::Config) -> String {
+    "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/tokenizer.json"
+        .to_string()
+}
+
+#[cfg(feature = "onnx")]
+fn download_file(url: &str, dest: &Path) -> TdgResult<()> {
+    use std::io::Write;
+
+    let response = reqwest::blocking::get(url)
+        .map_err(|e| TdgError::Custom(format!("Download failed: {e}")))?;
+
+    if !response.status().is_success() {
+        return Err(TdgError::Custom(format!(
+            "Download failed with status: {}",
+            response.status()
+        )));
+    }
+
+    let mut file = std::fs::File::create(dest)
+        .map_err(|e| TdgError::Custom(format!("Failed to create file: {e}")))?;
+
+    let bytes = response.bytes()
+        .map_err(|e| TdgError::Custom(format!("Failed to read response: {e}")))?;
+
+    file.write_all(&bytes)
+        .map_err(|e| TdgError::Custom(format!("Failed to write file: {e}")))?;
+
+    Ok(())
 }
 
 #[cfg(test)]
