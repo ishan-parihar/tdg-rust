@@ -83,8 +83,8 @@ impl EmbeddingSection {
         match self.model {
             EmbeddingModel::Minilm => "model_quantized.onnx",
             EmbeddingModel::Gemma => match self.quantization {
-                EmbeddingQuantization::Q4 => "embeddinggemma-300m-Q4_0.onnx",
-                EmbeddingQuantization::Q8 => "embeddinggemma-300m-Q8_0.onnx",
+                EmbeddingQuantization::Q4 => "model_q4.onnx",
+                EmbeddingQuantization::Q8 => "model_quantized.onnx",
             },
         }
     }

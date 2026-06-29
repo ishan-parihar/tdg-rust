@@ -8,17 +8,17 @@ RUN cargo chef prepare --recipe-path recipe.json
 # Stage 2: Builder (cook deps, then build app)
 FROM rust:1.88-slim-bookworm AS builder
 RUN apt-get update \
-    && apt-get install -y pkg-config libssl-dev \
+    && apt-get install -y pkg-config libssl-dev g++ \
     && rm -rf /var/lib/apt/lists/*
 
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --release --features onnx --recipe-path recipe.json
 
 COPY . .
-RUN cargo build --release --bin tdg
+RUN cargo build --release --features onnx --bin tdg
 
 # Stage 3: Runtime (distroless)
 FROM gcr.io/distroless/cc-debian12 AS runtime

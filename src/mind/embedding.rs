@@ -46,10 +46,10 @@ const MINILM_REPO_URL: &str =
 
 #[cfg(feature = "onnx")]
 const Q4_DOWNLOAD_URL: &str =
-    "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/embeddinggemma-300m-Q4_0.onnx";
+    "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/model_q4.onnx";
 #[cfg(feature = "onnx")]
 const Q8_DOWNLOAD_URL: &str =
-    "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/embeddinggemma-300m-Q8_0.onnx";
+    "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/model_quantized.onnx";
 
 // ── Public Types ──────────────────────────────────────────────────────
 
@@ -158,11 +158,9 @@ mod onnx_impl {
         let tokenizer = Tokenizer::from_file(&config.tokenizer_path)
             .map_err(|e| TdgError::Custom(format!("Failed to load tokenizer: {e}")))?;
 
-        // Load ONNX session
+        // Load ONNX session (default optimization = All; Level3/layout not in ORT 1.20.1)
         let session = Session::builder()
             .map_err(|e| TdgError::Custom(format!("ONNX session builder: {e}")))?
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
-            .map_err(|e| TdgError::Custom(format!("ONNX optimization config: {e}")))?
             .with_intra_threads(4)
             .map_err(|e| TdgError::Custom(format!("ONNX thread config: {e}")))?
             .commit_from_file(&config.model_path)
@@ -212,8 +210,6 @@ mod onnx_impl {
             .iter()
             .map(|&m| m as i64)
             .collect();
-        let token_type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|&t| t as i64).collect();
-
         // Keep a copy for mean pooling (tensor consumes the original)
         let mask_for_pooling = attention_mask.clone();
 
@@ -226,16 +222,11 @@ mod onnx_impl {
             Tensor::from_array(([1, seq_len], attention_mask)).map_err(|e| {
                 TdgError::Custom(format!("attention_mask tensor error: {e}"))
             })?;
-        let token_type_ids_tensor =
-            Tensor::from_array(([1, seq_len], token_type_ids)).map_err(|e| {
-                TdgError::Custom(format!("token_type_ids tensor error: {e}"))
-            })?;
 
         // Run ONNX inference
         let inputs = ort::inputs![
             "input_ids" => input_ids_tensor,
             "attention_mask" => attention_mask_tensor,
-            "token_type_ids" => token_type_ids_tensor,
         ];
         let outputs = cached
             .session
@@ -512,6 +503,18 @@ pub fn ensure_model_files(config: &crate::config::Config) -> TdgResult<()> {
             config.embedding.onnx_filename()
         );
         download_file(&gemma_download_url(config), &onnx_path)?;
+    }
+
+    // Q4 ONNX external data format: weights in separate .onnx_data file
+    let onnx_filename = config.embedding.onnx_filename();
+    let data_filename = format!("{onnx_filename}_data");
+    let data_path = model_dir.join(&data_filename);
+    if config.embedding.quantization == crate::config::EmbeddingQuantization::Q4 && !data_path.exists() {
+        let data_url = format!(
+            "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/{data_filename}"
+        );
+        eprintln!("Downloading {data_filename}...");
+        download_file(&data_url, &data_path)?;
     }
 
     let tokenizer_path = model_dir.join("tokenizer.json");
