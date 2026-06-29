@@ -825,9 +825,9 @@ impl TdgServer {
         let db_size: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0)).unwrap_or(0)
             * conn.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap_or(4096);
 
-        let health_score = (fts_coverage * 0.25 + emb_coverage * 0.25 + (1.0 - edge_noise) * 0.15
+        let health_score = fts_coverage * 0.25 + emb_coverage * 0.25 + (1.0 - edge_noise) * 0.15
             + (1.0 - (orphans as f64 / (orphans + 100).max(1) as f64)) * 0.10
-            + if node_count > 0 { 0.25 } else { 0.0 });
+            + if node_count > 0 { 0.25 } else { 0.0 };
 
         Ok(json!({
             "node_count": node_count,

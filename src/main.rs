@@ -351,6 +351,12 @@ fn main() -> anyhow::Result<()> {
                 30000,
             )?;
 
+            // Apply schema migrations (adds dimension column if missing)
+            pool.with_connection(|conn| {
+                tdg_rust::db::run_migrations(conn)?;
+                Ok(())
+            })?;
+
             // Download model files if needed
             embedding::ensure_model_files(&config)?;
 
