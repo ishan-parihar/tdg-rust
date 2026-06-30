@@ -3,6 +3,8 @@ use chrono::Utc;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
+use crate::mcp::tools::calculate_health_score;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Action {
     pub module: String,
@@ -34,8 +36,24 @@ impl<'a> HealthMonitor<'a> {
     }
 
     pub fn check(&self) -> Result<HealthReport> {
-        let fts5 = self.check_fts5_coverage();
-        let embedding = self.check_embedding_coverage();
+        let node_count = self.active_node_count();
+        let edge_count = self.total_edge_count();
+        let type_count: i64 = self.conn
+            .query_row(
+                "SELECT COUNT(DISTINCT node_type) FROM nodes WHERE valid_to IS NULL AND lifecycle_state != 'archived'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let embedding_count: i64 = self.conn
+            .query_row("SELECT COUNT(*) FROM embeddings", [], |r| r.get(0))
+            .unwrap_or(0);
+        let fts_count: i64 = self.conn
+            .query_row("SELECT COUNT(*) FROM nodes_fts", [], |r| r.get(0))
+            .unwrap_or(0);
+
+        let fts5 = if node_count > 0 { fts_count as f64 / node_count as f64 } else { 1.0 };
+        let embedding = if node_count > 0 { embedding_count as f64 / node_count as f64 } else { 1.0 };
         let drive = self.check_drive_coverage();
         let stage = self.check_stage_coverage();
         let noise = self.check_edge_noise();
@@ -43,6 +61,7 @@ impl<'a> HealthMonitor<'a> {
         let growth = self.check_event_growth();
         let db_size = self.check_db_size();
 
+        let health_score = calculate_health_score(node_count, edge_count, type_count, embedding_count, fts_count);
         let report = HealthReport {
             fts5_coverage: fts5,
             embedding_coverage: embedding,
@@ -52,16 +71,14 @@ impl<'a> HealthMonitor<'a> {
             orphan_count: orphans,
             event_growth_rate: growth,
             db_size_bytes: db_size,
-            health_score: 0.0,
+            health_score,
             actions: vec![],
             timestamp: Utc::now().to_rfc3339(),
         };
 
-        let health_score = compute_score(&report);
         let actions = determine_actions(&report);
 
         Ok(HealthReport {
-            health_score,
             actions,
             ..report
         })
@@ -83,30 +100,6 @@ impl<'a> HealthMonitor<'a> {
                 r.get(0)
             })
             .unwrap_or(0)
-    }
-
-    fn check_fts5_coverage(&self) -> f64 {
-        let active = self.active_node_count();
-        if active == 0 {
-            return 1.0;
-        }
-        let fts_count: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM nodes_fts", [], |r| r.get(0))
-            .unwrap_or(0);
-        fts_count as f64 / active as f64
-    }
-
-    fn check_embedding_coverage(&self) -> f64 {
-        let active = self.active_node_count();
-        if active == 0 {
-            return 1.0;
-        }
-        let emb_count: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM embeddings", [], |r| r.get(0))
-            .unwrap_or(0);
-        emb_count as f64 / active as f64
     }
 
     fn check_drive_coverage(&self) -> f64 {
@@ -197,16 +190,6 @@ impl<'a> HealthMonitor<'a> {
             .unwrap_or(0);
         pages * page_size
     }
-}
-
-fn compute_score(report: &HealthReport) -> f64 {
-    let orphan_ratio = 1.0 - (report.orphan_count as f64 / 1000.0).min(1.0);
-    report.fts5_coverage * 0.25
-        + report.embedding_coverage * 0.25
-        + report.drive_coverage * 0.15
-        + report.stage_coverage * 0.10
-        + (1.0 - report.edge_noise) * 0.15
-        + orphan_ratio * 0.10
 }
 
 fn determine_actions(report: &HealthReport) -> Vec<Action> {
