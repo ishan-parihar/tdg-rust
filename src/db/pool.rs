@@ -103,15 +103,31 @@ impl ConnectionPool {
         }
     }
 
+    /// Return the number of connections currently idle in the pool.
+    pub fn idle_count(&self) -> usize {
+        self.connections.lock().map(|c| c.len()).unwrap_or(0)
+    }
+
     /// Borrow a connection, execute a closure, and return it to the pool.
+    /// Catches panics to prevent connection leaks.
     pub fn with_connection<F, R>(&self, f: F) -> TdgResult<R>
     where
         F: FnOnce(&Connection) -> TdgResult<R>,
     {
         let conn = self.get_connection()?;
-        let result = f(&conn);
+        // Catch panics so the connection is always returned to the pool.
+        // Without this, a panic in the closure would drop the connection
+        // without returning it, causing the pool count to drift.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&conn)));
+        // Always release the connection back to the pool.
         self.release_connection(conn);
-        result
+        match result {
+            Ok(inner) => inner,
+            Err(panic) => {
+                // Resume the panic after releasing the connection.
+                std::panic::resume_unwind(panic);
+            }
+        }
     }
 
     /// Backup the database to a file using SQLite's online backup API.
@@ -120,6 +136,18 @@ impl ConnectionPool {
         crate::db::schema::backup_database(&conn, backup_path)?;
         self.release_connection(conn);
         Ok(())
+    }
+}
+
+impl Drop for ConnectionPool {
+    fn drop(&mut self) {
+        // Ensure all connections are properly closed even on abnormal termination.
+        // This prevents WAL file locks from persisting after a crash/SIGKILL.
+        if let Ok(mut conns) = self.connections.lock() {
+            for conn in conns.drain(..) {
+                let _ = conn.close();
+            }
+        }
     }
 }
 

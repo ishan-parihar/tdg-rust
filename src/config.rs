@@ -255,13 +255,12 @@ impl Config {
         self.config_dir().join("diagnostic_thresholds.yaml")
     }
 
-    /// ONNX model path: `{tdg_dir}/models/all-MiniLM-L6-v2/onnx/model_quantized.onnx`
+    /// ONNX model path — delegates to config-aware `embedding_model_path()`.
+    ///
+    /// Previously hardcoded to `all-MiniLM-L6-v2`. Now respects the configured
+    /// embedding model (minilm or gemma) and quantization settings.
     pub fn onnx_model_path(&self) -> PathBuf {
-        self.tdg_dir
-            .join("models")
-            .join("all-MiniLM-L6-v2")
-            .join("onnx")
-            .join("model_quantized.onnx")
+        self.embedding_model_path()
     }
 
     /// Repository root: two levels up from this source file's directory.

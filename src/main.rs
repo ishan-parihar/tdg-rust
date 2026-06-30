@@ -456,6 +456,28 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(1);
         }
         Commands::Serve { port } => {
+            // Pre-flight check: verify libonnxruntime.so.1 is loadable.
+            // The dynamic linker kills the process with exit 127 before any
+            // Rust code runs if the library is missing. This check runs
+            // early enough to print a helpful error message.
+            #[cfg(feature = "onnx")]
+            {
+                use std::path::PathBuf;
+                let lib_dir = std::env::var("LD_LIBRARY_PATH")
+                    .unwrap_or_default()
+                    .split(':')
+                    .next()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| config.tdg_dir.join("lib"));
+                let lib_path = lib_dir.join("libonnxruntime.so.1");
+                if !lib_path.exists() {
+                    eprintln!("ERROR: libonnxruntime.so.1 not found at {}", lib_path.display());
+                    eprintln!("       Required for ONNX embedding support.");
+                    eprintln!("       Fix: run install.sh or set LD_LIBRARY_PATH to include the directory containing libonnxruntime.so.1");
+                    std::process::exit(1);
+                }
+            }
+
             tracing::info!("Starting MCP server on port {port}");
             let pool = ConnectionPool::new(
                 config

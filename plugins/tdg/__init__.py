@@ -41,6 +41,12 @@ _TDG_RUST_BIN = os.environ.get(
 _TDG_HOME = os.environ.get("TDG_HOME", str(Path.home() / ".hermes"))
 _MCP_TIMEOUT = int(os.environ.get("TDG_MCP_TIMEOUT", "30"))
 
+# LD_LIBRARY_PATH for ONNX runtime — required by tdg-rust binary
+# Check Rust TDG lib first, fall back to Python TDG lib
+_TDG_RUST_LIB = str(Path.home() / ".hermes" / "tdg-rust" / "lib")
+_TDG_PYTHON_LIB = str(Path.home() / ".hermes" / "tdg" / "lib")
+_TDG_LIB_DIR = _TDG_RUST_LIB if Path(_TDG_RUST_LIB).exists() else _TDG_PYTHON_LIB
+
 
 class TdgMcpClient:
     """Synchronous MCP client for tdg-rust serve (stdio transport)."""
@@ -84,7 +90,12 @@ class TdgMcpClient:
                 capture_output=True,
                 text=True,
                 timeout=_MCP_TIMEOUT,
-                env={**os.environ, "TDG_HOME": self.tdg_home, "NO_COLOR": "1"},
+                env={
+                    **os.environ,
+                    "TDG_HOME": self.tdg_home,
+                    "NO_COLOR": "1",
+                    "LD_LIBRARY_PATH": _TDG_LIB_DIR,
+                },
             )
 
             # Parse the last JSON line (tools/call response)
@@ -96,7 +107,12 @@ class TdgMcpClient:
                         if "result" in resp:
                             content = resp["result"].get("content", [])
                             if content and content[0].get("type") == "text":
-                                return _json.loads(content[0]["text"])
+                                text = content[0]["text"]
+                                try:
+                                    return json.loads(text)
+                                except (json.JSONDecodeError, ValueError):
+                                    # Response is plain text (e.g. tdg_context returns markdown)
+                                    return {"text": text}
                     except _json.JSONDecodeError:
                         continue
 
@@ -230,14 +246,23 @@ class TDGMemoryProvider(MemoryProvider):
         if not self._client:
             return ""
 
-        result = self._client.call_tool("tdg_context", {})
-        if "error" in result:
-            logger.warning("Failed to get TDG context: %s", result["error"])
+        # tdg_context returns markdown text, not JSON — use raw call
+        try:
+            result = self._client.call_tool("tdg_context", {})
+        except Exception as e:
+            logger.warning("Failed to get TDG context: %s", e)
             return ""
 
-        # Extract text content
-        if isinstance(result, dict) and "terrain" in result:
-            return result.get("terrain", "")
+        if isinstance(result, dict):
+            if "error" in result:
+                logger.warning("TDG context error: %s", result["error"])
+                return ""
+            # If the result has a terrain key, use it
+            if "terrain" in result:
+                return result.get("terrain", "")
+            # If it has content that's already a string, use it
+            if "text" in result:
+                return result["text"]
         elif isinstance(result, str):
             return result
         return ""
@@ -271,14 +296,32 @@ class TDGMemoryProvider(MemoryProvider):
         return "TDG Memory Recall:\n" + "\n".join(lines)
 
     def sync_turn(self, user_message: str, assistant_response: str, **kwargs) -> None:
-        """Persist conversation turn as observation node."""
+        """Persist conversation turn as observation node.
+
+        Only records substantive turns — skips short/echo messages.
+        Extracts the key action or decision, not the raw transcript.
+        """
         if not self._client:
             return
 
-        # Create observation from the conversation turn
-        description = f"[user] {user_message[:500]}\n[assistant] {assistant_response[:500]}"
+        # Skip trivial turns (greetings, acknowledgments, echoes)
+        user_len = len(user_message.strip())
+        asst_len = len(assistant_response.strip())
+        if user_len < 20 or asst_len < 30:
+            return
+
+        # Skip if the assistant response is mostly tool output or code
+        tool_heavy = assistant_response.count("```") >= 2 or assistant_response.count("function") > 3
+        if tool_heavy and user_len < 100:
+            return
+
+        # Extract a concise observation (not the full transcript)
+        user_summary = user_message[:200].replace("\n", " ").strip()
+        asst_summary = assistant_response[:300].replace("\n", " ").strip()
+        description = f"User asked: {user_summary}\nAgent did: {asst_summary}"
 
         result = self._client.call_tool("tdg_observe", {
+            "text": description,
             "description": description,
             "trigger_digestion": False,
         })
@@ -316,6 +359,55 @@ class TDGMemoryProvider(MemoryProvider):
         self._initialized = False
         self._available = False
         logger.info("TDG-Rust memory provider shut down")
+
+    def on_memory_write(self, action: str, target: str, content: str,
+                        metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Mirror built-in memory writes as TDG observation nodes.
+
+        When the agent uses the built-in `memory` tool, this hook fires
+        so the same fact gets persisted in the TDG graph for recall.
+        """
+        if not self._client:
+            return
+
+        # Build a concise observation from the memory write
+        desc = f"Memory {action} ({target}): {content[:500]}"
+        try:
+            self._client.call_tool("tdg_observe", {
+                "text": desc,
+                "description": desc,
+                "trigger_digestion": False,
+            })
+        except Exception:
+            pass  # Best-effort — never block the agent
+
+    def on_session_end(self, messages: list) -> None:
+        """End-of-session extraction — create a summary observation."""
+        if not self._client or not messages:
+            return
+
+        # Count turns and create a session summary
+        turn_count = sum(1 for m in messages if m.get("role") == "user")
+        if turn_count < 3:
+            return  # Skip short sessions
+
+        desc = f"Session ended: {turn_count} turns. "
+        # Extract last user message as session theme
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                content = msg.get("content", "")[:200]
+                if content:
+                    desc += f"Last topic: {content.replace(chr(10), ' ')}"
+                break
+
+        try:
+            self._client.call_tool("tdg_observe", {
+                "text": desc,
+                "description": desc,
+                "trigger_digestion": False,
+            })
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

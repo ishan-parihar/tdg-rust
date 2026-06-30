@@ -48,6 +48,7 @@ do_uninstall() {
     local config="${HERMES_HOME}/config.yaml"
 
     [[ -f "$tdg_dir/tdg-rust" ]] && rm "$tdg_dir/tdg-rust" && ok "Removed binary"
+    [[ -d "$tdg_dir/lib" ]] && rm -rf "$tdg_dir/lib" && ok "Removed ONNX runtime library"
     [[ -d "$tdg_dir" ]] && rm -rf "$tdg_dir" && ok "Removed $tdg_dir"
     [[ -d "$plugin_dir" ]] && rm -rf "$plugin_dir" && ok "Removed plugin: $plugin_dir"
 
@@ -97,6 +98,71 @@ download_binary() {
     local version
     version=$("$bin_path" --version 2>/dev/null || echo "unknown")
     ok "Downloaded tdg-rust $version"
+}
+
+download_onnx_runtime() {
+    local tdg_dir="${HERMES_HOME}/tdg-rust"
+    local lib_dir="${tdg_dir}/lib"
+    local ort_version="1.21.1"
+    # Map detected architecture to ONNX Runtime archive naming
+    local ort_arch
+    case "${ARCH}" in
+        x86_64)  ort_arch="x64" ;;
+        aarch64) ort_arch="aarch64" ;;
+        *)       ort_arch="x64"; warn "Unknown arch ${ARCH}, defaulting to x64" ;;
+    esac
+    local ort_url="https://github.com/microsoft/onnxruntime/releases/download/v${ort_version}/onnxruntime-linux-${ort_arch}-${ort_version}.tgz"
+
+    if [[ -f "${lib_dir}/libonnxruntime.so.1.20.1" ]] || [[ -f "${lib_dir}/libonnxruntime.so.${ort_version}" ]]; then
+        ok "ONNX Runtime library already installed"
+        return
+    fi
+
+    step "Downloading ONNX Runtime ${ort_version}"
+    mkdir -p "$lib_dir"
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+
+    info "Downloading from $ort_url..."
+    if command -v curl &>/dev/null; then
+        curl -fsSL "$ort_url" -o "${tmp_dir}/ort.tgz"
+    elif command -v wget &>/dev/null; then
+        wget -q "$ort_url" -O "${tmp_dir}/ort.tgz"
+    else
+        err "curl or wget required"
+        exit 1
+    fi
+
+    info "Extracting..."
+    tar xzf "${tmp_dir}/ort.tgz" -C "${tmp_dir}"
+
+    local found=0
+    while IFS= read -r -d '' so_file; do
+        cp "$so_file" "$lib_dir/"
+        found=1
+        break
+    done < <(find "${tmp_dir}" -name "libonnxruntime.so*" -type f -print0 2>/dev/null)
+
+    if [[ "$found" -eq 0 ]]; then
+        warn "Could not find libonnxruntime.so in archive"
+        rm -rf "$tmp_dir"
+        return
+    fi
+
+    local real_so
+    real_so=$(ls "${lib_dir}"/libonnxruntime.so.*.*.* 2>/dev/null | head -1)
+    if [[ -n "$real_so" ]]; then
+        local basename_so
+        basename_so=$(basename "$real_so")
+        local major="${basename_so#libonnxruntime.so.}"
+        major="${major%%.*}"
+        ln -sf "$basename_so" "${lib_dir}/libonnxruntime.so.${major}"
+        ln -sf "$basename_so" "${lib_dir}/libonnxruntime.so"
+    fi
+
+    rm -rf "$tmp_dir"
+    ok "ONNX Runtime ${ort_version} installed at $lib_dir"
 }
 
 install_adapter() {
@@ -158,6 +224,7 @@ patch_config() {
     step "Patching Hermes configuration"
 
     local tdg_bin="${HERMES_HOME}/tdg-rust/tdg-rust"
+    local tdg_lib="${HERMES_HOME}/tdg-rust/lib"
 
     python3 -c "
 import re
@@ -178,6 +245,7 @@ mcp_block = '''  tdg:
     env:
       TDG_HOME: ''' + hermes_home + '''
       NO_COLOR: '1'
+      LD_LIBRARY_PATH: ''' + tdg_lib + '''
     connect_timeout: 30
     timeout: 120
 '''
@@ -288,6 +356,7 @@ main() {
     [[ "${TDG_UNINSTALL:-0}" == "1" ]] && do_uninstall
 
     download_binary
+    download_onnx_runtime
     install_adapter
     init_database
     patch_config
