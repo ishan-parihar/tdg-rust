@@ -17,8 +17,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::error::{TdgError, TdgResult};
-
 // ── Constants ─────────────────────────────────────────────────────────
 
 pub const DEFAULT_EMBEDDING_DIM: usize = 384;
@@ -442,7 +440,6 @@ pub mod onnx_impl {
     pub fn reset() {}
 }
 
-#[allow(unused_imports)]
 pub use onnx_impl::*;
 
 /// Build contextual text for embedding.

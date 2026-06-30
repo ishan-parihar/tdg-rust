@@ -17,6 +17,8 @@ use serde_json::{json, Value};
 use crate::config::Config;
 use crate::db::ConnectionPool;
 use crate::graph_projection::GraphProjection;
+use crate::mind::reflect_engine::ReflectEngine;
+use crate::flow;
 use crate::mind::state::MindStateManager;
 
 /// Drive scores: (positive_pole, negative_pole, net_score) per node.
@@ -24,6 +26,42 @@ type DriveScores = HashMap<String, (Vec<f64>, Vec<f64>, Vec<f64>)>;
 use crate::models::{NewEdge, NewNode, NodeQuery};
 
 use super::MAX_BULK_NODES;
+
+/// Canonical health score formula shared by `tdg_graph_health` and `maintenance::monitor`.
+///
+/// Weights: nodes (35%), edges (20%), types (15%), embeddings (20%), fts (10%).
+/// All inputs are raw counts; coverage ratios are computed internally.
+pub(crate) fn calculate_health_score(
+    node_count: i64,
+    edge_count: i64,
+    type_count: i64,
+    embedding_count: i64,
+    fts_count: i64,
+) -> f64 {
+    let node_score = if node_count > 0 { 1.0 } else { 0.0 };
+    let edge_score = (edge_count as f64 / node_count.max(1) as f64).min(1.0);
+    let type_score = if node_count > 0 {
+        type_count as f64 / node_count as f64
+    } else {
+        1.0
+    };
+    let embedding_score = if node_count > 0 {
+        embedding_count as f64 / node_count as f64
+    } else {
+        1.0
+    };
+    let fts_score = if node_count > 0 {
+        fts_count as f64 / node_count as f64
+    } else {
+        1.0
+    };
+
+    node_score * 0.35
+        + edge_score * 0.20
+        + type_score * 0.15
+        + embedding_score * 0.20
+        + fts_score * 0.10
+}
 
 // ─── Parameter Structs ───────────────────────────────────────────────────────
 
@@ -237,6 +275,22 @@ pub struct ReflectParams {
     pub focus_topics: Option<String>,
     #[schemars(description = "Check API/Ollama status only")]
     pub status_only: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReflectRunParams {
+    #[schemars(description = "Number of recent turns to consider (unused, engine uses internal config)")]
+    pub turns: Option<i64>,
+    #[schemars(description = "Dry run mode (unused, engine uses internal config)")]
+    pub dry_run: Option<bool>,
+}
+
+// ─── Consolidation Params ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ConsolidateParams {
+    #[schemars(description = "Lean mode quick snapshot (skip reflection)")]
+    pub lean_mode: Option<bool>,
 }
 
 // ─── Trust & Health Params ──────────────────────────────────────────────────
@@ -809,6 +863,7 @@ impl TdgServer {
 
         let node_count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0)).unwrap_or(0);
         let edge_count: i64 = conn.query_row("SELECT COUNT(*) FROM edges WHERE valid_to IS NULL", [], |r| r.get(0)).unwrap_or(0);
+        let type_count: i64 = conn.query_row("SELECT COUNT(DISTINCT node_type) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0)).unwrap_or(0);
         let fts_count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes_fts", [], |r| r.get(0)).unwrap_or(0);
         let emb_count: i64 = conn.query_row("SELECT COUNT(*) FROM embeddings", [], |r| r.get(0)).unwrap_or(0);
         let mentions: i64 = conn.query_row("SELECT COUNT(*) FROM edges WHERE edge_type = 'MENTIONS' AND valid_to IS NULL", [], |r| r.get(0)).unwrap_or(0);
@@ -825,9 +880,7 @@ impl TdgServer {
         let db_size: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0)).unwrap_or(0)
             * conn.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap_or(4096);
 
-        let health_score = fts_coverage * 0.25 + emb_coverage * 0.25 + (1.0 - edge_noise) * 0.15
-            + (1.0 - (orphans as f64 / (orphans + 100).max(1) as f64)) * 0.10
-            + if node_count > 0 { 0.25 } else { 0.0 };
+        let health_score = calculate_health_score(node_count, edge_count, type_count, emb_count, fts_count);
 
         Ok(json!({
             "node_count": node_count,
@@ -902,6 +955,14 @@ impl TdgServer {
                 sql.push_str(" AND node_id = ?");
                 pv.push(Box::new(nid.clone()));
             }
+        }
+        if let Some(ref a) = params.after {
+            sql.push_str(" AND timestamp >= ?");
+            pv.push(Box::new(a.clone()));
+        }
+        if let Some(ref b) = params.before {
+            sql.push_str(" AND timestamp <= ?");
+            pv.push(Box::new(b.clone()));
         }
         sql.push_str(" ORDER BY timestamp DESC LIMIT ? OFFSET ?");
         pv.push(Box::new(limit));
@@ -1161,6 +1222,15 @@ impl TdgServer {
         )
         .map_err(mcp_err)?;
 
+        // Flow engine: propagate drives downward from source, then renormalize.
+        // Errors are logged, not propagated — flow is non-blocking.
+        if let Err(e) = flow::emit_downward(&conn, &params.source_id, flow::DEFAULT_MAX_DEPTH) {
+            tracing::warn!("flow::emit_downward failed after connect {}: {}", edge.id, e);
+        }
+        if let Err(e) = flow::renormalize_graph(&conn, false) {
+            tracing::warn!("flow::renormalize_graph failed after connect {}: {}", edge.id, e);
+        }
+
         Ok(serde_json::to_string(&json!({
             "edge_id": edge.id,
             "source": {"id": src.id, "node_type": src.node_type},
@@ -1355,7 +1425,7 @@ impl TdgServer {
 
         // quadrant distribution
         let mut qd = json!({"UL": 0, "UR": 0, "LL": 0, "LR": 0});
-        if let Ok(mut stmt) = conn.prepare("SELECT properties_json FROM nodes WHERE valid_to IS NULL AND properties_json NOT IN ('{}', '')") {
+        if let Ok(mut stmt) = conn.prepare("SELECT quadrants_json FROM nodes WHERE valid_to IS NULL AND quadrants_json NOT IN ('{}', '')") {
             if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
                 for row in rows.flatten() {
                     if let Ok(props) = serde_json::from_str::<serde_json::Value>(&row) {
@@ -1415,7 +1485,7 @@ impl TdgServer {
                 .map(|k| (k.to_string(), (Vec::new(), Vec::new(), Vec::new())))
                 .collect();
 
-            if let Ok(mut stmt) = conn.prepare("SELECT properties_json FROM nodes WHERE valid_to IS NULL AND properties_json NOT IN ('{}', '')") {
+            if let Ok(mut stmt) = conn.prepare("SELECT drives_json FROM nodes WHERE valid_to IS NULL AND drives_json NOT IN ('{}', '')") {
                 if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
                     for row in rows.flatten() {
                         if let Ok(props) = serde_json::from_str::<serde_json::Value>(&row) {
@@ -1568,6 +1638,12 @@ impl TdgServer {
             }
         }
 
+        let entity_extractor = crate::plugins::entity_extractor::EntityExtractor::new();
+        let extracted_entities = entity_extractor.extract(&params.description, Some(&conn));
+
+        let pref_extractor = crate::plugins::preference_extractor::PreferenceExtractor::new();
+        let extracted_preferences = pref_extractor.extract_from_message(&params.description);
+
         let trigger = params.trigger_digestion.unwrap_or(true);
         let mut digested = false;
         let mut hypothesis_count = 0usize;
@@ -1585,6 +1661,8 @@ impl TdgServer {
             "quadrant": quadrant,
             "trust": trust,
             "entities_connected": entity_ids,
+            "extracted_entities": extracted_entities,
+            "extracted_preferences": extracted_preferences,
             "digested": digested,
             "hypotheses_generated": hypothesis_count,
         }))
@@ -1676,6 +1754,10 @@ impl TdgServer {
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0)),
             );
+        }
+        if phase == "fts_rebuild" || phase == "all" {
+            crate::db::schema::rebuild_fts(&conn).map_err(mcp_err)?;
+            report.insert("fts_rebuilt".to_string(), json!(true));
         }
         Ok(serde_json::to_string(&json!(report)).unwrap_or_default())
     }
@@ -2085,6 +2167,37 @@ Do NOT include any text outside the JSON block."#
         .unwrap_or_default())
     }
 
+    #[tool(description = "Run reflect engine to discover patterns and create skill nodes from observation clusters")]
+    pub(crate) async fn tdg_reflect_run(
+        &self,
+        Parameters(_params): Parameters<ReflectRunParams>,
+    ) -> Result<String, McpError> {
+        if self.lean_guard()? {
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
+        }
+
+        let conn = get_conn(&self.pool)?;
+        let engine = ReflectEngine::new(&conn);
+        let result = engine.run().map_err(mcp_err)?;
+
+        Ok(serde_json::to_string(&json!({
+            "status": "ok",
+            "skipped": result.skipped,
+            "skip_reason": result.skip_reason,
+            "observations_analyzed": result.observations_analyzed,
+            "clusters_found": result.clusters_found,
+            "clusters_processed": result.clusters_processed,
+            "skills_created": result.skills_created,
+            "discoveries_created": result.discoveries_created,
+            "observations_archived": result.observations_archived,
+            "errors": result.errors,
+            "timestamp": crate::db::crud::now_iso(),
+        }))
+        .unwrap_or_default())
+    }
+
     // ─── Trust Tools ────────────────────────────────────────────────────────
 
     #[tool(description = "Get agent trust score")]
@@ -2353,6 +2466,26 @@ Do NOT include any text outside the JSON block."#
         let prompt =
             crate::mind::injector::generate_prompt(&conn, &cfg).map_err(mcp_err)?;
         Ok(prompt)
+    }
+
+    #[tool(description = "Run consolidation pass on graph")]
+    pub(crate) async fn tdg_consolidate(
+        &self,
+        Parameters(params): Parameters<ConsolidateParams>,
+    ) -> Result<String, McpError> {
+        if self.lean_guard()? {
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
+        }
+
+        let conn = get_conn(&self.pool)?;
+        let lean = params.lean_mode.unwrap_or(false);
+
+        let engine = crate::mind::consolidation_engine::ConsolidationEngine::new(&conn, lean);
+        let report = engine.run().map_err(mcp_err)?;
+
+        Ok(serde_json::to_string(&report).unwrap_or_default())
     }
 }
 
@@ -2725,10 +2858,10 @@ fn pattern_synthesis(
     // ── Drive state analysis ────────────────────────────────────
     {
         let drive_query = r#"
-            SELECT drives FROM nodes
+            SELECT drives_json FROM nodes
             WHERE valid_to IS NULL
-              AND drives IS NOT NULL
-              AND drives != '{}'
+              AND drives_json IS NOT NULL
+              AND drives_json != '{}'
             LIMIT 20
         "#;
         if let Ok(mut stmt) = conn.prepare(drive_query) {
