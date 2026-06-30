@@ -70,16 +70,16 @@ fn drives_by_type() -> &'static HashMap<&'static str, HashMap<&'static str, i64>
     })
 }
 
-fn stage_by_type() -> &'static HashMap<&'static str, &'static str> {
-    static MAP: OnceLock<HashMap<&str, &str>> = OnceLock::new();
+fn stage_by_type() -> &'static HashMap<&'static str, i32> {
+    static MAP: OnceLock<HashMap<&str, i32>> = OnceLock::new();
     MAP.get_or_init(|| {
         let mut m = HashMap::new();
-        m.insert("observation", "T2");
-        m.insert("capability", "T3");
-        m.insert("telos", "T1");
-        m.insert("action", "T4");
-        m.insert("being", "T0");
-        m.insert("constraint", "T2");
+        m.insert("observation", 2);  // T2
+        m.insert("capability", 3);   // T3
+        m.insert("telos", 1);        // T1
+        m.insert("action", 4);       // T4
+        m.insert("being", 0);        // T0
+        m.insert("constraint", 2);   // T2
         m
     })
 }
