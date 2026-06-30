@@ -13,6 +13,8 @@
 use std::path::{Path, PathBuf};
 #[cfg(feature = "onnx")]
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(feature = "onnx")]
+use crate::error::{TdgError, TdgResult};
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
