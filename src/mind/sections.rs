@@ -20,12 +20,14 @@ pub struct GoalConfig {
 
 impl Default for GoalConfig {
     fn default() -> Self {
+        let today = chrono::Utc::now().date_naive();
+        let target = today + chrono::Duration::days(30);
         Self {
             revenue_target: 1000.0,
             revenue_currency: "₹".to_string(),
-            target_date: "2026-06-30".to_string(),
-            checkpoint_date: "2026-05-20".to_string(),
-            checkpoint_label: "May 20".to_string(),
+            target_date: target.format("%Y-%m-%d").to_string(),
+            checkpoint_date: today.format("%Y-%m-%d").to_string(),
+            checkpoint_label: today.format("%b %d").to_string(),
         }
     }
 }
@@ -34,30 +36,31 @@ impl GoalConfig {
     pub fn load(cfg: &Config) -> Self {
         let path = cfg.config_dir().join("goals.json");
         let data = robust_json_load(&path, json!({}));
+        let defaults = GoalConfig::default();
         Self {
             revenue_target: data
                 .get("revenue_target")
                 .and_then(|v| v.as_f64())
-                .unwrap_or(1000.0),
+                .unwrap_or(defaults.revenue_target),
             revenue_currency: data
                 .get("revenue_currency")
                 .and_then(|v| v.as_str())
-                .unwrap_or("₹")
+                .unwrap_or(&defaults.revenue_currency)
                 .to_string(),
             target_date: data
                 .get("target_date")
                 .and_then(|v| v.as_str())
-                .unwrap_or("2026-06-30")
+                .unwrap_or(&defaults.target_date)
                 .to_string(),
             checkpoint_date: data
                 .get("checkpoint_date")
                 .and_then(|v| v.as_str())
-                .unwrap_or("2026-05-20")
+                .unwrap_or(&defaults.checkpoint_date)
                 .to_string(),
             checkpoint_label: data
                 .get("checkpoint_label")
                 .and_then(|v| v.as_str())
-                .unwrap_or("May 20")
+                .unwrap_or(&defaults.checkpoint_label)
                 .to_string(),
         }
     }
@@ -68,9 +71,9 @@ pub fn generate_revenue_urgency_section(cfg: &Config) -> String {
     let now = chrono::Utc::now().date_naive();
 
     let target_date = chrono::NaiveDate::parse_from_str(&goals.target_date, "%Y-%m-%d")
-        .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(2026, 6, 30).unwrap());
+        .unwrap_or_else(|_| chrono::Utc::now().date_naive() + chrono::Duration::days(30));
     let checkpoint_date = chrono::NaiveDate::parse_from_str(&goals.checkpoint_date, "%Y-%m-%d")
-        .unwrap_or_else(|_| chrono::NaiveDate::from_ymd_opt(2026, 5, 20).unwrap());
+        .unwrap_or_else(|_| chrono::Utc::now().date_naive());
 
     let days_to_target = (target_date - now).num_days();
     let days_to_checkpoint = (checkpoint_date - now).num_days();
