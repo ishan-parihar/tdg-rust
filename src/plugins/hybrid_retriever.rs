@@ -118,22 +118,14 @@ impl Default for RetrievalWeights {
 static HIGH_VALUE_TYPES: &[&str] = &["action", "telos", "skill", "tool", "product", "capability"];
 
 /// The Hybrid Retriever — combined FTS5 + trust + recency scoring.
+/// ponytail: weights are per-query via `weights_for_intent()`, not stored on the struct.
 pub struct HybridRetriever {
-    weights: RetrievalWeights,
     min_confidence: f64,
 }
 
 impl HybridRetriever {
     pub fn new() -> Self {
         Self {
-            weights: RetrievalWeights::default(),
-            min_confidence: 0.0,
-        }
-    }
-
-    pub fn with_weights(weights: RetrievalWeights) -> Self {
-        Self {
-            weights,
             min_confidence: 0.0,
         }
     }

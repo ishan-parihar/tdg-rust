@@ -401,6 +401,8 @@ impl TrustStore {
         }
     }
 
+    // ponytail: infrastructure for future MCP trust tools, not yet wired
+    #[allow(dead_code)]
     fn set_trust(
         &self,
         agent_name: &str,
@@ -511,8 +513,9 @@ fn has_trust_record(conn: &rusqlite::Connection, agent_name: &str) -> bool {
 
 // ─── In-Memory Health Monitor ──────────────────────────────────────────────
 
-/// A single health check record.
+// ponytail: structured record for future health query tools
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct HealthCheckRecord {
     service: String,
     latency_ms: f64,
@@ -617,6 +620,8 @@ impl HealthMonitor {
         }))
     }
 
+    // ponytail: infrastructure for future health query tools
+    #[allow(dead_code)]
     fn get_recent_health_checks(&self, service: Option<&str>, limit: i64) -> Value {
         if let Ok(conn) = self.pool.get_connection() {
             if let Ok(checks) = crate::db::crud::get_recent_health_checks(&conn, service, limit) {
