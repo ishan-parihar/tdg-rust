@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Library crate — public API items may not be used by the binary
+// ponytail: dead_code warnings are enabled — let the compiler surface real dead code
 
 //! # TDG-Rust
 //!
@@ -16,7 +16,7 @@
 //! │          (stdio / HTTP-SSE via axum)             │
 //! ├─────────────────────────────────────────────────┤
 //! │                    Plugins                       │
-//! │  entity_extractor · hybrid_retriever · turn_capture │
+//! │     entity_extractor · hybrid_retriever              │
 //! ├─────────────────────────────────────────────────┤
 //! │              Mind / Knowledge                    │
 //! │  consolidation · reflect · terrain · injector    │

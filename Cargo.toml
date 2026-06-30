@@ -15,19 +15,15 @@ anyhow = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-appender = "0.2"
+
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 
 # HTTP/SSE (MCP transport)
 axum = { version = "0.8", features = ["json"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
-
-# Linear algebra
-ndarray = { version = "0.16", features = ["serde"] }
 
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
@@ -48,20 +44,11 @@ figment = { version = "0.10", features = ["yaml", "toml", "json", "env"] }
 # LLM (Ollama)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 
-# Random (for HRR)
-rand = "0.8"
-
 # Regex (for plugins)
 regex = "1"
 
 # SHA-256 (for reflect engine fingerprints)
 sha2 = "0.10"
-
-# File locking (inter-process write guard)
-fs4 = "1"
-
-# Temp file support (used by test_utils which is pub mod)
-tempfile = "3"
 
 # Graph algorithms
 petgraph = { version = "0.8", features = ["serde-1"] }

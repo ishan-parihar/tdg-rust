@@ -1,4 +1,4 @@
-#![allow(dead_code)] // Binary uses library public API — dead_code warnings are for library consumers
+// ponytail: dead_code warnings enabled — let the compiler surface real dead code
 
 use clap::{Parser, Subcommand};
 

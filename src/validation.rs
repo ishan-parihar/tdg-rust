@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::models::{EDGE_TYPES, NODE_TYPES};
+use crate::models::EDGE_TYPES;
 
 /// Maximum text length for node descriptions.
 pub const MAX_TEXT_LENGTH: usize = 50_000;
@@ -251,61 +251,6 @@ fn valid_edge_patterns() -> HashMap<(&'static str, &'static str), Vec<&'static s
     m
 }
 
-/// Validate a node creation request.
-///
-/// Returns `Ok(())` if valid, or `Err(message)` with details about what's missing.
-pub fn validate_node_creation(
-    node_type: &str,
-    fields: &HashMap<String, serde_json::Value>,
-) -> Result<(), String> {
-    if !NODE_TYPES.contains(&node_type) {
-        return Err(format!("Unknown node type: '{node_type}'"));
-    }
-
-    let contracts = node_contracts();
-    if let Some(contract) = contracts.get(node_type) {
-        // Check required fields
-        let mut missing_required = Vec::new();
-        for field in &contract.required {
-            if !fields.contains_key(*field) || fields.get(*field).is_some_and(|v| v.is_null()) {
-                missing_required.push(*field);
-            }
-        }
-
-        if !missing_required.is_empty() {
-            let mut msg = format!("Missing required fields for '{node_type}':");
-            for field in &missing_required {
-                let guidance = contract
-                    .contextual_guidance
-                    .get(field)
-                    .unwrap_or(&"Required field missing");
-                msg.push_str(&format!("\n  - {field}: {guidance}"));
-            }
-            return Err(msg);
-        }
-
-        // Check strongly recommended fields (warnings)
-        let mut missing_recommended = Vec::new();
-        for field in &contract.strongly_recommended {
-            if !fields.contains_key(*field) || fields.get(*field).is_some_and(|v| v.is_null()) {
-                missing_recommended.push(*field);
-            }
-        }
-
-        if !missing_recommended.is_empty() {
-            let mut msg = format!("Warning: recommended fields missing for '{node_type}':");
-            for field in &missing_recommended {
-                msg.push_str(&format!("\n  - {field}"));
-            }
-            // Return Ok with a warning (caller can log it)
-            // For strict mode, this could be an error
-            tracing::warn!("{}", msg);
-        }
-    }
-
-    Ok(())
-}
-
 /// Validate an edge creation request.
 ///
 /// Returns `Ok(())` if valid, or `Err(message)` with details.
@@ -334,73 +279,10 @@ pub fn validate_edge_creation(
     Ok(())
 }
 
-/// Validate text length.
-pub fn validate_text(text: &str, field_name: &str) -> Result<(), String> {
-    if text.len() > MAX_TEXT_LENGTH {
-        return Err(format!(
-            "{field_name} exceeds maximum length of {MAX_TEXT_LENGTH} characters (got {})",
-            text.len()
-        ));
-    }
-    Ok(())
-}
-
-/// Validate node ID length.
-pub fn validate_node_id(id: &str) -> Result<(), String> {
-    if id.len() > MAX_NODE_ID_LENGTH {
-        return Err(format!(
-            "Node ID exceeds maximum length of {MAX_NODE_ID_LENGTH} characters (got {})",
-            id.len()
-        ));
-    }
-    if id.is_empty() {
-        return Err("Node ID cannot be empty".to_string());
-    }
-    Ok(())
-}
-
-/// Validate limit parameter.
-pub fn validate_limit(limit: i64) -> Result<(), String> {
-    if limit < 0 {
-        return Err("Limit cannot be negative".to_string());
-    }
-    if limit > MAX_LIMIT {
-        return Err(format!("Limit {limit} exceeds maximum of {MAX_LIMIT}"));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn validate_observation_requires_name() {
-        let mut fields = HashMap::new();
-        let result = validate_node_creation("observation", &fields);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("name"));
-
-        fields.insert("name".to_string(), json!("test"));
-        assert!(validate_node_creation("observation", &fields).is_ok());
-    }
-
-    #[test]
-    fn validate_action_requires_parent_ids() {
-        let mut fields = HashMap::new();
-        fields.insert("name".to_string(), json!("do something"));
-        let result = validate_node_creation("action", &fields);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("parent_ids"));
-    }
-
-    #[test]
-    fn validate_unknown_node_type() {
-        let fields = HashMap::new();
-        let result = validate_node_creation("bogus", &fields);
-        assert!(result.is_err());
-    }
 
     #[test]
     fn validate_edge_types() {
@@ -408,30 +290,5 @@ mod tests {
         assert!(validate_edge_creation("telos", "action", "DECOMPOSES_TO").is_ok());
         assert!(validate_edge_creation("observation", "hypothesis", "EVIDENCES").is_ok());
         assert!(validate_edge_creation("constraint", "action", "BLOCKS").is_ok());
-    }
-
-    #[test]
-    fn validate_text_length_ok() {
-        assert!(validate_text("hello", "name").is_ok());
-    }
-
-    #[test]
-    fn validate_text_length_exceeded() {
-        let long_text = "x".repeat(MAX_TEXT_LENGTH + 1);
-        assert!(validate_text(&long_text, "name").is_err());
-    }
-
-    #[test]
-    fn validate_node_id_empty() {
-        assert!(validate_node_id("").is_err());
-    }
-
-    #[test]
-    fn test_validate_limit() {
-        assert!(validate_limit(0).is_ok());
-        assert!(validate_limit(500).is_ok());
-        assert!(validate_limit(MAX_LIMIT).is_ok());
-        assert!(validate_limit(MAX_LIMIT + 1).is_err());
-        assert!(validate_limit(-1).is_err());
     }
 }
