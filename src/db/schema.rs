@@ -17,6 +17,20 @@ pub fn init_fts(conn: &Connection) -> TdgResult<()> {
     Ok(())
 }
 
+/// Rebuild the FTS5 index from the nodes table.
+///
+/// Useful when the index falls out of sync due to direct SQL edits
+/// or trigger failures. Deletes all FTS rows and re-inserts active nodes.
+pub fn rebuild_fts(conn: &Connection) -> TdgResult<()> {
+    conn.execute("DELETE FROM nodes_fts", [])?;
+    conn.execute(
+        "INSERT INTO nodes_fts(rowid, node_id, name, description)
+         SELECT rowid, id, name, description FROM nodes WHERE valid_to IS NULL",
+        [],
+    )?;
+    Ok(())
+}
+
 /// Run all migrations to bring schema up to date.
 ///
 /// Mirrors `migrate()`, `migrate_v3()`, `migrate_v4()` from `core/graph_db.py`.
@@ -292,7 +306,7 @@ CREATE TRIGGER IF NOT EXISTS nodes_events_ai AFTER INSERT ON nodes BEGIN
     VALUES (
         hex(randomblob(16)),
         'node_created',
-        datetime('now'),
+        strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
         new.id,
         json_object('node_type', new.node_type, 'name', new.name)
     );
@@ -303,7 +317,7 @@ CREATE TRIGGER IF NOT EXISTS nodes_events_au AFTER UPDATE ON nodes BEGIN
     VALUES (
         hex(randomblob(16)),
         'node_updated',
-        datetime('now'),
+        strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
         new.id,
         json_object('node_type', new.node_type, 'name', new.name)
     );
@@ -314,7 +328,7 @@ CREATE TRIGGER IF NOT EXISTS nodes_events_ad AFTER DELETE ON nodes BEGIN
     VALUES (
         hex(randomblob(16)),
         'node_deleted',
-        datetime('now'),
+        strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
         old.id,
         json_object('node_type', old.node_type, 'name', old.name)
     );
@@ -326,7 +340,7 @@ CREATE TRIGGER IF NOT EXISTS edges_events_ai AFTER INSERT ON edges BEGIN
     VALUES (
         hex(randomblob(16)),
         'edge_created',
-        datetime('now'),
+        strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
         NULL,
         new.source_id,
         new.target_id,
@@ -339,7 +353,7 @@ CREATE TRIGGER IF NOT EXISTS edges_events_au AFTER UPDATE ON edges BEGIN
     VALUES (
         hex(randomblob(16)),
         'edge_updated',
-        datetime('now'),
+        strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
         NULL,
         new.source_id,
         new.target_id,
@@ -352,7 +366,7 @@ CREATE TRIGGER IF NOT EXISTS edges_events_ad AFTER DELETE ON edges BEGIN
     VALUES (
         hex(randomblob(16)),
         'edge_deleted',
-        datetime('now'),
+        strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
         NULL,
         old.source_id,
         old.target_id,
