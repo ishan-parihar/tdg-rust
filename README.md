@@ -61,12 +61,6 @@ TDG is a graph-based memory system that gives AI agents persistent, structured k
 - Soft delete with archival
 - Event-sourced temporal reconstruction (JSONL journal)
 
-### HRR (Holographic Reduced Representation)
-- 1024-dim phase vectors with FFT-based circular convolution
-- Bind/unbind/bundle operations
-- Graph-aware retrieval: probe, related, reason, contradict
-- Memory bank for multi-agent isolation
-
 ### Drive Propagation
 - 3-phase pipeline: emission → stabilization → aggregation
 - Quadrant modulators (UL/UR/LL/LR)
@@ -91,7 +85,6 @@ TDG is a graph-based memory system that gives AI agents persistent, structured k
 - Health monitor with circuit breakers
 
 ### Safety
-- WriteGuard inter-process file locking (fs4)
 - Circuit breaker (Closed/Open/HalfOpen states)
 - PreWriteSnapshot for transaction rollback
 - Node/edge size limits (100K nodes, 500K edges)
@@ -251,30 +244,19 @@ src/
 ├── main.rs              CLI entry point (12 subcommands)
 ├── lib.rs               Library root, 28 modules
 ├── models.rs            Core types: Node, Edge, Event, Embedding
-├── schema.rs            Enums: NodeType(21), EdgeType(35), Stage(8), TelosLevel(7)
-├── config.rs            Figment-based hierarchical config
-├── error.rs             TdgError (12 variants)
 ├── db/                  SQLite persistence (pool, CRUD, schema, events, write_guard)
 ├── mcp/                 MCP server (stdio + HTTP), 26 tools
 ├── flow.rs              Dual-pole drive propagation engine
-├── hrr.rs               1024-dim HRR vector algebra
-├── hrr_retriever.rs     Graph-aware HRR retrieval
 ├── knowledge.rs         Catalyst lifecycle + graph hygiene
-├── graph_algorithms.rs  Centrality, community detection (Leiden)
 ├── graph_projection.rs  SQLite → petgraph in-memory projection
-├── clustering.rs        TF-IDF + DBSCAN/K-Means
 ├── telearchy.rs         Stage-gated telos hierarchy
-├── digestion.rs         Observation → hypothesis → capability pipeline
-├── eventsourcing/       JSONL journal, snapshot, replay engine
 ├── audit.rs             5-report audit engine + Markdown export
 ├── circuit_breaker.rs   State machine + pre-write snapshots
-├── score/               5-layer provenance-aware scoring
 ├── grammar/             Node blueprints + auto-wiring
-├── visualization.rs     D3.js, HTML, DOT export
+├── validation.rs        Edge validation contracts
 ├── plugins/             Entity extractor, hybrid retriever, preference extractor
 ├── llm/                 LLM trait + OpenAI/Anthropic/Ollama providers
 ├── mind/                Consolidation, reflection, terrain, injection, diagnostics
-├── ops.rs               High-level operations facade
 └── scripts/             CLI script implementations
 ```
 
@@ -284,10 +266,8 @@ src/
 |----------|--------|
 | **Core** | tokio, serde/serde_json, anyhow, thiserror, tracing |
 | **Database** | rusqlite (bundled, WAL mode) |
-| **HTTP/SSE** | axum, tower-http, tokio-stream |
-| **Linear Algebra** | ndarray, rustfft |
-| **Graph** | petgraph, rustworkx-core, leiden-rs |
-| **Clustering** | linfa, linfa-clustering, linfa-preprocessing |
+| **HTTP** | axum, tokio-stream |
+| **Graph** | petgraph |
 | **MCP** | rmcp (server, schemars, transport-io) |
 | **LLM** | reqwest (json) |
 | **CLI** | clap (derive) |
