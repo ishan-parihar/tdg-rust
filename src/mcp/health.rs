@@ -31,6 +31,9 @@ impl HealthMonitor {
         }
     }
 
+    /// Maximum in-memory health check records to prevent unbounded growth.
+    const MAX_IN_MEMORY_CHECKS: usize = 1000;
+
     pub fn record_health_check(
         &self,
         service: &str,
@@ -52,6 +55,11 @@ impl HealthMonitor {
                 metadata: metadata.clone(),
                 timestamp: crate::db::crud::now_iso(),
             });
+            // Prune oldest records if exceeding capacity (ring buffer behavior)
+            if checks.len() > Self::MAX_IN_MEMORY_CHECKS {
+                let drain_count = checks.len() - Self::MAX_IN_MEMORY_CHECKS;
+                checks.drain(..drain_count);
+            }
         }
 
         if let Ok(conn) = self.pool.get_connection() {
