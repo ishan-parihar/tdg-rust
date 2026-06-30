@@ -5,7 +5,6 @@
 
 use rusqlite::Connection;
 use serde_json::{json, Value};
-use std::sync::atomic::AtomicUsize;
 use tracing::warn;
 
 use crate::config::Config;
@@ -16,8 +15,6 @@ use crate::mind::feeling::{feeling_state_prompt, FeelingEngine};
 use crate::mind::sections::*;
 use crate::mind::terrain::{discover_skills_for_terrain, generate_terrain_context};
 
-static WISDOM_CALL_COUNTER: AtomicUsize = AtomicUsize::new(0);
-const WISDOM_CADENCE: usize = 5;
 
 pub fn generate_prompt(conn: &Connection, cfg: &Config) -> TdgResult<String> {
     let lean = cfg.lean;

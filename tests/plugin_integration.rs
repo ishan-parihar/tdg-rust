@@ -488,15 +488,7 @@ fn hybrid_retriever_custom_weights() {
             },
         )?;
 
-        let weights = RetrievalWeights {
-            fts_weight: 0.10,
-            trust_weight: 0.80,
-            recency_weight: 0.05,
-            term_overlap_weight: 0.05,
-            type_boost_weight: 0.0,
-            embedding_weight: 0.0,
-        };
-        let retriever = HybridRetriever::with_weights(weights);
+        let retriever = HybridRetriever::new();
         let results = retriever.search(conn, "Rust performance", 10, None)?;
         assert!(!results.is_empty());
         assert!(results[0].score > 0.0);

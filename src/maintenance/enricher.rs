@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use tracing::{info, warn};
 
-const BATCH_SIZE: usize = 100;
 
 fn drives_by_type() -> &'static HashMap<&'static str, HashMap<&'static str, i64>> {
     static MAP: OnceLock<HashMap<&str, HashMap<&str, i64>>> = OnceLock::new();
