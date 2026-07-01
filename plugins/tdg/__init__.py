@@ -323,7 +323,7 @@ class TDGMemoryProvider(MemoryProvider):
         result = self._client.call_tool("tdg_observe", {
             "text": description,
             "description": description,
-            "trigger_digestion": False,
+            "trigger_digestion": True,
         })
 
         if "error" in result:
@@ -376,7 +376,7 @@ class TDGMemoryProvider(MemoryProvider):
             self._client.call_tool("tdg_observe", {
                 "text": desc,
                 "description": desc,
-                "trigger_digestion": False,
+                "trigger_digestion": True,
             })
         except Exception:
             pass  # Best-effort — never block the agent
@@ -404,7 +404,7 @@ class TDGMemoryProvider(MemoryProvider):
             self._client.call_tool("tdg_observe", {
                 "text": desc,
                 "description": desc,
-                "trigger_digestion": False,
+                "trigger_digestion": True,
             })
         except Exception:
             pass

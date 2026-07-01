@@ -984,14 +984,36 @@ impl TdgServer {
 
             // quadrant distribution
             let mut qd = json!({"UL": 0, "UR": 0, "LL": 0, "LR": 0});
-            if let Ok(mut stmt) = conn.prepare("SELECT quadrants_json FROM nodes WHERE valid_to IS NULL AND quadrants_json NOT IN ('{}', '')") {
-                if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+            
+            // Read from quadrants_json (new location) with fallback to properties_json (legacy)
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT quadrants_json, properties_json FROM nodes WHERE valid_to IS NULL AND (quadrants_json NOT IN ('{}', '') OR properties_json NOT IN ('{}', ''))"
+            ) {
+                if let Ok(rows) = stmt.query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                    ))
+                }) {
                     for row in rows.flatten() {
-                        if let Ok(props) = serde_json::from_str::<serde_json::Value>(&row) {
-                            if let Some(primary) = props.get("primary").and_then(|v| v.as_str()) {
-                                if let Some(count) = qd.get_mut(primary) {
-                                    *count = json!(count.as_i64().unwrap_or(0) + 1);
-                                }
+                        let (quadrants_json, properties_json) = row;
+                        
+                        // Try quadrants_json["primary"] first
+                        let mut primary: Option<String> = None;
+                        if let Ok(props) = serde_json::from_str::<serde_json::Value>(&quadrants_json) {
+                            primary = props.get("primary").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        }
+                        
+                        // Fallback to properties_json["quadrant"]
+                        if primary.is_none() {
+                            if let Ok(props) = serde_json::from_str::<serde_json::Value>(&properties_json) {
+                                primary = props.get("quadrant").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            }
+                        }
+                        
+                        if let Some(p) = primary {
+                            if let Some(count) = qd.get_mut(&p) {
+                                *count = json!(count.as_i64().unwrap_or(0) + 1);
                             }
                         }
                     }
@@ -1145,6 +1167,14 @@ impl TdgServer {
         run_blocking(move || {
             let conn = get_conn(&pool)?;
             let truncated: String = description.chars().take(80).collect();
+            
+            // Write quadrant to quadrants_json["primary"] for tdg_mind_state compatibility
+            // Also keep in properties_json for backward compatibility
+            let mut quadrants = serde_json::Map::new();
+            quadrants.insert("primary".to_string(), json!(quadrant));
+            quadrants.insert("cycle".to_string(), json!(cycle));
+            quadrants.insert("trust".to_string(), json!(trust));
+            
             let props = json!({
                 "quadrant": quadrant,
                 "cycle": cycle,
@@ -1158,6 +1188,7 @@ impl TdgServer {
                     description: Some(description.clone()),
                     source: Some("mcp_observe".to_string()),
                     properties: Some(props),
+                    quadrants: Some(json!(quadrants)),
                     ..Default::default()
                 },
             )
@@ -1364,6 +1395,15 @@ impl TdgServer {
                             .unwrap_or(0)),
                     );
                 }
+                "enrich" | "align_data" => {
+                    let enricher = crate::maintenance::Enricher::new(&conn);
+                    let enricher_report = enricher.run(false).map_err(mcp_err)?;
+                    report.insert("drives_enriched".to_string(), json!(enricher_report.drives_enriched));
+                    report.insert("stages_enriched".to_string(), json!(enricher_report.stages_enriched));
+                    report.insert("parents_enriched".to_string(), json!(enricher_report.parents_enriched));
+                    report.insert("embeddings_enriched".to_string(), json!(enricher_report.embeddings_enriched));
+                    report.insert("embeddings_failed".to_string(), json!(enricher_report.embeddings_failed));
+                }
                 "all" => {
                     // Run all maintenance actions
                     let hygiene = crate::knowledge::generate_hygiene_report(&conn).map_err(mcp_err)?;
@@ -1395,7 +1435,7 @@ impl TdgServer {
                 _ => {
                     return Err(McpError::invalid_params(
                         format!(
-                            "Unknown action '{}'. Valid actions: rebuild_fts, health, archive, all",
+                            "Unknown action '{}'. Valid actions: rebuild_fts, health, archive, enrich, align_data, all",
                             action_str
                         ),
                         None,
@@ -1404,6 +1444,35 @@ impl TdgServer {
             }
 
             Ok(serde_json::to_string(&json!(report)).unwrap_or_default())
+        }).await
+    }
+
+    #[tool(description = "Run enrichment pipeline: embeddings, drives, stages, parents")]
+    pub(crate) async fn tdg_enrich(
+        &self,
+        Parameters(params): Parameters<EnrichParams>,
+    ) -> Result<String, McpError> {
+        if self.lean_guard()? {
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
+        }
+        let dry_run = params.dry_run.unwrap_or(false);
+        let pool = self.pool.clone();
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+            let enricher = crate::maintenance::Enricher::new(&conn);
+            let report = enricher.run(dry_run).map_err(mcp_err)?;
+            Ok(serde_json::to_string(&json!({
+                "dry_run": report.dry_run,
+                "drives_enriched": report.drives_enriched,
+                "stages_enriched": report.stages_enriched,
+                "parents_enriched": report.parents_enriched,
+                "embeddings_enriched": report.embeddings_enriched,
+                "embeddings_failed": report.embeddings_failed,
+                "timestamp": report.timestamp,
+            }))
+            .unwrap_or_default())
         }).await
     }
 
