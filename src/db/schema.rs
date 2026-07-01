@@ -19,15 +19,11 @@ pub fn init_fts(conn: &Connection) -> TdgResult<()> {
 
 /// Rebuild the FTS5 index from the nodes table.
 ///
-/// Useful when the index falls out of sync due to direct SQL edits
-/// or trigger failures. Deletes all FTS rows and re-inserts active nodes.
+/// Uses the FTS5 `rebuild` command for external-content tables (`content='nodes'`).
+/// A plain `DELETE FROM nodes_fts` can fail with error 267 when shadow tables are
+/// inconsistent; `rebuild` re-indexes from the content table safely.
 pub fn rebuild_fts(conn: &Connection) -> TdgResult<()> {
-    conn.execute("DELETE FROM nodes_fts", [])?;
-    conn.execute(
-        "INSERT INTO nodes_fts(rowid, id, name, description)
-         SELECT rowid, id, name, description FROM nodes WHERE valid_to IS NULL",
-        [],
-    )?;
+    conn.execute("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')", [])?;
     Ok(())
 }
 
@@ -76,8 +72,14 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     ).ok();
 
     // Phase 7: Fix FTS5 schema column name mismatch (P0 critical fix)
-    // Drop and recreate nodes_fts with correct column name (id instead of node_id)
-    conn.execute_batch("DROP TABLE IF EXISTS nodes_fts").ok();
+    // Drop stale triggers first — CREATE TRIGGER IF NOT EXISTS won't replace old node_id triggers.
+    conn.execute_batch(
+        "DROP TRIGGER IF EXISTS nodes_fts_ai;
+         DROP TRIGGER IF EXISTS nodes_fts_ad;
+         DROP TRIGGER IF EXISTS nodes_fts_au;
+         DROP TABLE IF EXISTS nodes_fts;",
+    )
+    .ok();
     init_fts(conn)?;
     rebuild_fts(conn)?;
 
@@ -625,5 +627,49 @@ mod tests {
 
         let data: serde_json::Value = serde_json::from_str(&row).unwrap();
         assert_eq!(data["edge_type"].as_str().unwrap(), "ENABLES");
+    }
+
+    #[test]
+    fn migration_replaces_legacy_fts_triggers() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        // Simulate pre-fix database: FTS table and triggers used node_id column name.
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE nodes_fts USING fts5(
+                node_id UNINDEXED,
+                name,
+                description,
+                content='nodes',
+                content_rowid='rowid',
+                tokenize='porter unicode61'
+            );
+            CREATE TRIGGER nodes_fts_ai AFTER INSERT ON nodes BEGIN
+                INSERT INTO nodes_fts(rowid, node_id, name, description)
+                VALUES (new.rowid, new.id, new.name, new.description);
+            END;",
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO nodes (id, node_type, name, description, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, datetime('now', 'subsec'), datetime('now', 'subsec'))",
+            rusqlite::params!["n_fts_legacy", "observation", "Legacy FTS", "desc"],
+        )
+        .unwrap();
+
+        let fts_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM nodes_fts WHERE id = 'n_fts_legacy'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(fts_count, 1);
+
+        let fts_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM nodes_fts", [], |r| r.get(0))
+            .unwrap();
+        assert!(fts_rows >= 1);
     }
 }
