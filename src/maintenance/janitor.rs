@@ -59,7 +59,7 @@ impl<'a> Janitor<'a> {
                 let count: i64 = self.conn.query_row(
                     "SELECT COUNT(*) FROM nodes n
                      LEFT JOIN nodes_fts f ON n.rowid = f.rowid
-                     WHERE n.valid_to IS NULL AND f.node_id IS NULL",
+                     WHERE n.valid_to IS NULL AND f.id IS NULL",
                     [],
                     |r| r.get(0),
                 )?;
@@ -68,11 +68,11 @@ impl<'a> Janitor<'a> {
             } else {
                 // Backfill: insert FTS entries for active nodes missing from FTS
                 let count = self.conn.execute(
-                    "INSERT OR IGNORE INTO nodes_fts(rowid, node_id, name, description)
+                    "INSERT OR IGNORE INTO nodes_fts(rowid, id, name, description)
                      SELECT n.rowid, n.id, n.name, n.description
                      FROM nodes n
                      LEFT JOIN nodes_fts f ON n.rowid = f.rowid
-                     WHERE n.valid_to IS NULL AND f.node_id IS NULL",
+                     WHERE n.valid_to IS NULL AND f.id IS NULL",
                     [],
                 )?;
                 report.fts5_indexed = count as i64;
