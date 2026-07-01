@@ -3,7 +3,6 @@
 //! Uses `#[tool]` and `#[tool_router]` macros for automatic schema generation.
 
 use std::collections::HashMap;
-use std::future::Future;
 use std::sync::Arc;
 
 use petgraph::algo::page_rank;
@@ -67,6 +66,57 @@ fn mcp_err(e: impl std::fmt::Display) -> McpError {
     McpError::internal_error(e.to_string(), None)
 }
 
+/// Helper function to upsert an entity node and create a MENTIONS edge.
+/// Returns the entity node ID.
+fn upsert_entity_and_connect(
+    conn: &rusqlite::Connection,
+    observation_id: &str,
+    entity_name: &str,
+    entity_type: &str,
+) -> Result<String, McpError> {
+    let name = entity_name.trim().to_string();
+    if name.is_empty() {
+        return Err(McpError::invalid_params("entity name cannot be empty", None));
+    }
+
+    // Search for existing entity by name and type
+    let existing = crate::db::crud::search(&conn, &name, 1)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|(n, _)| n.node_type == entity_type && n.name == name)
+        .map(|(n, _)| n);
+
+    let entity_node = if let Some(n) = existing {
+        n
+    } else {
+        crate::db::crud::add_node(
+            conn,
+            &NewNode {
+                node_type: entity_type.to_string(),
+                name: name.clone(),
+                source: Some("mcp_observe".to_string()),
+                ..Default::default()
+            },
+        )
+        .map_err(mcp_err)?
+    };
+
+    // Create MENTIONS edge from observation to entity
+    let _ = crate::db::crud::add_edge(
+        conn,
+        &crate::models::NewEdge {
+            source_id: observation_id.to_string(),
+            target_id: entity_node.id.clone(),
+            edge_type: "MENTIONS".to_string(),
+            weight: Some(1.0),
+            properties: None,
+            agent_id: Some("mcp_observe".to_string()),
+        },
+    );
+
+    Ok(entity_node.id)
+}
+
 /// Offload blocking SQLite I/O to a dedicated thread pool.
 /// Prevents blocking the tokio async executor on every tool call.
 async fn run_blocking<F, T>(f: F) -> Result<T, McpError>
@@ -84,8 +134,8 @@ where
 #[derive(Clone)]
 pub struct TdgServer {
     pub pool: Arc<ConnectionPool>,
-    pub trust_store: Arc<TrustStore>,
-    pub health_monitor: Arc<HealthMonitor>,
+    pub(crate) trust_store: Arc<TrustStore>,
+    pub(crate) health_monitor: Arc<HealthMonitor>,
     pub mind_state_manager: Arc<MindStateManager>,
     pub lean: bool,
 }
@@ -269,7 +319,7 @@ impl TdgServer {
                         if exists { continue; }
                     }
                     conn.execute(
-                        "INSERT OR REPLACE INTO nodes (id, node_type, name, description, created_at) VALUES (?1, ?2, ?3, ?4, datetime('now'))",
+                        "INSERT OR REPLACE INTO nodes (id, node_type, name, description, created_at) VALUES (?1, ?2, ?3, ?4, datetime('now', 'subsec'))",
                         [id, node_type, name, description],
                     ).ok();
                     nodes_imported += 1;
@@ -282,7 +332,7 @@ impl TdgServer {
                     let target = edge["target_id"].as_str().unwrap_or("");
                     let edge_type = edge["edge_type"].as_str().unwrap_or("RELATES_TO");
                     conn.execute(
-                        "INSERT OR IGNORE INTO edges (source_id, target_id, edge_type, created_at) VALUES (?1, ?2, ?3, datetime('now'))",
+                        "INSERT OR IGNORE INTO edges (source_id, target_id, edge_type, created_at) VALUES (?1, ?2, ?3, datetime('now', 'subsec'))",
                         [source, target, edge_type],
                     ).ok();
                     edges_imported += 1;
@@ -1114,48 +1164,42 @@ impl TdgServer {
             .map_err(mcp_err)?;
 
             let mut entity_ids: Vec<String> = Vec::new();
+            let mut seen_entities: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+
+            // Handle explicit entities parameter
             if let Some(ref entities_str) = entities {
                 for entity_name in entities_str.split(',') {
                     let name = entity_name.trim().to_string();
                     if name.is_empty() {
                         continue;
                     }
-                    let existing = crate::db::crud::search(&conn, &name, 1)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .find(|(n, _)| n.node_type == "entity" && n.name == name)
-                        .map(|(n, _)| n);
-                    let entity_node = if let Some(n) = existing {
-                        n
-                    } else {
-                        crate::db::crud::add_node(
-                            &conn,
-                            &NewNode {
-                                node_type: "entity".to_string(),
-                                name: name.clone(),
-                                source: Some("mcp_observe".to_string()),
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(mcp_err)?
-                    };
-                    let _ = crate::db::crud::add_edge(
-                        &conn,
-                        &crate::models::NewEdge {
-                            source_id: node.id.clone(),
-                            target_id: entity_node.id.clone(),
-                            edge_type: "MENTIONS".to_string(),
-                            weight: Some(1.0),
-                            properties: None,
-                            agent_id: Some("mcp_observe".to_string()),
-                        },
-                    );
-                    entity_ids.push(entity_node.id);
+                    let key = (name.to_lowercase(), "entity".to_string());
+                    if seen_entities.insert(key) {
+                        if let Ok(id) = upsert_entity_and_connect(&conn, &node.id, &name, "entity") {
+                            entity_ids.push(id);
+                        }
+                    }
                 }
             }
 
+            // Extract entities from description and wire them into the graph
             let entity_extractor = crate::plugins::entity_extractor::EntityExtractor::new();
             let extracted_entities = entity_extractor.extract(&description, Some(&conn));
+
+            // Wire up extracted entities with deduplication
+            for extracted in &extracted_entities {
+                let key = (extracted.name.to_lowercase(), extracted.entity_type.clone());
+                if seen_entities.insert(key) {
+                    if let Ok(id) = upsert_entity_and_connect(
+                        &conn,
+                        &node.id,
+                        &extracted.name,
+                        &extracted.entity_type,
+                    ) {
+                        entity_ids.push(id);
+                    }
+                }
+            }
 
             let pref_extractor = crate::plugins::preference_extractor::PreferenceExtractor::new();
             let extracted_preferences = pref_extractor.extract_from_message(&description);
@@ -1245,7 +1289,7 @@ impl TdgServer {
     }
 
     #[tool(description = "Run graph maintenance")]
-    pub(crate) async fn tdg_maintenance(
+    pub async fn tdg_maintenance(
         &self,
         Parameters(params): Parameters<MaintenanceParams>,
     ) -> Result<String, McpError> {
@@ -1255,33 +1299,110 @@ impl TdgServer {
             );
         }
         let pool = self.pool.clone();
-        let phase = params.phase.as_deref().unwrap_or("all").to_string();
+
+        // Read action first, fall back to phase for backward compatibility
+        let action = params.action.as_deref();
+        let phase = params.phase.as_deref();
+
+        let actual_action = if let Some(a) = action {
+            a
+        } else if let Some(p) = phase {
+            // Log deprecation warning for phase usage
+            eprintln!("WARNING: 'phase' parameter is deprecated. Use 'action' instead.");
+            p
+        } else {
+            return Err(McpError::invalid_params(
+                "Either 'action' or 'phase' parameter is required",
+                None,
+            ));
+        };
+
+        // Map old phase names to new action names for backward compatibility
+        let normalized_action = match actual_action {
+            "fts_rebuild" => {
+                eprintln!("WARNING: 'fts_rebuild' is deprecated. Use 'rebuild_fts' instead.");
+                "rebuild_fts"
+            }
+            "hygiene" => {
+                eprintln!("WARNING: 'hygiene' is deprecated. Use 'health' instead.");
+                "health"
+            }
+            "archive" => {
+                eprintln!("WARNING: 'archive' action is deprecated and will be removed in a future version.");
+                "archive"
+            }
+            "all" => "all",
+            _ => actual_action,
+        };
+
+        let action_str = normalized_action.to_string();
         run_blocking(move || {
             let conn = get_conn(&pool)?;
             let mut report = serde_json::Map::new();
-            if phase == "hygiene" || phase == "all" {
-                let hygiene = crate::knowledge::generate_hygiene_report(&conn).map_err(mcp_err)?;
-                report.insert("orphan_count".to_string(), json!(hygiene.orphan_count));
-                report.insert(
-                    "dangling_edge_count".to_string(),
-                    json!(hygiene.dangling_edge_count),
-                );
-                report.insert("stale_node_count".to_string(), json!(hygiene.stale_count));
+
+            match action_str.as_str() {
+                "rebuild_fts" => {
+                    crate::db::schema::rebuild_fts(&conn).map_err(mcp_err)?;
+                    report.insert("fts_rebuilt".to_string(), json!(true));
+                }
+                "health" => {
+                    let hygiene = crate::knowledge::generate_hygiene_report(&conn).map_err(mcp_err)?;
+                    report.insert("orphan_count".to_string(), json!(hygiene.orphan_count));
+                    report.insert(
+                        "dangling_edge_count".to_string(),
+                        json!(hygiene.dangling_edge_count),
+                    );
+                    report.insert("stale_node_count".to_string(), json!(hygiene.stale_count));
+                }
+                "archive" => {
+                    let archived = crate::knowledge::archive_stale_nodes(&conn, None).map_err(mcp_err)?;
+                    report.insert(
+                        "archived_count".to_string(),
+                        json!(archived
+                            .get("archived_count")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0)),
+                    );
+                }
+                "all" => {
+                    // Run all maintenance actions
+                    let hygiene = crate::knowledge::generate_hygiene_report(&conn).map_err(mcp_err)?;
+                    report.insert("orphan_count".to_string(), json!(hygiene.orphan_count));
+                    report.insert(
+                        "dangling_edge_count".to_string(),
+                        json!(hygiene.dangling_edge_count),
+                    );
+                    report.insert("stale_node_count".to_string(), json!(hygiene.stale_count));
+
+                    let archived = crate::knowledge::archive_stale_nodes(&conn, None).map_err(mcp_err)?;
+                    report.insert(
+                        "archived_count".to_string(),
+                        json!(archived
+                            .get("archived_count")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0)),
+                    );
+
+                    crate::db::schema::rebuild_fts(&conn).map_err(mcp_err)?;
+                    report.insert("fts_rebuilt".to_string(), json!(true));
+                }
+                "rebuild_embeddings" | "gc_nodes" | "gc_edges" | "gc_all" => {
+                    return Err(McpError::invalid_params(
+                        format!("Action '{}' is not yet implemented", action_str),
+                        None,
+                    ));
+                }
+                _ => {
+                    return Err(McpError::invalid_params(
+                        format!(
+                            "Unknown action '{}'. Valid actions: rebuild_fts, health, archive, all",
+                            action_str
+                        ),
+                        None,
+                    ));
+                }
             }
-            if phase == "archive" || phase == "all" {
-                let archived = crate::knowledge::archive_stale_nodes(&conn, None).map_err(mcp_err)?;
-                report.insert(
-                    "archived_count".to_string(),
-                    json!(archived
-                        .get("archived_count")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0)),
-                );
-            }
-            if phase == "fts_rebuild" || phase == "all" {
-                crate::db::schema::rebuild_fts(&conn).map_err(mcp_err)?;
-                report.insert("fts_rebuilt".to_string(), json!(true));
-            }
+
             Ok(serde_json::to_string(&json!(report)).unwrap_or_default())
         }).await
     }

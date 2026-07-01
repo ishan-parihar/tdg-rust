@@ -282,7 +282,6 @@ pub fn validate_edge_creation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn validate_edge_types() {

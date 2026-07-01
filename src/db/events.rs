@@ -53,7 +53,7 @@ pub fn rate_node(conn: &Connection, node_id: &str, helpful: bool) -> TdgResult<O
 /// Increment retrieval_count for a node.
 pub fn record_retrieval(conn: &Connection, node_id: &str) -> TdgResult<bool> {
     let affected = conn.execute(
-        "UPDATE nodes SET retrieval_count = retrieval_count + 1, updated_at = datetime('now')
+        "UPDATE nodes SET retrieval_count = retrieval_count + 1, updated_at = datetime('now', 'subsec')
          WHERE id = ?1 AND valid_to IS NULL",
         params![node_id],
     )?;

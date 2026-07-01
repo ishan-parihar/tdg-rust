@@ -1,12 +1,11 @@
 //! Integration tests for all TDG-Rust plugins: entity_extractor, hybrid_retriever,
-//! turn_capture, preference_extractor.
+//! preference_extractor.
 
 use tdg_rust::db::{init_fts, init_schema, run_migrations, ConnectionPool};
 use tdg_rust::models::NewNode;
 use tdg_rust::plugins::entity_extractor::{EntityExtractor, EntityNameCache};
-use tdg_rust::plugins::hybrid_retriever::{HybridRetriever, RetrievalWeights};
+use tdg_rust::plugins::hybrid_retriever::HybridRetriever;
 use tdg_rust::plugins::preference_extractor::{build_constraint_id, PreferenceExtractor};
-use tdg_rust::plugins::turn_capture::TurnCapture;
 use tdg_rust::util::quadrants::infer_quadrant;
 
 fn make_pool() -> ConnectionPool {
@@ -134,8 +133,8 @@ fn entity_extractor_alias_resolution_via_db() {
             lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
             developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
             source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,
-            agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT DEFAULT (datetime('now')), valid_from TEXT DEFAULT NULL,
+            agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now', 'subsec')),
+            updated_at TEXT DEFAULT (datetime('now', 'subsec')), valid_from TEXT DEFAULT NULL,
             valid_to TEXT DEFAULT NULL, helpful_count INTEGER DEFAULT 0,
             retrieval_count INTEGER DEFAULT 0, agent_id TEXT DEFAULT NULL
         );",
@@ -169,8 +168,8 @@ fn entity_extractor_add_and_get_aliases() {
             lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
             developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
             source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,
-            agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT DEFAULT (datetime('now')), valid_from TEXT DEFAULT NULL,
+            agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now', 'subsec')),
+            updated_at TEXT DEFAULT (datetime('now', 'subsec')), valid_from TEXT DEFAULT NULL,
             valid_to TEXT DEFAULT NULL, helpful_count INTEGER DEFAULT 0,
             retrieval_count INTEGER DEFAULT 0, agent_id TEXT DEFAULT NULL
         );",
@@ -213,8 +212,8 @@ fn entity_extractor_set_aliases_replaces_existing() {
             lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
             developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
             source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,
-            agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT DEFAULT (datetime('now')), valid_from TEXT DEFAULT NULL,
+            agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now', 'subsec')),
+            updated_at TEXT DEFAULT (datetime('now', 'subsec')), valid_from TEXT DEFAULT NULL,
             valid_to TEXT DEFAULT NULL, helpful_count INTEGER DEFAULT 0,
             retrieval_count INTEGER DEFAULT 0, agent_id TEXT DEFAULT NULL
         );",
@@ -578,9 +577,10 @@ fn hybrid_retriever_method_field_indicates_search_type() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Turn Capture
+// Turn Capture (removed - module deprecated)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/*
 #[test]
 fn turn_capture_creates_observation_node() {
     let pool = make_pool();
@@ -824,6 +824,7 @@ fn turn_capture_properties_json_contains_entities_and_quadrant() {
     })
     .unwrap();
 }
+*/
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Preference Extractor
@@ -1206,6 +1207,7 @@ fn cross_plugin_entity_extractor_plus_hybrid_retriever() {
     .unwrap();
 }
 
+/*
 #[test]
 fn cross_plugin_turn_capture_plus_preference_extractor() {
     let pool = make_pool();
@@ -1226,6 +1228,7 @@ fn cross_plugin_turn_capture_plus_preference_extractor() {
     })
     .unwrap();
 }
+*/
 
 #[test]
 fn cross_plugin_entity_extractor_alias_resolution_end_to_end() {

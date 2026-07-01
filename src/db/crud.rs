@@ -212,12 +212,8 @@ pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
                     new.description.as_deref().unwrap_or("")
                 );
                 if let Ok(result) = crate::mind::embedding::embed(&embed_text) {
-                    let blob = serialize_vector(&result.vector);
-                    let _ = conn.execute(
-                        "INSERT OR REPLACE INTO embeddings (node_id, vector, model, updated_at)
-                         VALUES (?1, ?2, 'onnx', datetime('now'))",
-                        rusqlite::params![id, blob],
-                    );
+                    let dimension = result.vector.len() as i64;
+                    let _ = upsert_embedding(conn, &id, &result.vector, "onnx", dimension);
                 }
                 // If embedding fails, node is still created — enricher will backfill later
             }
@@ -1062,6 +1058,40 @@ pub fn search(conn: &Connection, query: &str, limit: i64) -> TdgResult<Vec<(Node
 pub fn serialize_vector(vector: &[f32]) -> Vec<u8> {
     let bytes: Vec<u8> = vector.iter().flat_map(|f| f.to_le_bytes()).collect();
     bytes
+}
+
+/// Upsert an embedding with dimension and model metadata.
+///
+/// Centralized function for storing embeddings with proper dimension tracking.
+/// Uses INSERT OR REPLACE to handle both new and existing embeddings.
+/// Uses ISO timestamp format for updated_at.
+///
+/// # Arguments
+/// * `conn` - Database connection
+/// * `node_id` - Node ID to embed
+/// * `vector` - Embedding vector (f32 slice)
+/// * `model` - Model name (e.g., "onnx", "all-MiniLM-L6-v2", "embeddinggemma-300m")
+/// * `dimension` - Vector dimension (e.g., 384 for MiniLM, 768 for Gemma)
+///
+/// # Returns
+/// * `TdgResult<()>` - Success or error
+pub fn upsert_embedding(
+    conn: &Connection,
+    node_id: &str,
+    vector: &[f32],
+    model: &str,
+    dimension: i64,
+) -> TdgResult<()> {
+    let blob = serialize_vector(vector);
+    let now = now_iso();
+    
+    conn.execute(
+        "INSERT OR REPLACE INTO embeddings (node_id, vector, model, dimension, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![node_id, blob, model, dimension, now],
+    )?;
+    
+    Ok(())
 }
 
 /// BFS shortest path. Matches Python `pathfind()`.

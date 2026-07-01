@@ -158,11 +158,13 @@ impl<'a> Enricher<'a> {
                 match crate::mind::embedding::embed(&text) {
                     Ok(result) => {
                         if !dry_run {
-                            let blob = crate::db::crud::serialize_vector(&result.vector);
-                            self.conn.execute(
-                                "INSERT OR REPLACE INTO embeddings (node_id, vector, model, updated_at)
-                                 VALUES (?1, ?2, 'onnx', datetime('now'))",
-                                rusqlite::params![id, blob],
+                            let dimension = result.vector.len() as i64;
+                            crate::db::crud::upsert_embedding(
+                                self.conn,
+                                id,
+                                &result.vector,
+                                "onnx",
+                                dimension,
                             )?;
                         }
                         report.embeddings_enriched += 1;
@@ -226,7 +228,7 @@ impl<'a> Enricher<'a> {
                 let mut stmt = self.conn.prepare(
                     "SELECT id, node_type FROM nodes
                      WHERE valid_to IS NULL
-                     AND (developmental_stage IS NULL OR developmental_stage = 0)",
+                     AND developmental_stage IS NULL",
                 )?;
                 let mapped = stmt.query_map([], |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))

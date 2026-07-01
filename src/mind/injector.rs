@@ -307,7 +307,7 @@ mod tests {
 
     fn insert_node(conn: &Connection, id: &str, name: &str, node_type: &str) {
         conn.execute(
-            "INSERT INTO nodes (id, name, node_type, description, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, datetime('now'), datetime('now'))",
+            "INSERT INTO nodes (id, name, node_type, description, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, datetime('now', 'subsec'), datetime('now', 'subsec'))",
             rusqlite::params![id, name, node_type, format!("desc for {name}")],
         )
         .unwrap();

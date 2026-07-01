@@ -459,7 +459,7 @@ impl EntityExtractor {
     /// Alias is derived from lowercase name tokens.
     pub fn expand_aliases(&self, conn: &Connection) -> TdgResult<HashMap<String, String>> {
         let mut stmt = conn.prepare(
-            "SELECT id, name, properties FROM nodes WHERE valid_to IS NULL AND node_type = 'people'",
+            "SELECT id, name, properties_json FROM nodes WHERE valid_to IS NULL AND node_type = 'people'",
         )?;
 
         let mut alias_map: HashMap<String, String> = HashMap::new();
@@ -514,7 +514,7 @@ impl EntityExtractor {
     /// Add an alias to a person node's properties.
     pub fn add_alias(&self, node_id: &str, alias: &str, conn: &Connection) -> TdgResult<bool> {
         let mut stmt =
-            conn.prepare("SELECT properties FROM nodes WHERE id = ?1 AND valid_to IS NULL")?;
+            conn.prepare("SELECT properties_json FROM nodes WHERE id = ?1 AND valid_to IS NULL")?;
 
         let current_props: Option<String> = stmt
             .query_map(params![node_id], |row| row.get::<_, Option<String>>(0))?
@@ -545,7 +545,7 @@ impl EntityExtractor {
 
         let new_props = serde_json::to_string(&props)?;
         conn.execute(
-            "UPDATE nodes SET properties = ?1, updated_at = datetime('now') WHERE id = ?2 AND valid_to IS NULL",
+            "UPDATE nodes SET properties_json = ?1, updated_at = datetime('now', 'subsec') WHERE id = ?2 AND valid_to IS NULL",
             params![new_props, node_id],
         )?;
 
@@ -560,7 +560,7 @@ impl EntityExtractor {
         conn: &Connection,
     ) -> TdgResult<bool> {
         let mut stmt =
-            conn.prepare("SELECT properties FROM nodes WHERE id = ?1 AND valid_to IS NULL")?;
+            conn.prepare("SELECT properties_json FROM nodes WHERE id = ?1 AND valid_to IS NULL")?;
 
         let current_props: Option<String> = stmt
             .query_map(params![node_id], |row| row.get::<_, Option<String>>(0))?
@@ -580,7 +580,7 @@ impl EntityExtractor {
 
         let new_props = serde_json::to_string(&props)?;
         conn.execute(
-            "UPDATE nodes SET properties = ?1, updated_at = datetime('now') WHERE id = ?2 AND valid_to IS NULL",
+            "UPDATE nodes SET properties_json = ?1, updated_at = datetime('now', 'subsec') WHERE id = ?2 AND valid_to IS NULL",
             params![new_props, node_id],
         )?;
 
@@ -590,7 +590,7 @@ impl EntityExtractor {
     /// Get all aliases for a person node.
     pub fn get_aliases(&self, node_id: &str, conn: &Connection) -> TdgResult<Vec<String>> {
         let mut stmt =
-            conn.prepare("SELECT properties FROM nodes WHERE id = ?1 AND valid_to IS NULL")?;
+            conn.prepare("SELECT properties_json FROM nodes WHERE id = ?1 AND valid_to IS NULL")?;
 
         let current_props: Option<String> = stmt
             .query_map(params![node_id], |row| row.get::<_, Option<String>>(0))?
@@ -689,8 +689,8 @@ mod tests {
                 source TEXT DEFAULT '',
                 parent_ids TEXT DEFAULT NULL,
                 agent_path TEXT DEFAULT NULL,
-                created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now')),
+                created_at TEXT DEFAULT (datetime('now', 'subsec')),
+                updated_at TEXT DEFAULT (datetime('now', 'subsec')),
                 valid_from TEXT DEFAULT NULL,
                 valid_to TEXT DEFAULT NULL,
                 helpful_count INTEGER DEFAULT 0,
@@ -727,8 +727,8 @@ mod tests {
                 lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
                 developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
                 source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,
-                agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now')), valid_from TEXT DEFAULT NULL,
+                agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now', 'subsec')),
+                updated_at TEXT DEFAULT (datetime('now', 'subsec')), valid_from TEXT DEFAULT NULL,
                 valid_to TEXT DEFAULT NULL, helpful_count INTEGER DEFAULT 0,
                 retrieval_count INTEGER DEFAULT 0, agent_id TEXT DEFAULT NULL
             );",
@@ -736,13 +736,13 @@ mod tests {
         .unwrap();
         conn.execute(
             "INSERT INTO nodes (id, node_type, name, properties, created_at, updated_at) \
-             VALUES ('p1', 'people', 'Alice Smith', '{\"aliases\":[\"ali\",\"asmith\"]}', datetime('now'), datetime('now'))",
+             VALUES ('p1', 'people', 'Alice Smith', '{\"aliases\":[\"ali\",\"asmith\"]}', datetime('now', 'subsec'), datetime('now', 'subsec'))",
             [],
         )
         .unwrap();
         conn.execute(
             "INSERT INTO nodes (id, node_type, name, properties, created_at, updated_at) \
-             VALUES ('p2', 'people', 'Bob Jones', '{\"aliases\":[\"bj\",\"bobby\"]}', datetime('now'), datetime('now'))",
+             VALUES ('p2', 'people', 'Bob Jones', '{\"aliases\":[\"bj\",\"bobby\"]}', datetime('now', 'subsec'), datetime('now', 'subsec'))",
             [],
         )
         .unwrap();
@@ -904,8 +904,8 @@ mod tests {
                 lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
                 developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
                 source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,
-                agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now')), valid_from TEXT DEFAULT NULL,
+                agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now', 'subsec')),
+                updated_at TEXT DEFAULT (datetime('now', 'subsec')), valid_from TEXT DEFAULT NULL,
                 valid_to TEXT DEFAULT NULL, helpful_count INTEGER DEFAULT 0,
                 retrieval_count INTEGER DEFAULT 0, agent_id TEXT DEFAULT NULL
             );",
@@ -936,8 +936,8 @@ mod tests {
                 lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
                 developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
                 source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,
-                agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now')), valid_from TEXT DEFAULT NULL,
+                agent_path TEXT DEFAULT NULL, created_at TEXT DEFAULT (datetime('now', 'subsec')),
+                updated_at TEXT DEFAULT (datetime('now', 'subsec')), valid_from TEXT DEFAULT NULL,
                 valid_to TEXT DEFAULT NULL, helpful_count INTEGER DEFAULT 0,
                 retrieval_count INTEGER DEFAULT 0, agent_id TEXT DEFAULT NULL
             );",

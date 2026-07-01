@@ -6,11 +6,12 @@
 #[cfg(test)]
 mod tool_tests {
     use crate::db::{init_fts, init_schema, run_migrations};
-    use crate::mcp::tools::{
+    use crate::mcp::params::{
         BankParams, BulkCreateParams, ConnectParams, CreateParams, EntityParams, GetNodeParams,
         GetRelatedParams, MaintenanceParams, MindStateParams, ObserveParams, QueryEventsParams,
-        RateMemoryParams, RecordExecParams, ReflectParams, SearchParams, TdgServer, UpdateParams,
+        RateMemoryParams, RecordExecParams, ReflectParams, SearchParams, UpdateParams,
     };
+    use crate::mcp::tools::TdgServer;
     use crate::models::{NewEdge, NewNode};
     use rmcp::handler::server::wrapper::Parameters;
     use tempfile::NamedTempFile;
@@ -74,15 +75,21 @@ mod tool_tests {
         let env = TestEnv::new();
         let server = env.server();
         let params = CreateParams {
+            node_id: None,
             node_type: "observation".into(),
+            text: "Test node text".into(),
+            embedding: None,
+            aliases: None,
+            meta: None,
+            trust: None,
             name: "Test Node".into(),
-            description: Some("A test".into()),
-            quadrant: Some("LR".into()),
             parent_ids: None,
+            quadrant: Some("LR".into()),
             t_level: Some("L1".into()),
             stage: None,
-            lifecycle_state: None,
+            description: Some("A test".into()),
             source: None,
+            lifecycle_state: None,
             blocks_targets: None,
             evidence_targets: None,
         };
@@ -99,15 +106,21 @@ mod tool_tests {
         let env = TestEnv::new();
         let server = env.server();
         let params = CreateParams {
+            node_id: None,
             node_type: "observation".into(),
+            text: "".into(),
+            embedding: None,
+            aliases: None,
+            meta: None,
+            trust: None,
             name: "".into(),
-            description: None,
-            quadrant: None,
             parent_ids: None,
+            quadrant: None,
             t_level: None,
             stage: None,
-            lifecycle_state: None,
+            description: None,
             source: None,
+            lifecycle_state: None,
             blocks_targets: None,
             evidence_targets: None,
         };
@@ -195,7 +208,10 @@ mod tool_tests {
         let params = ConnectParams {
             source_id: src,
             target_id: tgt,
-            as_edge: Some("DECOMPOSES_TO".into()),
+            edge_type: "DECOMPOSES_TO".into(),
+            weight: None,
+            meta: None,
+            as_edge: None,
             force: None,
         };
         let result = rt()
@@ -215,6 +231,9 @@ mod tool_tests {
         let params = ConnectParams {
             source_id: src,
             target_id: tgt,
+            edge_type: "EVIDENCES".into(),
+            weight: None,
+            meta: None,
             as_edge: None,
             force: None,
         };
@@ -234,7 +253,10 @@ mod tool_tests {
         let p = ConnectParams {
             source_id: src.clone(),
             target_id: tgt.clone(),
-            as_edge: Some("SUPPORTS".into()),
+            edge_type: "SUPPORTS".into(),
+            weight: None,
+            meta: None,
+            as_edge: None,
             force: None,
         };
         rt().block_on(server.tdg_connect(Parameters(p))).unwrap();
@@ -242,7 +264,10 @@ mod tool_tests {
         let p2 = ConnectParams {
             source_id: src,
             target_id: tgt,
-            as_edge: Some("SUPPORTS".into()),
+            edge_type: "SUPPORTS".into(),
+            weight: None,
+            meta: None,
+            as_edge: None,
             force: None,
         };
         let result = rt().block_on(server.tdg_connect(Parameters(p2))).unwrap();
@@ -280,10 +305,13 @@ mod tool_tests {
         let server = env.server();
         let params = UpdateParams {
             node_id: id,
+            text: None,
+            node_type: None,
+            aliases: None,
+            meta: None,
             name: Some("Updated".into()),
             description: None,
             lifecycle_state: None,
-            new_type: None,
             t_level: None,
             stage: None,
             add_parent_ids: None,
@@ -305,6 +333,8 @@ mod tool_tests {
         let server = env.server();
         let params = RateMemoryParams {
             node_id: id,
+            rating: "helpful".into(),
+            reason: None,
             helpful: true,
         };
         let result = rt()
@@ -321,6 +351,10 @@ mod tool_tests {
         let env = TestEnv::new();
         let server = env.server();
         let params = MindStateParams {
+            terrain_for: None,
+            injection_status: None,
+            summary: None,
+            full: None,
             detail: None,
             health: None,
             verify: None,
@@ -343,12 +377,16 @@ mod tool_tests {
         let env = TestEnv::new();
         let server = env.server();
         let params = ObserveParams {
-            description: "Test obs".into(),
-            quadrant: Some("UL".into()),
+            text: "Test observation text".into(),
+            speaker: None,
+            turn: None,
+            topic: None,
             cycle: None,
-            trust: None,
+            description: "Test obs".into(),
             entities: None,
+            quadrant: Some("UL".into()),
             trigger_digestion: None,
+            trust: None,
         };
         let result = rt()
             .block_on(server.tdg_observe(Parameters(params)))
@@ -362,16 +400,87 @@ mod tool_tests {
         let env = TestEnv::new();
         let server = env.server();
         let params = ObserveParams {
-            description: "".into(),
-            quadrant: None,
+            text: "".into(),
+            speaker: None,
+            turn: None,
+            topic: None,
             cycle: None,
-            trust: None,
+            description: "".into(),
             entities: None,
+            quadrant: None,
             trigger_digestion: None,
+            trust: None,
         };
         assert!(rt()
             .block_on(server.tdg_observe(Parameters(params)))
             .is_err());
+    }
+
+    #[test]
+    fn observe_wires_extracted_entities() {
+        let env = TestEnv::new();
+        let server = env.server();
+        let params = ObserveParams {
+            text: "Used rust and docker for deployment".into(),
+            speaker: None,
+            turn: None,
+            topic: None,
+            cycle: None,
+            description: "Used rust and docker for deployment".into(),
+            entities: None,
+            quadrant: Some("LR".into()),
+            trigger_digestion: None,
+            trust: None,
+        };
+        let result = rt()
+            .block_on(server.tdg_observe(Parameters(params)))
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let obs_id = v["observation_id"].as_str().unwrap();
+
+        // Verify observation was created
+        assert!(obs_id.starts_with('n'));
+
+        // Verify extracted entities were returned
+        let extracted = v["extracted_entities"].as_array().unwrap();
+        assert!(!extracted.is_empty());
+
+        // Verify entities were wired into the graph
+        env.pool
+            .with_connection(|conn| {
+                // Check for rust entity
+                let rust_exists: bool = conn
+                    .query_row(
+                        "SELECT COUNT(*) > 0 FROM nodes WHERE node_type = 'entity' AND name = 'rust' AND valid_to IS NULL",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(false);
+                assert!(rust_exists, "rust entity should exist");
+
+                // Check for docker entity
+                let docker_exists: bool = conn
+                    .query_row(
+                        "SELECT COUNT(*) > 0 FROM nodes WHERE node_type = 'entity' AND name = 'docker' AND valid_to IS NULL",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(false);
+                assert!(docker_exists, "docker entity should exist");
+
+                // Check for MENTIONS edges from observation to entities
+                let mentions_count: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM edges WHERE source_id = ?1 AND edge_type = 'MENTIONS' AND valid_to IS NULL",
+                        [obs_id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
+                assert!(mentions_count >= 2, "Should have at least 2 MENTIONS edges");
+
+                Ok(())
+            })
+            .unwrap();
     }
 
     // ── tdg_get_related ───────────────────────────────────────────────────
@@ -431,8 +540,9 @@ mod tool_tests {
         let env = TestEnv::new();
         let server = env.server();
         let params = MaintenanceParams {
-            phase: Some("hygiene".into()),
-            full: None,
+            action: Some("hygiene".into()),
+            batch_size: None,
+            phase: None,
         };
         let result = rt()
             .block_on(server.tdg_maintenance(Parameters(params)))
@@ -490,6 +600,7 @@ mod tool_tests {
         ])
         .to_string();
         let params = BulkCreateParams {
+            nodes: vec![],
             nodes_json,
             edges_json: None,
         };
@@ -507,11 +618,14 @@ mod tool_tests {
         let env = TestEnv::new();
         let server = env.server();
         let params = RecordExecParams {
+            node_id: "test_node".into(),
+            helpful: true,
+            reason: None,
             action_type: "deploy".into(),
             description: "Deployed v1.0".into(),
+            metrics_json: None,
             result: "success".into(),
             tags: None,
-            metrics_json: None,
         };
         let result = rt()
             .block_on(server.tdg_record_exec(Parameters(params)))

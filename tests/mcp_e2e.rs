@@ -2073,3 +2073,135 @@ fn e2e_maintenance_archive() {
         .unwrap_or(0);
     assert!(archived_count >= 0);
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 22. MCP Maintenance tool contract tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn e2e_maintenance_tool_rebuild_fts() {
+    let pool = make_pool();
+    add_node_with_desc(&pool, "observation", "Test Node", "Test description");
+
+    let server_pool = make_pool();
+    let server = tdg_rust::mcp::tools::TdgServer::new(server_pool);
+    let params = tdg_rust::mcp::params::MaintenanceParams {
+        action: Some("rebuild_fts".to_string()),
+        batch_size: None,
+        phase: None,
+    };
+
+    // Use tokio runtime for async test
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(async {
+        server
+            .tdg_maintenance(rmcp::handler::server::wrapper::Parameters(params))
+            .await
+    });
+
+    assert!(result.is_ok());
+    let response: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+    assert_eq!(response["fts_rebuilt"], true);
+}
+
+#[test]
+fn e2e_maintenance_tool_health() {
+    let pool = make_pool();
+    add_node(&pool, "observation", "Test Node");
+
+    let server_pool = make_pool();
+    let server = tdg_rust::mcp::tools::TdgServer::new(server_pool);
+    let params = tdg_rust::mcp::params::MaintenanceParams {
+        action: Some("health".to_string()),
+        batch_size: None,
+        phase: None,
+    };
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(async {
+        server
+            .tdg_maintenance(rmcp::handler::server::wrapper::Parameters(params))
+            .await
+    });
+
+    assert!(result.is_ok());
+    let response: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+    assert!(response["orphan_count"].is_number());
+    assert!(response["dangling_edge_count"].is_number());
+    assert!(response["stale_node_count"].is_number());
+}
+
+#[test]
+fn e2e_maintenance_tool_phase_fallback() {
+    let pool = make_pool();
+    add_node(&pool, "observation", "Test Node");
+
+    let server_pool = make_pool();
+    let server = tdg_rust::mcp::tools::TdgServer::new(server_pool);
+    let params = tdg_rust::mcp::params::MaintenanceParams {
+        action: None,
+        batch_size: None,
+        phase: Some("health".to_string()),
+    };
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(async {
+        server
+            .tdg_maintenance(rmcp::handler::server::wrapper::Parameters(params))
+            .await
+    });
+
+    assert!(result.is_ok());
+    let response: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+    assert!(response["orphan_count"].is_number());
+}
+
+#[test]
+fn e2e_maintenance_tool_gc_all_not_implemented() {
+    let pool = make_pool();
+    add_node(&pool, "observation", "Test Node");
+
+    let server_pool = make_pool();
+    let server = tdg_rust::mcp::tools::TdgServer::new(server_pool);
+    let params = tdg_rust::mcp::params::MaintenanceParams {
+        action: Some("gc_all".to_string()),
+        batch_size: None,
+        phase: None,
+    };
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(async {
+        server
+            .tdg_maintenance(rmcp::handler::server::wrapper::Parameters(params))
+            .await
+    });
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("not yet implemented"));
+}
+
+#[test]
+fn e2e_maintenance_tool_no_action_or_phase() {
+    let pool = make_pool();
+    add_node(&pool, "observation", "Test Node");
+
+    let server_pool = make_pool();
+    let server = tdg_rust::mcp::tools::TdgServer::new(server_pool);
+    let params = tdg_rust::mcp::params::MaintenanceParams {
+        action: None,
+        batch_size: None,
+        phase: None,
+    };
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(async {
+        server
+            .tdg_maintenance(rmcp::handler::server::wrapper::Parameters(params))
+            .await
+    });
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("Either 'action' or 'phase' parameter is required"));
+}
