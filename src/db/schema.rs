@@ -24,7 +24,7 @@ pub fn init_fts(conn: &Connection) -> TdgResult<()> {
 pub fn rebuild_fts(conn: &Connection) -> TdgResult<()> {
     conn.execute("DELETE FROM nodes_fts", [])?;
     conn.execute(
-        "INSERT INTO nodes_fts(rowid, node_id, name, description)
+        "INSERT INTO nodes_fts(rowid, id, name, description)
          SELECT rowid, id, name, description FROM nodes WHERE valid_to IS NULL",
         [],
     )?;
@@ -74,6 +74,12 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     conn.execute_batch(
         "ALTER TABLE embeddings ADD COLUMN dimension INTEGER DEFAULT 384"
     ).ok();
+
+    // Phase 7: Fix FTS5 schema column name mismatch (P0 critical fix)
+    // Drop and recreate nodes_fts with correct column name (id instead of node_id)
+    conn.execute_batch("DROP TABLE IF EXISTS nodes_fts").ok();
+    init_fts(conn)?;
+    rebuild_fts(conn)?;
 
     Ok(())
 }
@@ -213,7 +219,7 @@ CREATE TABLE IF NOT EXISTS trust_scores (
 const FTS_SQL: &str = r#"
 -- FTS5 virtual table for full-text search
 CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
-    node_id UNINDEXED,
+    id UNINDEXED,
     name,
     description,
     content='nodes',
@@ -223,19 +229,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
 
 -- Triggers to keep FTS in sync with nodes table
 CREATE TRIGGER IF NOT EXISTS nodes_fts_ai AFTER INSERT ON nodes BEGIN
-    INSERT INTO nodes_fts(rowid, node_id, name, description)
+    INSERT INTO nodes_fts(rowid, id, name, description)
     VALUES (new.rowid, new.id, new.name, new.description);
 END;
 
 CREATE TRIGGER IF NOT EXISTS nodes_fts_ad AFTER DELETE ON nodes BEGIN
-    INSERT INTO nodes_fts(nodes_fts, rowid, node_id, name, description)
+    INSERT INTO nodes_fts(nodes_fts, rowid, id, name, description)
     VALUES ('delete', old.rowid, old.id, old.name, old.description);
 END;
 
 CREATE TRIGGER IF NOT EXISTS nodes_fts_au AFTER UPDATE ON nodes BEGIN
-    INSERT INTO nodes_fts(nodes_fts, rowid, node_id, name, description)
+    INSERT INTO nodes_fts(nodes_fts, rowid, id, name, description)
     VALUES ('delete', old.rowid, old.id, old.name, old.description);
-    INSERT INTO nodes_fts(rowid, node_id, name, description)
+    INSERT INTO nodes_fts(rowid, id, name, description)
     VALUES (new.rowid, new.id, new.name, new.description);
 END;
 "#;
@@ -424,7 +430,7 @@ mod tests {
         run_migrations(&conn).unwrap();
 
         conn.execute(
-            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now'), datetime('now'))",
+            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now', 'subsec'), datetime('now', 'subsec'))",
             ["n_test001", "observation", "Test Node"],
         )
         .unwrap();
@@ -446,7 +452,7 @@ mod tests {
         run_migrations(&conn).unwrap();
 
         conn.execute(
-            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now'), datetime('now'))",
+            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now', 'subsec'), datetime('now', 'subsec'))",
             ["n_backup_test", "observation", "Backup Test"],
         )
         .unwrap();
@@ -469,7 +475,7 @@ mod tests {
         run_migrations(&conn).unwrap();
 
         conn.execute(
-            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now'), datetime('now'))",
+            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now', 'subsec'), datetime('now', 'subsec'))",
             ["n_cap001", "telos", "Capture Test"],
         )
         .unwrap();
@@ -495,13 +501,13 @@ mod tests {
         run_migrations(&conn).unwrap();
 
         conn.execute(
-            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now'), datetime('now'))",
+            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now', 'subsec'), datetime('now', 'subsec'))",
             ["n_upd001", "action", "Before"],
         )
         .unwrap();
 
         conn.execute(
-            "UPDATE nodes SET name = 'After', updated_at = datetime('now') WHERE id = 'n_upd001'",
+            "UPDATE nodes SET name = 'After', updated_at = datetime('now', 'subsec') WHERE id = 'n_upd001'",
             [],
         )
         .unwrap();
@@ -526,7 +532,7 @@ mod tests {
         run_migrations(&conn).unwrap();
 
         conn.execute(
-            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now'), datetime('now'))",
+            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now', 'subsec'), datetime('now', 'subsec'))",
             ["n_del001", "observation", "Delete Me"],
         )
         .unwrap();
@@ -554,18 +560,18 @@ mod tests {
         run_migrations(&conn).unwrap();
 
         conn.execute(
-            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now'), datetime('now'))",
+            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now', 'subsec'), datetime('now', 'subsec'))",
             ["n_src01", "telos", "Source"],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now'), datetime('now'))",
+            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now', 'subsec'), datetime('now', 'subsec'))",
             ["n_tgt01", "action", "Target"],
         )
         .unwrap();
 
         conn.execute(
-            "INSERT INTO edges (id, source_id, target_id, edge_type, valid_from, created_at) VALUES (?1, ?2, ?3, ?4, datetime('now'), datetime('now'))",
+            "INSERT INTO edges (id, source_id, target_id, edge_type, valid_from, created_at) VALUES (?1, ?2, ?3, ?4, datetime('now', 'subsec'), datetime('now', 'subsec'))",
             ["e_edge01", "n_src01", "n_tgt01", "ENABLES"],
         )
         .unwrap();
@@ -590,18 +596,18 @@ mod tests {
         run_migrations(&conn).unwrap();
 
         conn.execute(
-            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now'), datetime('now'))",
+            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now', 'subsec'), datetime('now', 'subsec'))",
             ["n_s001", "telos", "S"],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now'), datetime('now'))",
+            "INSERT INTO nodes (id, node_type, name, created_at, updated_at) VALUES (?1, ?2, ?3, datetime('now', 'subsec'), datetime('now', 'subsec'))",
             ["n_t001", "action", "T"],
         )
         .unwrap();
 
         conn.execute(
-            "INSERT INTO edges (id, source_id, target_id, edge_type, valid_from, created_at) VALUES (?1, ?2, ?3, ?4, datetime('now'), datetime('now'))",
+            "INSERT INTO edges (id, source_id, target_id, edge_type, valid_from, created_at) VALUES (?1, ?2, ?3, ?4, datetime('now', 'subsec'), datetime('now', 'subsec'))",
             ["e_del01", "n_s001", "n_t001", "ENABLES"],
         )
         .unwrap();

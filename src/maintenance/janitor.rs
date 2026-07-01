@@ -290,11 +290,13 @@ impl<'a> Janitor<'a> {
 
                 match crate::mind::embedding::embed(&text) {
                     Ok(result) => {
-                        let blob = crate::db::crud::serialize_vector(&result.vector);
-                        self.conn.execute(
-                            "INSERT OR REPLACE INTO embeddings (node_id, vector, model, updated_at)
-                             VALUES (?1, ?2, 'onnx', datetime('now'))",
-                            rusqlite::params![id, blob],
+                        let dimension = result.vector.len() as i64;
+                        crate::db::crud::upsert_embedding(
+                            self.conn,
+                            id,
+                            &result.vector,
+                            "onnx",
+                            dimension,
                         )?;
                         embedded += 1;
                     }

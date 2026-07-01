@@ -416,27 +416,12 @@ fn main() -> anyhow::Result<()> {
                             5,
                         );
                         let result = embedding::embed(&text)?;
-                        let vector_bytes = unsafe {
-                            std::slice::from_raw_parts(
-                                result.vector.as_ptr() as *const u8,
-                                result.vector.len() * std::mem::size_of::<f32>(),
-                            )
-                        };
-
-                        conn.execute(
-                            "INSERT INTO embeddings (node_id, vector, dimension, model, updated_at)
-                             VALUES (?1, ?2, ?3, ?4, datetime('now'))
-                             ON CONFLICT(node_id) DO UPDATE SET
-                                vector = excluded.vector,
-                                dimension = excluded.dimension,
-                                model = excluded.model,
-                                updated_at = datetime('now')",
-                            rusqlite::params![
-                                node_id,
-                                vector_bytes,
-                                target_dim as i64,
-                                config.embedding.model_dir_name(),
-                            ],
+                        tdg_rust::db::crud::upsert_embedding(
+                            conn,
+                            node_id,
+                            &result.vector,
+                            config.embedding.model_dir_name(),
+                            target_dim as i64,
                         )?;
                     }
 

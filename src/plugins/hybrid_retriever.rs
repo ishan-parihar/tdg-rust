@@ -281,6 +281,8 @@ impl HybridRetriever {
             None => return std::collections::HashMap::new(),
         };
 
+        let query_dim = query_vec.len() as i32;
+
         let mut map = std::collections::HashMap::new();
         let ids: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
         let placeholders: Vec<String> = ids
@@ -288,15 +290,19 @@ impl HybridRetriever {
             .enumerate()
             .map(|(i, _)| format!("?{}", i + 1))
             .collect();
+        // Dimension filtering: only compare vectors with the same dimension as the query
+        // This prevents errors when comparing mismatched vectors (e.g., 384-dim vs 768-dim)
         let sql = format!(
-            "SELECT node_id, embedding FROM embeddings WHERE node_id IN ({})",
-            placeholders.join(",")
+            "SELECT node_id, vector FROM embeddings WHERE node_id IN ({}) AND dimension = ?{}",
+            placeholders.join(","),
+            ids.len() + 1
         );
 
         if let Ok(mut stmt) = conn.prepare(&sql) {
             let params_refs: Vec<Box<dyn rusqlite::types::ToSql>> = ids
                 .iter()
                 .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
+                .chain(std::iter::once(Box::new(query_dim) as Box<dyn rusqlite::types::ToSql>))
                 .collect();
             let param_refs: Vec<&dyn rusqlite::types::ToSql> =
                 params_refs.iter().map(|p| p.as_ref()).collect();

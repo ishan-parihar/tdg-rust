@@ -120,6 +120,9 @@ impl<'a> HealthMonitor<'a> {
         count as f64 / active as f64
     }
 
+    // Stage coverage: T0 (value 0) is a valid developmental stage for "being" nodes.
+    // Coverage checks IS NOT NULL to include T0 nodes, since 0 is explicitly assigned
+    // by the enricher (stage_by_type() in enricher.rs).
     fn check_stage_coverage(&self) -> f64 {
         let active = self.active_node_count();
         if active == 0 {
@@ -129,7 +132,7 @@ impl<'a> HealthMonitor<'a> {
             .conn
             .query_row(
                 "SELECT COUNT(*) FROM nodes
-                 WHERE developmental_stage IS NOT NULL AND developmental_stage != 0
+                 WHERE developmental_stage IS NOT NULL
                  AND lifecycle_state != 'archived' AND valid_to IS NULL",
                 [],
                 |r| r.get(0),

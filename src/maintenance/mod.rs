@@ -34,7 +34,7 @@ mod tests {
         for i in 0..count {
             conn.execute(
                 "INSERT INTO nodes (id, node_type, name, lifecycle_state, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, 'active', datetime('now'), datetime('now'))",
+                 VALUES (?1, ?2, ?3, 'active', datetime('now', 'subsec'), datetime('now', 'subsec'))",
                 rusqlite::params![
                     format!("n{:04}", i),
                     if i % 2 == 0 { "observation" } else { "action" },
@@ -98,7 +98,7 @@ mod tests {
         crate::db::run_migrations(&conn).unwrap();
         conn.execute(
             "INSERT INTO nodes (id, node_type, name, lifecycle_state, created_at, updated_at)
-             VALUES ('n_no_fts', 'observation', 'No FTS Node', 'active', datetime('now'), datetime('now'))",
+             VALUES ('n_no_fts', 'observation', 'No FTS Node', 'active', datetime('now', 'subsec'), datetime('now', 'subsec'))",
             [],
         )
         .unwrap();

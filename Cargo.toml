@@ -75,9 +75,6 @@ criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tempfile = "3"
 tokio-test = "0.4.5"
 proptest = "1"
-mockall = "0.14"
-fake = { version = "3", features = ["derive", "chrono", "uuid"] }
-insta = { version = "1.48", features = ["json", "yaml", "redactions"] }
 
 [[bench]]
 name = "critical_paths"
