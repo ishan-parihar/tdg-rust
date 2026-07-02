@@ -679,9 +679,9 @@ mod tests {
                 name TEXT NOT NULL,
                 node_type TEXT NOT NULL,
                 description TEXT DEFAULT '',
-                properties TEXT DEFAULT NULL,
-                quadrants TEXT DEFAULT NULL,
-                drives TEXT DEFAULT NULL,
+                properties_json TEXT DEFAULT NULL,
+                quadrants_json TEXT DEFAULT NULL,
+                drives_json TEXT DEFAULT NULL,
                 lifecycle_state TEXT DEFAULT NULL,
                 teleological_level TEXT DEFAULT NULL,
                 developmental_stage TEXT DEFAULT NULL,
@@ -722,8 +722,8 @@ mod tests {
         conn.execute_batch(
             "CREATE TABLE nodes (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, node_type TEXT NOT NULL,
-                description TEXT DEFAULT '', properties TEXT DEFAULT NULL,
-                quadrants TEXT DEFAULT NULL, drives TEXT DEFAULT NULL,
+                description TEXT DEFAULT '', properties_json TEXT DEFAULT NULL,
+                quadrants_json TEXT DEFAULT NULL, drives_json TEXT DEFAULT NULL,
                 lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
                 developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
                 source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,
@@ -735,13 +735,13 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO nodes (id, node_type, name, properties, created_at, updated_at) \
+            "INSERT INTO nodes (id, node_type, name, properties_json, created_at, updated_at) \
              VALUES ('p1', 'people', 'Alice Smith', '{\"aliases\":[\"ali\",\"asmith\"]}', datetime('now', 'subsec'), datetime('now', 'subsec'))",
             [],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO nodes (id, node_type, name, properties, created_at, updated_at) \
+            "INSERT INTO nodes (id, node_type, name, properties_json, created_at, updated_at) \
              VALUES ('p2', 'people', 'Bob Jones', '{\"aliases\":[\"bj\",\"bobby\"]}', datetime('now', 'subsec'), datetime('now', 'subsec'))",
             [],
         )
@@ -899,8 +899,8 @@ mod tests {
         conn.execute_batch(
             "CREATE TABLE nodes (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, node_type TEXT NOT NULL,
-                description TEXT DEFAULT '', properties TEXT DEFAULT NULL,
-                quadrants TEXT DEFAULT NULL, drives TEXT DEFAULT NULL,
+                description TEXT DEFAULT '', properties_json TEXT DEFAULT NULL,
+                quadrants_json TEXT DEFAULT NULL, drives_json TEXT DEFAULT NULL,
                 lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
                 developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
                 source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,
@@ -931,8 +931,8 @@ mod tests {
         conn.execute_batch(
             "CREATE TABLE nodes (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, node_type TEXT NOT NULL,
-                description TEXT DEFAULT '', properties TEXT DEFAULT NULL,
-                quadrants TEXT DEFAULT NULL, drives TEXT DEFAULT NULL,
+                description TEXT DEFAULT '', properties_json TEXT DEFAULT NULL,
+                quadrants_json TEXT DEFAULT NULL, drives_json TEXT DEFAULT NULL,
                 lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
                 developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
                 source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,

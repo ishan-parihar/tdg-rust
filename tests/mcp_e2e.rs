@@ -2157,7 +2157,9 @@ fn e2e_maintenance_tool_phase_fallback() {
 }
 
 #[test]
-fn e2e_maintenance_tool_gc_all_not_implemented() {
+fn e2e_maintenance_tool_gc_all_implemented() {
+    // gc_all is now implemented — it should succeed and return a JSON report
+    // containing keys for archived nodes, pruned edges, embeddings, FTS, etc.
     let pool = make_pool();
     add_node(&pool, "observation", "Test Node");
 
@@ -2176,9 +2178,18 @@ fn e2e_maintenance_tool_gc_all_not_implemented() {
             .await
     });
 
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("not yet implemented"));
+    assert!(result.is_ok(), "gc_all should succeed, got: {:?}", result.err());
+    let response = result.unwrap();
+    let v: serde_json::Value = serde_json::from_str(&response).unwrap();
+    // Should include at least one of the GC report keys
+    assert!(
+        v.get("fts_rebuilt").is_some()
+            || v.get("edges_pruned").is_some()
+            || v.get("nodes_archived").is_some()
+            || v.get("duplicate_edges_collapsed").is_some(),
+        "gc_all response should contain GC report keys, got: {}",
+        v
+    );
 }
 
 #[test]

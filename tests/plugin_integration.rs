@@ -128,8 +128,8 @@ fn entity_extractor_alias_resolution_via_db() {
     conn.execute_batch(
         "CREATE TABLE nodes (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, node_type TEXT NOT NULL,
-            description TEXT DEFAULT '', properties TEXT DEFAULT NULL,
-            quadrants TEXT DEFAULT NULL, drives TEXT DEFAULT NULL,
+            description TEXT DEFAULT '', properties_json TEXT DEFAULT NULL,
+            quadrants_json TEXT DEFAULT NULL, drives_json TEXT DEFAULT NULL,
             lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
             developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
             source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,
@@ -141,7 +141,7 @@ fn entity_extractor_alias_resolution_via_db() {
     )
     .unwrap();
     conn.execute(
-        "INSERT INTO nodes (id, node_type, name, properties) VALUES ('p1', 'people', 'Alice Smith', '{\"aliases\":[\"ali\",\"asmith\"]}')",
+        "INSERT INTO nodes (id, node_type, name, properties_json) VALUES ('p1', 'people', 'Alice Smith', '{\"aliases\":[\"ali\",\"asmith\"]}')",
         [],
     )
     .unwrap();
@@ -163,8 +163,8 @@ fn entity_extractor_add_and_get_aliases() {
     conn.execute_batch(
         "CREATE TABLE nodes (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, node_type TEXT NOT NULL,
-            description TEXT DEFAULT '', properties TEXT DEFAULT NULL,
-            quadrants TEXT DEFAULT NULL, drives TEXT DEFAULT NULL,
+            description TEXT DEFAULT '', properties_json TEXT DEFAULT NULL,
+            quadrants_json TEXT DEFAULT NULL, drives_json TEXT DEFAULT NULL,
             lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
             developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
             source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,
@@ -207,8 +207,8 @@ fn entity_extractor_set_aliases_replaces_existing() {
     conn.execute_batch(
         "CREATE TABLE nodes (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, node_type TEXT NOT NULL,
-            description TEXT DEFAULT '', properties TEXT DEFAULT NULL,
-            quadrants TEXT DEFAULT NULL, drives TEXT DEFAULT NULL,
+            description TEXT DEFAULT '', properties_json TEXT DEFAULT NULL,
+            quadrants_json TEXT DEFAULT NULL, drives_json TEXT DEFAULT NULL,
             lifecycle_state TEXT DEFAULT NULL, teleological_level TEXT DEFAULT NULL,
             developmental_stage TEXT DEFAULT NULL, confidence REAL DEFAULT 0.5,
             source TEXT DEFAULT '', parent_ids TEXT DEFAULT NULL,

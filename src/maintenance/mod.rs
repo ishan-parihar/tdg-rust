@@ -93,9 +93,30 @@ mod tests {
 
     #[test]
     fn health_report_actions_trigger_no_fts() {
+        // This test verifies that the health monitor reports FTS5 coverage < 1.0
+        // when the FTS5 virtual table is missing or empty.
+        //
+        // We use `init_schema` only — NOT `run_migrations`, because `run_migrations`
+        // unconditionally calls `init_fts` + `rebuild_fts` (see schema.rs Phase 7),
+        // which would give 100% FTS coverage and invalidate the test.
         let conn = Connection::open_in_memory().unwrap();
         crate::db::init_schema(&conn).unwrap();
-        crate::db::run_migrations(&conn).unwrap();
+        // Manually create the events table (normally created by run_migrations)
+        // so the AFTER-INSERT trigger doesn't fail. We do NOT call init_fts.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT,
+                event_action TEXT,
+                timestamp TEXT,
+                node_id TEXT,
+                source_id TEXT,
+                target_id TEXT,
+                payload TEXT,
+                agent_id TEXT
+            );",
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO nodes (id, node_type, name, lifecycle_state, created_at, updated_at)
              VALUES ('n_no_fts', 'observation', 'No FTS Node', 'active', datetime('now', 'subsec'), datetime('now', 'subsec'))",

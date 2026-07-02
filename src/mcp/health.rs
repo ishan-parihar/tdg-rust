@@ -62,14 +62,24 @@ impl HealthMonitor {
             }
         }
 
-        if let Ok(conn) = self.pool.get_connection() {
-            let _ = crate::db::crud::record_health_check(
-                &conn,
-                service,
-                latency_ms,
-                success,
-                error_message.as_deref(),
-            );
+        // Persist to DB — surface errors via tracing instead of silently swallowing
+        // (the previous `let _ = …` masked real DB failures, leaving health_checks empty).
+        match self.pool.get_connection() {
+            Ok(conn) => {
+                if let Err(e) = crate::db::crud::record_health_check(
+                    &conn,
+                    service,
+                    latency_ms,
+                    success,
+                    error_message.as_deref(),
+                ) {
+                    tracing::warn!("Failed to persist health check for {}: {}", service, e);
+                }
+                self.pool.release_connection(conn);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get DB connection for health check ({}): {}", service, e);
+            }
         }
 
         if let Ok(mut breakers) = self.breakers.lock() {

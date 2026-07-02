@@ -9,6 +9,7 @@ use crate::circuit_breaker::global_circuit_breaker;
 use crate::db::write_guard::WriteGuard;
 use crate::error::{TdgError, TdgResult};
 use crate::models::{Edge, NewEdge, NewNode, Node, NodeQuery};
+// `tracing` is re-exported via the `tracing` crate; we use macros directly.
 
 /// Maximum number of nodes allowed in the graph.
 pub const MAX_NODES: usize = 100_000;
@@ -63,6 +64,40 @@ fn gen_edge_id() -> String {
 /// Current ISO 8601 timestamp.
 pub(crate) fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+/// Append a row to the `mutation_log` table (structured audit trail).
+///
+/// Failures are logged via `tracing::warn!` but never propagated — mutation logging
+/// is best-effort and must never block the parent mutation.
+///
+/// # Arguments
+/// * `conn` - SQLite connection (must be in a write transaction)
+/// * `mutation_type` - one of: "create", "update", "delete", "archive"
+/// * `target_type` - "node" or "edge"
+/// * `target_id` - ID of the affected node or edge
+/// * `old_value` - optional JSON snapshot of pre-mutation state
+/// * `new_value` - optional JSON snapshot of post-mutation state
+/// * `agent_id` - optional agent identifier (e.g. "mcp_observe", "auto_wire")
+pub fn record_mutation(
+    conn: &Connection,
+    mutation_type: &str,
+    target_type: &str,
+    target_id: &str,
+    old_value: Option<&str>,
+    new_value: Option<&str>,
+    agent_id: Option<&str>,
+) {
+    let now = now_iso();
+    let session_id = std::env::var("TDG_SESSION_ID").ok();
+    let result = conn.execute(
+        "INSERT INTO mutation_log (timestamp, session_id, mutation_type, target_type, target_id, old_value, new_value, agent_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![now, session_id, mutation_type, target_type, target_id, old_value, new_value, agent_id],
+    );
+    if let Err(e) = result {
+        tracing::warn!("mutation_log write failed ({} {} {}): {}", mutation_type, target_type, target_id, e);
+    }
 }
 
 /// Compute live confidence with temporal decay and access reinforcement.
@@ -203,6 +238,24 @@ pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
         Ok(_) => {
             record_write_success();
 
+            // Audit-log the mutation (best-effort, never blocks)
+            let new_value = serde_json::json!({
+                "id": id,
+                "node_type": node_type,
+                "name": name,
+                "lifecycle_state": lifecycle_state,
+            })
+            .to_string();
+            record_mutation(
+                conn,
+                "create",
+                "node",
+                &id,
+                None,
+                Some(&new_value),
+                agent_id.as_deref(),
+            );
+
             // Inline embedding generation (non-blocking, best-effort)
             #[cfg(feature = "onnx")]
             {
@@ -335,6 +388,17 @@ pub fn update_node(
     match stmt.execute(params_ref.as_slice()) {
         Ok(_) => {
             record_write_success();
+            // Audit-log the update (best-effort)
+            let new_value = serde_json::to_string(updates).unwrap_or_default();
+            record_mutation(
+                conn,
+                "update",
+                "node",
+                node_id,
+                None,
+                Some(&new_value),
+                None,
+            );
             get_node(conn, node_id)
         }
         Err(e) => {
@@ -362,6 +426,16 @@ pub fn delete_node(conn: &Connection, node_id: &str) -> TdgResult<bool> {
                     "UPDATE edges SET valid_to = ?1 WHERE (source_id = ?2 OR target_id = ?2) AND valid_to IS NULL",
                     params![now, node_id],
                 )?;
+                // Audit-log the soft-delete (best-effort)
+                record_mutation(
+                    conn,
+                    "delete",
+                    "node",
+                    node_id,
+                    None,
+                    Some(&format!("{{\"valid_to\": \"{}\"}}", now)),
+                    None,
+                );
             }
             record_write_success();
             Ok(affected > 0)
@@ -428,6 +502,26 @@ pub fn add_edge(conn: &Connection, new: &NewEdge) -> TdgResult<Edge> {
             }
 
             record_write_success();
+
+            // Audit-log the edge creation (best-effort)
+            let new_value = serde_json::json!({
+                "id": id,
+                "source_id": new.source_id,
+                "target_id": new.target_id,
+                "edge_type": new.edge_type,
+                "weight": weight,
+            })
+            .to_string();
+            record_mutation(
+                conn,
+                "create",
+                "edge",
+                &id,
+                None,
+                Some(&new_value),
+                agent_id.as_deref(),
+            );
+
             get_edge(conn, &id)?.ok_or_else(|| {
                 crate::error::TdgError::Custom("Failed to retrieve created edge".to_string())
             })
@@ -523,6 +617,18 @@ pub fn delete_edge(conn: &Connection, edge_id: &str) -> TdgResult<bool> {
         params![now, edge_id],
     ) {
         Ok(affected) => {
+            if affected > 0 {
+                // Audit-log the edge soft-delete (best-effort)
+                record_mutation(
+                    conn,
+                    "delete",
+                    "edge",
+                    edge_id,
+                    None,
+                    Some(&format!("{{\"valid_to\": \"{}\"}}", now)),
+                    None,
+                );
+            }
             record_write_success();
             Ok(affected > 0)
         }
@@ -1399,6 +1505,24 @@ pub fn set_trust(
          VALUES (?1, ?2, ?3, ?4)",
         params![agent_id, score, now, reason],
     )?;
+
+    // Audit-log the trust mutation (best-effort)
+    let new_value = serde_json::json!({
+        "agent_id": agent_id,
+        "score": score,
+        "reason": reason,
+    })
+    .to_string();
+    record_mutation(
+        conn,
+        "update",
+        "trust",
+        agent_id,
+        None,
+        Some(&new_value),
+        None,
+    );
+
     Ok(())
 }
 

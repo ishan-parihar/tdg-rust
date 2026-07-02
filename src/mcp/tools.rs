@@ -101,18 +101,31 @@ fn upsert_entity_and_connect(
         .map_err(mcp_err)?
     };
 
-    // Create MENTIONS edge from observation to entity
-    let _ = crate::db::crud::add_edge(
+    // Create MENTIONS edge from observation to entity (with dedup)
+    let existing = crate::db::crud::get_edges(
         conn,
-        &crate::models::NewEdge {
-            source_id: observation_id.to_string(),
-            target_id: entity_node.id.clone(),
-            edge_type: "MENTIONS".to_string(),
-            weight: Some(1.0),
-            properties: None,
-            agent_id: Some("mcp_observe".to_string()),
-        },
-    );
+        Some(observation_id),
+        Some(&entity_node.id),
+        Some("MENTIONS"),
+        None,
+        1,
+    )
+    .unwrap_or_default();
+    if existing.is_empty() {
+        if let Err(e) = crate::db::crud::add_edge(
+            conn,
+            &crate::models::NewEdge {
+                source_id: observation_id.to_string(),
+                target_id: entity_node.id.clone(),
+                edge_type: "MENTIONS".to_string(),
+                weight: Some(1.0),
+                properties: None,
+                agent_id: Some("mcp_observe".to_string()),
+            },
+        ) {
+            tracing::warn!("Failed to create MENTIONS edge {} -> {}: {}", observation_id, entity_node.id, e);
+        }
+    }
 
     Ok(entity_node.id)
 }
@@ -562,7 +575,19 @@ impl TdgServer {
                 for tid in targets.split(',') {
                     let tid = tid.trim();
                     if !tid.is_empty() {
-                        let _ = crate::db::crud::add_edge(
+                        // Skip duplicate edges (same src+tgt+type already active)
+                        let dup = crate::db::crud::get_edges(
+                            &conn,
+                            Some(&node.id),
+                            Some(tid),
+                            Some("BLOCKS"),
+                            None,
+                            1,
+                        ).unwrap_or_default();
+                        if !dup.is_empty() {
+                            continue;
+                        }
+                        if let Err(e) = crate::db::crud::add_edge(
                             &conn,
                             &NewEdge {
                                 source_id: node.id.clone(),
@@ -570,7 +595,9 @@ impl TdgServer {
                                 edge_type: "BLOCKS".to_string(),
                                 ..Default::default()
                             },
-                        );
+                        ) {
+                            tracing::warn!("Failed to create BLOCKS edge to {}: {}", tid, e);
+                        }
                     }
                 }
             }
@@ -578,15 +605,29 @@ impl TdgServer {
                 for tid in targets.split(',') {
                     let tid = tid.trim();
                     if !tid.is_empty() {
-                        let _ = crate::db::crud::add_edge(
+                        // Skip duplicate edges (same src+tgt+type already active)
+                        let dup = crate::db::crud::get_edges(
+                            &conn,
+                            Some(&node.id),
+                            Some(tid),
+                            Some("EVIDENCES"),
+                            None,
+                            1,
+                        ).unwrap_or_default();
+                        if !dup.is_empty() {
+                            continue;
+                        }
+                        if let Err(e) = crate::db::crud::add_edge(
                             &conn,
                             &NewEdge {
                                 source_id: node.id.clone(),
                                 target_id: tid.to_string(),
-                                edge_type: "EVIDENCE".to_string(),
+                                edge_type: "EVIDENCES".to_string(),
                                 ..Default::default()
                             },
-                        );
+                        ) {
+                            tracing::warn!("Failed to create EVIDENCES edge to {}: {}", tid, e);
+                        }
                     }
                 }
             }
@@ -681,7 +722,9 @@ impl TdgServer {
         let pool = self.pool.clone();
         let source_id = params.source_id.clone();
         let target_id = params.target_id.clone();
+        let edge_type_param = params.edge_type.clone();
         let as_edge = params.as_edge.clone();
+        let weight = params.weight;
         let force = params.force.unwrap_or(false);
         run_blocking(move || {
             let conn = get_conn(&pool)?;
@@ -693,12 +736,18 @@ impl TdgServer {
                 .map_err(mcp_err)?
                 .ok_or_else(|| mcp_err(format!("Target node not found: {}", target_id)))?;
 
+            // Edge type resolution priority:
+            //   1. `as_edge` (explicit assert, skips validation)
+            //   2. `edge_type` (requested type, validated)
+            //   3. auto-detect from src/tgt node types
             let edge_type = if let Some(ref et) = as_edge {
                 if !et.is_empty() {
                     et.clone()
                 } else {
                     auto_detect_edge_type(&src.node_type, &tgt.node_type)
                 }
+            } else if !edge_type_param.is_empty() {
+                edge_type_param.clone()
             } else {
                 auto_detect_edge_type(&src.node_type, &tgt.node_type)
             };
@@ -752,6 +801,7 @@ impl TdgServer {
                     source_id: source_id.clone(),
                     target_id: target_id.clone(),
                     edge_type: edge_type.clone(),
+                    weight,
                     ..Default::default()
                 },
             )
@@ -1426,16 +1476,99 @@ impl TdgServer {
                     crate::db::schema::rebuild_fts(&conn).map_err(mcp_err)?;
                     report.insert("fts_rebuilt".to_string(), json!(true));
                 }
-                "rebuild_embeddings" | "gc_nodes" | "gc_edges" | "gc_all" => {
-                    return Err(McpError::invalid_params(
-                        format!("Action '{}' is not yet implemented", action_str),
-                        None,
-                    ));
+                "rebuild_embeddings" => {
+                    // Re-embed all active nodes that are missing embeddings.
+                    // Leverages the Janitor's backfill_vec pass (non-dry-run).
+                    let janitor = crate::maintenance::Janitor::new(&conn);
+                    let janitor_report = janitor.run(false).map_err(mcp_err)?;
+                    report.insert("embeddings_missing".to_string(), json!(janitor_report.vec_missing));
+                    report.insert("embeddings_built".to_string(), json!(janitor_report.vec_embedded));
+                    report.insert("fts5_indexed".to_string(), json!(janitor_report.fts5_indexed));
+                    report.insert("edges_pruned".to_string(), json!(janitor_report.edges_pruned));
+                }
+                "gc_edges" => {
+                    // Prune edges that point at archived/deleted nodes, then
+                    // collapse duplicate edges (same src+tgt+type) keeping the
+                    // most recently created one.
+                    let janitor = crate::maintenance::Janitor::new(&conn);
+                    let janitor_report = janitor.run(false).map_err(mcp_err)?;
+                    report.insert("orphaned_edges_pruned".to_string(), json!(janitor_report.edges_pruned));
+
+                    // Collapse duplicate active edges (same src, tgt, type) — keep newest.
+                    let dup_count: usize = conn.execute(
+                        "DELETE FROM edges
+                         WHERE rowid IN (
+                             SELECT e1.rowid FROM edges e1
+                             INNER JOIN edges e2
+                             ON e1.source_id = e2.source_id
+                             AND e1.target_id = e2.target_id
+                             AND e1.edge_type = e2.edge_type
+                             AND e1.valid_to IS NULL
+                             AND e2.valid_to IS NULL
+                             AND e1.created_at < e2.created_at
+                         )",
+                        [],
+                    ).map_err(mcp_err)?;
+                    report.insert("duplicate_edges_collapsed".to_string(), json!(dup_count));
+                }
+                "gc_nodes" => {
+                    // Soft-delete (archive) nodes that have been stale for a long time
+                    // and have no active edges. This is safe — soft delete only.
+                    let archived = crate::knowledge::archive_stale_nodes(&conn, None).map_err(mcp_err)?;
+                    report.insert(
+                        "nodes_archived".to_string(),
+                        json!(archived
+                            .get("archived_count")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0)),
+                    );
+
+                    // Also prune orphaned edges (edges pointing to archived nodes).
+                    let janitor = crate::maintenance::Janitor::new(&conn);
+                    let janitor_report = janitor.run(false).map_err(mcp_err)?;
+                    report.insert("edges_pruned".to_string(), json!(janitor_report.edges_pruned));
+                    report.insert("parents_backfilled".to_string(), json!(janitor_report.parents_backfilled));
+                }
+                "gc_all" => {
+                    // Full GC sweep: nodes + edges + duplicates + FTS rebuild.
+                    let archived = crate::knowledge::archive_stale_nodes(&conn, None).map_err(mcp_err)?;
+                    report.insert(
+                        "nodes_archived".to_string(),
+                        json!(archived
+                            .get("archived_count")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0)),
+                    );
+
+                    let janitor = crate::maintenance::Janitor::new(&conn);
+                    let janitor_report = janitor.run(false).map_err(mcp_err)?;
+                    report.insert("edges_pruned".to_string(), json!(janitor_report.edges_pruned));
+                    report.insert("embeddings_built".to_string(), json!(janitor_report.vec_embedded));
+                    report.insert("fts5_indexed".to_string(), json!(janitor_report.fts5_indexed));
+
+                    let dup_count: usize = conn.execute(
+                        "DELETE FROM edges
+                         WHERE rowid IN (
+                             SELECT e1.rowid FROM edges e1
+                             INNER JOIN edges e2
+                             ON e1.source_id = e2.source_id
+                             AND e1.target_id = e2.target_id
+                             AND e1.edge_type = e2.edge_type
+                             AND e1.valid_to IS NULL
+                             AND e2.valid_to IS NULL
+                             AND e1.created_at < e2.created_at
+                         )",
+                        [],
+                    ).map_err(mcp_err)?;
+                    report.insert("duplicate_edges_collapsed".to_string(), json!(dup_count));
+
+                    crate::db::schema::rebuild_fts(&conn).map_err(mcp_err)?;
+                    report.insert("fts_rebuilt".to_string(), json!(true));
                 }
                 _ => {
                     return Err(McpError::invalid_params(
                         format!(
-                            "Unknown action '{}'. Valid actions: rebuild_fts, health, archive, enrich, align_data, all",
+                            "Unknown action '{}'. Valid actions: rebuild_fts, rebuild_embeddings, health, archive, enrich, align_data, gc_nodes, gc_edges, gc_all, all",
                             action_str
                         ),
                         None,

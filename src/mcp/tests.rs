@@ -445,28 +445,31 @@ mod tool_tests {
         let extracted = v["extracted_entities"].as_array().unwrap();
         assert!(!extracted.is_empty());
 
-        // Verify entities were wired into the graph
+        // Verify entities were wired into the graph.
+        // The EntityExtractor classifies known tools (rust, docker, etc.) with
+        // entity_type="tool", platforms with entity_type="platform", etc.
+        // So the wired node_type is "tool", NOT "entity".
         env.pool
             .with_connection(|conn| {
-                // Check for rust entity
+                // Check for rust entity (extracted as node_type='tool')
                 let rust_exists: bool = conn
                     .query_row(
-                        "SELECT COUNT(*) > 0 FROM nodes WHERE node_type = 'entity' AND name = 'rust' AND valid_to IS NULL",
+                        "SELECT COUNT(*) > 0 FROM nodes WHERE node_type = 'tool' AND name = 'rust' AND valid_to IS NULL",
                         [],
                         |row| row.get(0),
                     )
                     .unwrap_or(false);
-                assert!(rust_exists, "rust entity should exist");
+                assert!(rust_exists, "rust entity should exist (node_type='tool')");
 
-                // Check for docker entity
+                // Check for docker entity (extracted as node_type='tool')
                 let docker_exists: bool = conn
                     .query_row(
-                        "SELECT COUNT(*) > 0 FROM nodes WHERE node_type = 'entity' AND name = 'docker' AND valid_to IS NULL",
+                        "SELECT COUNT(*) > 0 FROM nodes WHERE node_type = 'tool' AND name = 'docker' AND valid_to IS NULL",
                         [],
                         |row| row.get(0),
                     )
                     .unwrap_or(false);
-                assert!(docker_exists, "docker entity should exist");
+                assert!(docker_exists, "docker entity should exist (node_type='tool')");
 
                 // Check for MENTIONS edges from observation to entities
                 let mentions_count: i64 = conn
@@ -476,7 +479,7 @@ mod tool_tests {
                         |row| row.get(0),
                     )
                     .unwrap_or(0);
-                assert!(mentions_count >= 2, "Should have at least 2 MENTIONS edges");
+                assert!(mentions_count >= 2, "Should have at least 2 MENTIONS edges, got {}", mentions_count);
 
                 Ok(())
             })
