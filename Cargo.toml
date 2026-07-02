@@ -1,6 +1,6 @@
 [package]
 name = "tdg-rust"
-version = "0.4.3"
+version = "0.5.0"
 edition = "2021"
 description = "Rust implementation of the Teleological Developmental Graph (TDG) memory infrastructure"
 license = "MIT"
