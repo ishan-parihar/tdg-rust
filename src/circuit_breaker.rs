@@ -103,7 +103,13 @@ impl CircuitBreaker {
                 // Failure in half-open → back to open
                 self.state = CircuitState::Open;
             }
-            CircuitState::Open => {}
+            // Update last_failure so the cooldown timer extends if failures
+            // keep arriving during the Open window. Previously this was a
+            // no-op, allowing the breaker to transition to HalfOpen even when
+            // failures were still ongoing.
+            CircuitState::Open => {
+                // last_failure already updated above.
+            }
         }
     }
 
@@ -142,8 +148,13 @@ impl CircuitBreaker {
     }
 
     /// Check if writes are allowed. Returns error when circuit is open.
-    pub fn check_before_write(&self) -> TdgResult<()> {
-        if self.state() == CircuitState::Open {
+    ///
+    /// Takes `&mut self` because it may transition `Open → HalfOpen` once the
+    /// cooldown has elapsed. The previous `&self` implementation only checked
+    /// the current state without ever transitioning, leaving the breaker
+    /// permanently stuck in `Open` until something else called `is_tripped()`.
+    pub fn check_before_write(&mut self) -> TdgResult<()> {
+        if self.is_tripped() {
             return Err(TdgError::CircuitBreakerTripped {
                 threshold: self.threshold as usize,
             });

@@ -20,8 +20,26 @@ use crate::models::Node;
 
 // ─── Lean Mode ────────────────────────────────────────────────────────────────
 
-/// When true, renormalize_graph returns early (used during rapid ingestion).
-pub static mut LEAN_MODE: bool = false;
+/// Global lean-mode flag for the flow engine.
+///
+/// When true, `renormalize_graph` returns early (used during rapid ingestion).
+///
+/// Previously this was a `static mut bool` read/written via `unsafe` blocks,
+/// which is **undefined behavior** when accessed from multiple threads
+/// (e.g. concurrent `tdg_connect` calls via `spawn_blocking`). This atomics-based
+/// replacement is safe to access from any thread and properly synchronized.
+static LEAN_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Set the global lean-mode flag for the flow engine. Should be called once
+/// from `TdgServer::new` to sync with `Config::lean`.
+pub fn set_lean_mode(enabled: bool) {
+    LEAN_MODE.store(enabled, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Read the global lean-mode flag.
+pub fn is_lean_mode() -> bool {
+    LEAN_MODE.load(std::sync::atomic::Ordering::SeqCst)
+}
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -466,7 +484,15 @@ fn reversed_downward_types() -> Vec<&'static str> {
 // ─── Serialization Helpers ───────────────────────────────────────────────────
 
 /// Serialize FlowDriveState to JSON and store in node's drives_json column.
+///
+/// Goes through the same write-protection path as every other mutation in the
+/// system: circuit-breaker check + write-guard acquisition. Previously this
+/// bypassed both, meaning that when the breaker was `Open` (tripped), drive
+/// mutations would still commit while the subsequent `record_event` call would
+/// fail — leaving the graph in an inconsistent state with no audit trail.
 fn store_drive_state(conn: &Connection, node_id: &str, state: &FlowDriveState) -> TdgResult<()> {
+    crate::db::crud::check_circuit_breaker_pub()?;
+    let _guard = crate::db::crud::acquire_write_guard_pub(conn)?;
     let json = state.to_json();
     let now = now_iso();
     conn.execute(
@@ -593,10 +619,18 @@ pub fn emit_downward(conn: &Connection, parent_id: &str, max_depth: i64) -> TdgR
     let mut visited: HashSet<String> = HashSet::new();
     visited.insert(parent_id.to_string());
 
-    // Get children via downward edges
+    // Get children via downward edges.
+    // IMPORTANT: insert each child into `visited` BEFORE enqueuing. In a DAG a
+    // node can be reachable via multiple paths (e.g. both directly from `parent`
+    // and as a grandchild via a sibling). Without this dedup at enqueue time,
+    // such a node would be processed twice with different parent_drive_state
+    // values, producing non-deterministic drive recomputation and duplicate
+    // `drive_recomputed` events.
     let children = get_children_for_emission(conn, parent_id, &downward_types, &reversed_types)?;
     for child_id in children {
-        queue.push_back((child_id, 1, parent_id.to_string(), parent_state.clone()));
+        if visited.insert(child_id.clone()) {
+            queue.push_back((child_id, 1, parent_id.to_string(), parent_state.clone()));
+        }
     }
 
     while let Some((current_id, depth, immediate_parent_id, parent_drive_state)) = queue.pop_front()
@@ -831,7 +865,7 @@ fn blend_drives(a: &DualPoleDrive, b: &DualPoleDrive, a_weight: f64) -> DualPole
 /// 2. Downward flow from telos nodes
 /// 3. Upward aggregation from leaves
 pub fn renormalize_graph(conn: &Connection, force_intrinsic: bool) -> TdgResult<serde_json::Value> {
-    if unsafe { LEAN_MODE } {
+    if is_lean_mode() {
         return Ok(serde_json::json!({
             "skipped": true,
             "reason": "lean_mode",
@@ -886,26 +920,37 @@ pub fn renormalize_graph(conn: &Connection, force_intrinsic: bool) -> TdgResult<
     }
 
     // Phase 3: Upward aggregation using topological order
-    // We do a simple iterative approach: aggregate from leaves upward
+    //
+    // `aggregate_upward(conn, id)` updates the PARENTS of `id` based on `id`'s
+    // drive state. The previous implementation guarded this call with
+    // `if child_count > 0`, which is the INVERSE of the correct logic: it
+    // skipped aggregation for leaf nodes (nodes with no outgoing edges),
+    // meaning a parent whose only children were leaves never got re-aggregated.
+    //
+    // The correct approach: for every active node, ask "does this node have
+    // parents that should be re-aggregated?" — i.e. does it have INCOMING
+    // polarity edges. If yes, run aggregate_upward on those parents.
+    // aggregate_upward itself is a no-op when there are no incoming edges.
     {
-        let mut stmt = conn.prepare("SELECT id FROM nodes WHERE valid_to IS NULL")?;
-        let all_ids: Vec<String> = stmt
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT n.id
+             FROM nodes n
+             INNER JOIN edges e ON e.target_id = n.id
+             WHERE n.valid_to IS NULL
+               AND e.valid_to IS NULL
+               AND e.edge_type IN ('DECOMPOSES_TO','ENABLES','PURSUES','CONTEXT',
+                                   'EVIDENCES','BLOCKS','SYNTHESIZES','HAS_CAPABILITY',
+                                   'SENT','RECEIVED','TRIGGERED','DETECTED','ILLUMINATES',
+                                   'OPENS','CREATES','ADVANCES','APPEALS_TO','REPLIES',
+                                   'CONTINUES','SEEKS')",
+        )?;
+        let parent_ids: Vec<String> = stmt
             .query_map([], |row| row.get(0))?
             .filter_map(|r| r.ok())
             .collect();
 
-        // Simple approach: iterate depth levels from bottom up
-        // Use outgoing edge count as depth proxy
-        for id in &all_ids {
-            // Only aggregate from nodes that have children
-            let child_count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM edges WHERE source_id = ?1 AND valid_to IS NULL",
-                params![id],
-                |row| row.get(0),
-            )?;
-            if child_count > 0 {
-                aggregated += aggregate_upward(conn, id)?;
-            }
+        for pid in &parent_ids {
+            aggregated += aggregate_upward(conn, pid)?;
         }
     }
 
@@ -1340,13 +1385,9 @@ mod tests {
         let conn = setup_db();
         let _telos = add_test_node(&conn, "Lean Telos", "telos");
 
-        unsafe {
-            LEAN_MODE = true;
-        }
+        set_lean_mode(true);
         let result = renormalize_graph(&conn, false).unwrap();
-        unsafe {
-            LEAN_MODE = false;
-        }
+        set_lean_mode(false);
 
         assert_eq!(result.get("skipped"), Some(&serde_json::json!(true)));
         assert_eq!(result.get("reason"), Some(&serde_json::json!("lean_mode")));

@@ -46,10 +46,27 @@ impl<'a> HealthMonitor<'a> {
             )
             .unwrap_or(0);
         let embedding_count: i64 = self.conn
-            .query_row("SELECT COUNT(*) FROM embeddings", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM embeddings e
+                 INNER JOIN nodes n ON n.id = e.node_id
+                 WHERE n.valid_to IS NULL AND n.lifecycle_state != 'archived'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or(0);
+        // IMPORTANT: join nodes_fts with nodes and filter for active, non-archived
+        // rows. The previous `SELECT COUNT(*) FROM nodes_fts` included archived and
+        // soft-deleted nodes (FTS triggers fire on every INSERT regardless of
+        // lifecycle_state), causing `fts5_coverage` to exceed 1.0 (e.g. 200% when
+        // half the nodes were archived).
         let fts_count: i64 = self.conn
-            .query_row("SELECT COUNT(*) FROM nodes_fts", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM nodes_fts f
+                 INNER JOIN nodes n ON n.rowid = f.rowid
+                 WHERE n.valid_to IS NULL AND n.lifecycle_state != 'archived'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or(0);
 
         let fts5 = if node_count > 0 { fts_count as f64 / node_count as f64 } else { 1.0 };
@@ -158,12 +175,20 @@ impl<'a> HealthMonitor<'a> {
     }
 
     fn check_orphan_count(&self) -> i64 {
+        // An orphan edge is one whose source OR target node has been
+        // hard-deleted (no row at all) — NOT one whose endpoint is merely
+        // archived. Archived nodes are intentionally retained; their edges
+        // should be cleaned up by the archiver, not flagged as orphans here.
+        // The previous query counted edges to archived nodes as orphans,
+        // permanently depressing the health score after any archive operation.
         self.conn
             .query_row(
                 "SELECT COUNT(*) FROM edges e
                  WHERE e.valid_to IS NULL
-                 AND (e.source_id NOT IN (SELECT id FROM nodes WHERE valid_to IS NULL AND lifecycle_state != 'archived')
-                  OR e.target_id NOT IN (SELECT id FROM nodes WHERE valid_to IS NULL AND lifecycle_state != 'archived'))",
+                 AND (
+                     NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = e.source_id)
+                  OR NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = e.target_id)
+                 )",
                 [],
                 |r| r.get(0),
             )
@@ -171,10 +196,18 @@ impl<'a> HealthMonitor<'a> {
     }
 
     fn check_event_growth(&self) -> f64 {
+        // Wrap both sides in `datetime()` so the comparison is format-agnostic.
+        // Events are written with either RFC3339 ("2026-01-15T12:34:56.789+00:00")
+        // or strftime('%Y-%m-%dT%H:%M:%SZ', 'now') ("2026-01-15T12:34:56Z").
+        // The previous query used `datetime('now', '-1 day')` which produces
+        // "2026-01-14 12:34:56" (space separator). Lexicographic comparison
+        // between "2026-01-14T11:00:00Z" and "2026-01-14 12:34:56" sorts the
+        // event string AFTER the cutoff (T=0x54 > space=0x20), causing events
+        // from 25h ago to be counted as "within the last day".
         let count: i64 = self
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM events WHERE timestamp >= datetime('now', '-1 day')",
+                "SELECT COUNT(*) FROM events WHERE datetime(timestamp) >= datetime('now', '-1 day')",
                 [],
                 |r| r.get(0),
             )

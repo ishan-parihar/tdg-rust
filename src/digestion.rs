@@ -86,21 +86,58 @@ impl<'a> DigestionEngine<'a> {
             },
         )?;
 
+        // Group observations by their shared source — either an EVIDENCES edge
+        // target (created by `digest_catalyst`) or a MENTIONS edge target
+        // (created by `tdg_observe` via `upsert_entity_and_connect`).
+        //
+        // The previous implementation ONLY looked at EVIDENCES edges. But
+        // `tdg_observe` does NOT create EVIDENCES edges — it creates MENTIONS
+        // edges. So for MCP-created observations, `by_source` was always empty
+        // and no hypotheses were ever created. The digestion cascade was
+        // effectively dead code for the entire MCP write path.
+        //
+        // We now group by BOTH edge types. When 3+ observations share a source
+        // (via either edge type), a hypothesis is created.
         let mut by_source: HashMap<String, Vec<&Node>> = HashMap::new();
         for obs in &observations {
-            let edges =
-                crud::get_edges(self.conn, Some(&obs.id), None, Some("EVIDENCES"), None, 100)?;
-            if let Some(first) = edges.first() {
-                by_source
-                    .entry(first.target_id.clone())
-                    .or_default()
-                    .push(obs);
+            for edge_type in &["MENTIONS", "EVIDENCES"] {
+                let edges =
+                    crud::get_edges(self.conn, Some(&obs.id), None, Some(edge_type), None, 100)?;
+                for e in &edges {
+                    by_source
+                        .entry(e.target_id.clone())
+                        .or_default()
+                        .push(obs);
+                }
             }
         }
 
         let mut hypotheses = Vec::new();
         for (source_id, obs_list) in &by_source {
             if obs_list.len() >= self.min_similar_for_hypothesis {
+                // Dedup: skip if a hypothesis already exists for this source.
+                // The previous implementation created a NEW hypothesis on every
+                // `tdg_observe` call once the threshold was met, leading to
+                // N-2 duplicate hypotheses for N observations about the same entity.
+                let existing: i64 = self.conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM nodes
+                         WHERE node_type = 'hypothesis'
+                           AND source = 'digestion_cascade'
+                           AND valid_to IS NULL
+                           AND properties_json LIKE ?1",
+                        rusqlite::params![format!("%\"source_node\": \"{}\"%", source_id)],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                if existing > 0 {
+                    tracing::debug!(
+                        "digestion: hypothesis already exists for source {}, skipping",
+                        source_id
+                    );
+                    continue;
+                }
+
                 let parent_ids: Vec<String> = obs_list.iter().map(|o| o.id.clone()).collect();
                 let h = crud::add_node(
                     self.conn,
@@ -108,7 +145,7 @@ impl<'a> DigestionEngine<'a> {
                         node_type: "hypothesis".to_string(),
                         name: format!("Hypothesis from {} observations", obs_list.len()),
                         description: Some(format!(
-                            "Pattern detected: {} observations from source {}",
+                            "Pattern detected: {} observations mention entity {}",
                             obs_list.len(),
                             source_id
                         )),
@@ -129,7 +166,7 @@ impl<'a> DigestionEngine<'a> {
                 )?;
 
                 for obs in obs_list {
-                    crud::add_edge(
+                    if let Err(e) = crud::add_edge(
                         self.conn,
                         &NewEdge {
                             source_id: h.id.clone(),
@@ -139,7 +176,12 @@ impl<'a> DigestionEngine<'a> {
                             properties: None,
                             agent_id: Some("digestion".to_string()),
                         },
-                    )?;
+                    ) {
+                        tracing::warn!(
+                            "digestion: failed to create SUPPORTS edge {} -> {}: {}",
+                            h.id, obs.id, e
+                        );
+                    }
                 }
 
                 hypotheses.push(h);

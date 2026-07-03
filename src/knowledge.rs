@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::crud::{now_iso, record_event};
 use crate::error::TdgResult;
+// chrono is a workspace dependency used for stale-node cutoff computation.
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -383,17 +384,39 @@ pub fn generate_hygiene_report(conn: &Connection) -> TdgResult<HygieneReport> {
         .filter_map(|r| r.ok())
         .collect();
 
-    // Stale nodes
-    let stale_result = archive_stale_nodes(conn, Some(DEFAULT_STALE_THRESHOLD_DAYS))?;
-    let stale_ids: Vec<String> = stale_result
-        .get("archived_ids")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
+    // Stale nodes — READ-ONLY count.
+    // IMPORTANT: do NOT call archive_stale_nodes() here. This is a *report* function;
+    // mutating the graph from a read-only health check silently destroys data.
+    // Callers who want to archive must do so explicitly via action='archive'
+    // or action='gc_nodes' on tdg_maintenance.
+    let stale_ids: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT id FROM nodes
+             WHERE valid_to IS NULL
+               AND lifecycle_state != 'archived'
+               AND node_type = 'observation'
+               AND (
+                   (properties_json LIKE '%archive_after%'
+                    AND json_extract(properties_json, '$.archive_after') IS NOT NULL
+                    AND json_extract(properties_json, '$.archive_after') < ?1)
+                   OR created_at < ?2
+               )",
+        )?;
+        let cutoff = chrono::Utc::now()
+            .naive_utc()
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        let stale_threshold_iso = chrono::Utc::now()
+            .naive_utc()
+            .checked_sub_signed(chrono::Duration::days(DEFAULT_STALE_THRESHOLD_DAYS))
+            .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .unwrap_or(cutoff.clone());
+        let rows = stmt.query_map(
+            rusqlite::params![&stale_threshold_iso, &stale_threshold_iso],
+            |row| row.get::<_, String>(0),
+        )?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
 
     // Recently archived
     let recently_archived: i64 = conn.query_row(

@@ -427,7 +427,12 @@ impl DiagnosticEngine {
             .collect();
 
         let mut phantoms = Vec::new();
-        let quadrant_map: HashMap<&str, &str> = HashMap::from([
+        // Each quadrant is associated with a primary drive. A "phantom node" is
+        // an observation whose drive state is strong in a drive that does NOT
+        // match its recorded quadrant — e.g. a UL observation (agape) with a
+        // very strong `eros` signal is "phantom": it's acting like an LR node
+        // while labeled UL.
+        let quadrant_drive: HashMap<&str, &str> = HashMap::from([
             ("UL", "agape"),
             ("UR", "agency"),
             ("LL", "communion"),
@@ -435,31 +440,68 @@ impl DiagnosticEngine {
         ]);
 
         for (id, name, drives_json, quadrants_json) in &rows {
-            let drives: serde_json::Value =
-                serde_json::from_str(drives_json).unwrap_or(serde_json::json!({}));
+            // drives_json is stored as {"eros": {"positive_pole": 5.0, "negative_pole": 2.0}, ...}
+            // (see flow.rs FlowDriveState::to_json). The previous implementation
+            // did `drives.get("eros").as_f64()` which always returned None
+            // (because the value is an object, not a float), so phantom_nodes
+            // was ALWAYS empty. We now compute the net drive = positive - negative.
+            let drives: serde_json::Value = match serde_json::from_str(drives_json) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(
+                        "detect_phantom_nodes: corrupt drives_json for node {} ({}): {}",
+                        id, name, e
+                    );
+                    continue;
+                }
+            };
             let quadrants: serde_json::Value =
                 serde_json::from_str(quadrants_json).unwrap_or(serde_json::json!({}));
 
             let active_quadrant = quadrants
-                .get("active")
+                .get("primary")
+                .or_else(|| quadrants.get("active"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("LR");
 
-            let expected_drive = quadrant_map.get(active_quadrant).unwrap_or(&"eros");
+            let expected_drive = quadrant_drive.get(active_quadrant).copied().unwrap_or("eros");
 
-            for drive_name in &["eros", "agape", "agency", "communion"] {
-                let drive_val = drives
-                    .get(*drive_name)
+            for (drive_name, _drive_label) in &[
+                ("eros", "Eros"),
+                ("agape", "Agape"),
+                ("agency", "Agency"),
+                ("communion", "Communion"),
+            ] {
+                let drive_obj = match drives.get(*drive_name) {
+                    Some(v) => v,
+                    None => continue,
+                };
+                let pos = drive_obj
+                    .get("positive_pole")
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0);
-                if drive_name == expected_drive && drive_val.abs() > 7.0 {
+                let neg = drive_obj
+                    .get("negative_pole")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                let net = pos - neg;
+
+                // Phantom: strong drive activity (>7.0 net magnitude) in a
+                // drive that does NOT correspond to this node's quadrant.
+                if drive_name != &expected_drive && net.abs() > 7.0 {
+                    // Find which quadrant this drive actually belongs to.
+                    let actual_quadrant = quadrant_drive
+                        .iter()
+                        .find(|(_, d)| *d == drive_name)
+                        .map(|(q, _)| *q)
+                        .unwrap_or("LR");
                     phantoms.push(PhantomNode {
                         node_id: id.clone(),
                         node_name: name.clone(),
                         drive: drive_name.to_string(),
                         expected_quadrant: active_quadrant.to_string(),
-                        actual_quadrant: active_quadrant.to_string(),
-                        confidence: drive_val.abs() / 10.0,
+                        actual_quadrant: actual_quadrant.to_string(),
+                        confidence: net.abs() / 10.0,
                     });
                 }
             }
@@ -469,27 +511,48 @@ impl DiagnosticEngine {
     }
 
     fn check_metrics_staleness(&self, conn: &Connection) -> TdgResult<bool> {
+        // Previously this queried for a `metrics_updated` event that no code
+        // path ever writes, causing staleness to be permanently `true` and the
+        // diagnostic dashboard to always show "⚠️ Metrics data is stale".
+        //
+        // We now use the most recent `enrichment_completed` event (written by
+        // the Enricher at the end of every run) as the freshness signal. If
+        // none exists, we fall back to the most recent `node_updated` event —
+        // if the graph hasn't seen any mutation in 24h, metrics are stale.
         let result: Option<String> = conn
             .query_row(
-                "SELECT payload FROM events WHERE event_action = 'metrics_updated' ORDER BY timestamp DESC LIMIT 1",
+                "SELECT timestamp FROM events
+                 WHERE event_action IN ('enrichment_completed', 'node_updated', 'node_created')
+                 ORDER BY timestamp DESC LIMIT 1",
                 [],
                 |row| row.get(0),
             )
             .ok();
 
         match result {
-            Some(payload) => {
-                let v: serde_json::Value =
-                    serde_json::from_str(&payload).unwrap_or(serde_json::json!({}));
-                let timestamp_str = v.get("timestamp").and_then(|t| t.as_str()).unwrap_or("");
-                if let Ok(ts) =
-                    chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%dT%H:%M:%S")
-                {
-                    let now = chrono::Utc::now().naive_utc();
-                    let hours = (now - ts).num_hours();
-                    Ok(hours > 24)
-                } else {
-                    Ok(true)
+            Some(timestamp_str) => {
+                // Events are written with either RFC3339 (chrono::Utc::now().to_rfc3339())
+                // or strftime('%Y-%m-%dT%H:%M:%SZ', 'now'). Try parsing both.
+                let parsed = chrono::NaiveDateTime::parse_from_str(
+                    &timestamp_str,
+                    "%Y-%m-%dT%H:%M:%S%.fZ",
+                )
+                .or_else(|_| {
+                    chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%dT%H:%M:%SZ")
+                })
+                .or_else(|_| {
+                    chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%dT%H:%M:%S%.f")
+                })
+                .or_else(|_| {
+                    chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%dT%H:%M:%S")
+                });
+                match parsed {
+                    Ok(ts) => {
+                        let now = chrono::Utc::now().naive_utc();
+                        let hours = (now - ts).num_hours();
+                        Ok(hours > 24)
+                    }
+                    Err(_) => Ok(true),
                 }
             }
             None => Ok(true),

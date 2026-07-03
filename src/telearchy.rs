@@ -85,6 +85,45 @@ impl<'a> EvidenceCollector<'a> {
 
         let mut ev = StageEvidence::default();
 
+        // CRITICAL: compute node_age_days from the node's created_at timestamp.
+        // The previous implementation left this at the default of 0, which
+        // caused every age-gated stage promotion (Identity→Power requires 3d,
+        // Power→Heart 7d, etc.) to be blocked forever (0 < min_days). The
+        // entire 7-phase developmental framework was non-functional.
+        if let Ok(Some(node)) = crud::get_node(self.conn, node_id) {
+            // created_at is stored as RFC3339 (chrono::Utc::now().to_rfc3339())
+            // e.g. "2026-01-15T12:34:56.789+00:00". Try several formats for safety.
+            let parsed = chrono::DateTime::parse_from_rfc3339(&node.created_at)
+                .ok()
+                .map(|dt| dt.with_timezone(&chrono::Utc).naive_utc())
+                .or_else(|| {
+                    chrono::NaiveDateTime::parse_from_str(
+                        &node.created_at,
+                        "%Y-%m-%dT%H:%M:%SZ",
+                    )
+                    .ok()
+                })
+                .or_else(|| {
+                    chrono::NaiveDateTime::parse_from_str(
+                        &node.created_at,
+                        "%Y-%m-%dT%H:%M:%S%.fZ",
+                    )
+                    .ok()
+                })
+                .or_else(|| {
+                    chrono::NaiveDateTime::parse_from_str(
+                        &node.created_at,
+                        "%Y-%m-%d %H:%M:%S",
+                    )
+                    .ok()
+                });
+            if let Some(created) = parsed {
+                let now = chrono::Utc::now().naive_utc();
+                let days = (now - created).num_days();
+                ev.node_age_days = if days > 0 { days as u32 } else { 0 };
+            }
+        }
+
         for e in &edges {
             match e.edge_type.as_str() {
                 "EVIDENCES" | "ILLUMINATES" => ev.evidence_edges += 1,

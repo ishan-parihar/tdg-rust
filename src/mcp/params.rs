@@ -369,3 +369,15 @@ pub struct ImportParams {
     #[schemars(description = "Skip duplicate nodes (default: true)")]
     pub skip_duplicates: Option<bool>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AuditParams {
+    // Currently no parameters — the audit runs across the whole graph.
+    // Reserved for future filtering (e.g. by node_type, by telos subtree).
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RenormalizeParams {
+    // Currently no parameters — renormalization runs with default settings.
+    // Reserved for future options (e.g. force_intrinsic, max_depth).
+}

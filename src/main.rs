@@ -478,7 +478,89 @@ fn main() -> anyhow::Result<()> {
                 run_migrations(conn)?;
                 Ok(())
             })?;
+
+            // Spawn a background maintenance scheduler.
+            //
+            // Previously, NO automatic maintenance ever ran — the agent had to
+            // manually call tdg_maintenance / tdg_enrich / tdg_self_manage.
+            // This meant stale nodes accumulated forever, embeddings were never
+            // backfilled, FTS5 index drifted, health_checks stayed empty, and
+            // trust scores never decayed. The scheduler now runs:
+            //   - Every 6 hours: full SelfManager cycle (janitor + enricher + archiver + monitor)
+            //   - Every 5 minutes: internal health check (records to health_checks table)
             let rt = tokio::runtime::Runtime::new()?;
+            // ConnectionPool is not Clone, so we create a second pool pointing
+            // at the same DB file for the background scheduler. Both pools
+            // share the same SQLite database (WAL mode allows concurrent readers
+            // and a single writer across processes/connections).
+            let maintenance_pool = std::sync::Arc::new(
+                ConnectionPool::new(
+                    config.db_path.to_str()
+                        .ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?,
+                    2,
+                    30000,
+                )?
+            );
+            let maintenance_handle = rt.spawn(async move {
+                let self_manager_interval = std::time::Duration::from_secs(6 * 60 * 60);
+                let health_check_interval = std::time::Duration::from_secs(5 * 60);
+                let mut self_manager_ticker =
+                    tokio::time::interval(self_manager_interval);
+                let mut health_check_ticker =
+                    tokio::time::interval(health_check_interval);
+                // Skip the first immediate tick (we don't want to run maintenance
+                // during startup — let the server stabilize first).
+                self_manager_ticker.tick().await;
+                health_check_ticker.tick().await;
+                loop {
+                    tokio::select! {
+                        _ = self_manager_ticker.tick() => {
+                            tracing::info!("Scheduled maintenance: running SelfManager cycle");
+                            let pool = maintenance_pool.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if let Ok(conn) = pool.get_connection() {
+                                    let manager = tdg_rust::maintenance::SelfManager::new(&conn);
+                                    match manager.run(false) {
+                                        Ok(report) => {
+                                            tracing::info!(
+                                                "Scheduled maintenance completed: health_delta={:.3}, failed={}",
+                                                report.health_delta,
+                                                report.failed.len()
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("Scheduled maintenance failed: {}", e);
+                                        }
+                                    }
+                                    pool.release_connection(conn);
+                                }
+                            }).await.ok();
+                        }
+                        _ = health_check_ticker.tick() => {
+                            // Record a lightweight internal health check so the
+                            // health_checks table doesn't stay empty.
+                            let pool = maintenance_pool.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if let Ok(conn) = pool.get_connection() {
+                                    let start = std::time::Instant::now();
+                                    let success = conn.execute_batch("SELECT 1;").is_ok();
+                                    let latency = start.elapsed().as_millis() as f64;
+                                    let _ = tdg_rust::db::crud::record_health_check(
+                                        &conn,
+                                        "tdg_internal",
+                                        latency,
+                                        success,
+                                        if success { None } else { Some("SELECT 1 health probe failed".to_string()) }.as_deref(),
+                                    );
+                                    pool.release_connection(conn);
+                                }
+                            }).await.ok();
+                        }
+                    }
+                }
+            });
+            tracing::info!("Background maintenance scheduler started (self_manager=6h, health_check=5m)");
+
             // Use stdio transport by default (for AI integration)
             // If port is non-default (not 3000), use HTTP transport
             if port != 3000 {
@@ -486,6 +568,8 @@ fn main() -> anyhow::Result<()> {
             } else {
                 rt.block_on(server::serve_stdio(pool))?;
             }
+            // When the server shuts down, cancel the maintenance scheduler.
+            maintenance_handle.abort();
         }
     }
 

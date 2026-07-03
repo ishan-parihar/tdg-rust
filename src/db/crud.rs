@@ -24,15 +24,25 @@ fn check_circuit_breaker() -> TdgResult<()> {
         .check_before_write()
 }
 
+/// Public re-export of `check_circuit_breaker` for cross-module use
+/// (e.g. `flow::store_drive_state` needs the same protection as CRUD ops).
+pub fn check_circuit_breaker_pub() -> TdgResult<()> {
+    check_circuit_breaker()
+}
+
 fn record_write_success() {
     if let Ok(mut cb) = global_circuit_breaker().lock() {
         cb.record_success();
+    } else {
+        tracing::error!("circuit breaker mutex poisoned — success not recorded");
     }
 }
 
 fn record_write_failure() {
     if let Ok(mut cb) = global_circuit_breaker().lock() {
         cb.record_failure();
+    } else {
+        tracing::error!("circuit breaker mutex poisoned — failure not recorded");
     }
 }
 
@@ -45,6 +55,12 @@ fn acquire_write_guard(conn: &Connection) -> TdgResult<Option<WriteGuard>> {
     let guard = WriteGuard::acquire(db_path, Duration::from_secs(5))
         .map_err(|e| TdgError::FileLock(e.to_string()))?;
     Ok(Some(guard))
+}
+
+/// Public re-export of `acquire_write_guard` for cross-module use
+/// (e.g. `flow::store_drive_state` needs the same write serialization as CRUD ops).
+pub fn acquire_write_guard_pub(conn: &Connection) -> TdgResult<Option<WriteGuard>> {
+    acquire_write_guard(conn)
 }
 
 /// Generate a node ID: "n" + 12 hex chars from UUID v4.
@@ -399,6 +415,50 @@ pub fn update_node(
                 Some(&new_value),
                 None,
             );
+
+            // Regenerate embedding if name or description changed.
+            // The previous implementation never updated embeddings on update_node,
+            // so the vector stayed stale forever — even if the node's text content
+            // completely changed. The enricher's `enrich_embeddings` uses
+            // `WHERE id NOT IN (SELECT node_id FROM embeddings)` so it skips
+            // nodes that already have an embedding, even if stale.
+            let content_changed = updates.contains_key("name") || updates.contains_key("description");
+            if content_changed {
+                #[cfg(feature = "onnx")]
+                {
+                    if let Ok(Some(updated_node)) = get_node(conn, node_id) {
+                        let embed_text = format!(
+                            "{} {}",
+                            updated_node.name,
+                            updated_node.description
+                        );
+                        match crate::mind::embedding::embed(&embed_text) {
+                            Ok(result) => {
+                                let dimension = result.vector.len() as i64;
+                                if let Err(e) = upsert_embedding(
+                                    conn,
+                                    node_id,
+                                    &result.vector,
+                                    "onnx",
+                                    dimension,
+                                ) {
+                                    tracing::warn!(
+                                        "Failed to regenerate embedding for node {}: {}",
+                                        node_id, e
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::debug!(
+                                    "Embedding generation failed for node {} (will backfill later): {}",
+                                    node_id, e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
             get_node(conn, node_id)
         }
         Err(e) => {

@@ -268,17 +268,29 @@ impl<'a> ReflectEngine<'a> {
             detail.skill_created = true;
 
             for oid in cluster {
-                let _ = crud::add_edge(
+                // Edge direction: skill ENABLES observation (source=skill, target=obs).
+                // The previous implementation had this backwards (source=obs,
+                // target=skill), which meant `discover_skills_for_terrain`
+                // (terrain.rs) — which queries `WHERE e.edge_type='ENABLES' AND
+                // n.node_type=?` with `n.id = e.target_id` — never found
+                // reflect-discovered skills. The prompt's "Active Skills"
+                // section was permanently empty as a result.
+                if let Err(e) = crud::add_edge(
                     self.conn,
                     &NewEdge {
-                        source_id: oid.clone(),
-                        target_id: skill_id.clone(),
+                        source_id: skill_id.clone(),
+                        target_id: oid.clone(),
                         edge_type: "ENABLES".to_string(),
                         weight: Some(0.5),
                         properties: None,
                         agent_id: Some("reflect_engine".to_string()),
                     },
-                );
+                ) {
+                    tracing::warn!(
+                        "reflect_engine: failed to create ENABLES edge {} -> {}: {}",
+                        skill_id, oid, e
+                    );
+                }
             }
         }
 

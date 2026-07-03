@@ -34,18 +34,18 @@ pub(crate) fn calculate_health_score(
 ) -> f64 {
     let node_score = if node_count > 0 { 1.0 } else { 0.0 };
     let edge_score = (edge_count as f64 / node_count.max(1) as f64).min(1.0);
-    let type_score = if node_count > 0 {
-        type_count as f64 / node_count as f64
-    } else {
-        1.0
-    };
+    // Type diversity: normalize against the known node-type vocabulary (~20 types)
+    // rather than against node_count. The previous formula
+    // (type_count / node_count) gave ~0.0024 for a 5000-node graph with 12
+    // types, contributing effectively zero to the health score.
+    let type_score = (type_count as f64 / 20.0).min(1.0);
     let embedding_score = if node_count > 0 {
-        embedding_count as f64 / node_count as f64
+        (embedding_count as f64 / node_count as f64).min(1.0)
     } else {
         1.0
     };
     let fts_score = if node_count > 0 {
-        fts_count as f64 / node_count as f64
+        (fts_count as f64 / node_count as f64).min(1.0)
     } else {
         1.0
     };
@@ -57,9 +57,53 @@ pub(crate) fn calculate_health_score(
         + fts_score * 0.10
 }// ─── Helper to get a connection ──────────────────────────────────────────────
 
-fn get_conn(pool: &ConnectionPool) -> Result<rusqlite::Connection, McpError> {
-    pool.get_connection()
-        .map_err(|e| McpError::internal_error(e.to_string(), None))
+/// RAII guard that borrows a connection from the pool and automatically
+/// releases it back when dropped.
+///
+/// Previously `get_conn` returned a bare `rusqlite::Connection` that was
+/// dropped (closed) at the end of each `run_blocking` closure instead of being
+/// returned to the pool. This meant every tool call opened a fresh connection
+/// (re-running 5 PRAGMAs: WAL, synchronous, foreign_keys, cache_size,
+/// busy_timeout), the pool's `Vec<Connection>` stayed permanently empty, and
+/// the `max_connections` cap was meaningless. With ~29 tool call sites each
+/// running on `spawn_blocking`, this was a significant performance and
+/// correctness issue (no connection reuse, no shared cache).
+///
+/// `ConnGuard` derefs to `rusqlite::Connection` so existing code that does
+/// `let conn = get_conn(&pool)?;` and then passes `&conn` or `&*conn` keeps
+/// working unchanged.
+pub(crate) struct ConnGuard {
+    pool: std::sync::Arc<ConnectionPool>,
+    conn: Option<rusqlite::Connection>,
+}
+
+impl std::ops::Deref for ConnGuard {
+    type Target = rusqlite::Connection;
+    fn deref(&self) -> &Self::Target {
+        self.conn.as_ref().expect("ConnGuard conn already taken")
+    }
+}
+
+impl Drop for ConnGuard {
+    fn drop(&mut self) {
+        if let Some(conn) = self.conn.take() {
+            self.pool.release_connection(conn);
+        }
+    }
+}
+
+/// Get a connection wrapped in an RAII guard that releases it back to the pool
+/// on drop. Call sites do `let pool = self.pool.clone();` (Arc clone) then
+/// `let conn = get_conn(&pool)?;` — the guard keeps the Arc alive until the
+/// connection is returned, even if the surrounding closure is dropped early.
+fn get_conn(pool: &std::sync::Arc<ConnectionPool>) -> Result<ConnGuard, McpError> {
+    let conn = pool
+        .get_connection()
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+    Ok(ConnGuard {
+        pool: std::sync::Arc::clone(pool),
+        conn: Some(conn),
+    })
 }
 
 fn mcp_err(e: impl std::fmt::Display) -> McpError {
@@ -158,6 +202,12 @@ impl TdgServer {
     pub fn new(pool: ConnectionPool) -> Self {
         let config = Config::from_env();
         let lean = config.lean;
+        // Sync the flow engine's global lean flag with the server's lean config.
+        // Previously `flow::LEAN_MODE` (a static mut) was never set from
+        // production code, so renormalize_graph would run even when the server
+        // was in lean mode — a divergence between the tool-level lean guard
+        // and the flow-level lean guard.
+        crate::flow::set_lean_mode(lean);
         let mind_state_manager = Arc::new(MindStateManager::new(config));
         let pool = Arc::new(pool);
         Self {
@@ -367,20 +417,33 @@ impl TdgServer {
         run_blocking(move || {
             let conn = get_conn(&pool)?;
 
-            let node_count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0)).unwrap_or(0);
+            let node_count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL AND lifecycle_state != 'archived'", [], |r| r.get(0)).unwrap_or(0);
             let edge_count: i64 = conn.query_row("SELECT COUNT(*) FROM edges WHERE valid_to IS NULL", [], |r| r.get(0)).unwrap_or(0);
-            let type_count: i64 = conn.query_row("SELECT COUNT(DISTINCT node_type) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0)).unwrap_or(0);
-            let fts_count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes_fts", [], |r| r.get(0)).unwrap_or(0);
-            let emb_count: i64 = conn.query_row("SELECT COUNT(*) FROM embeddings", [], |r| r.get(0)).unwrap_or(0);
+            let type_count: i64 = conn.query_row("SELECT COUNT(DISTINCT node_type) FROM nodes WHERE valid_to IS NULL AND lifecycle_state != 'archived'", [], |r| r.get(0)).unwrap_or(0);
+            // Join with nodes and filter for active, non-archived rows to avoid
+            // fts5_coverage > 1.0 (FTS triggers fire on every INSERT regardless
+            // of lifecycle_state, so nodes_fts contains archived/deleted rows).
+            let fts_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM nodes_fts f
+                 INNER JOIN nodes n ON n.rowid = f.rowid
+                 WHERE n.valid_to IS NULL AND n.lifecycle_state != 'archived'",
+                [], |r| r.get(0),
+            ).unwrap_or(0);
+            let emb_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM embeddings e
+                 INNER JOIN nodes n ON n.id = e.node_id
+                 WHERE n.valid_to IS NULL AND n.lifecycle_state != 'archived'",
+                [], |r| r.get(0),
+            ).unwrap_or(0);
             let mentions: i64 = conn.query_row("SELECT COUNT(*) FROM edges WHERE edge_type = 'MENTIONS' AND valid_to IS NULL", [], |r| r.get(0)).unwrap_or(0);
             let orphans: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM edges e WHERE e.valid_to IS NULL AND (e.source_id NOT IN (SELECT id FROM nodes WHERE valid_to IS NULL) OR e.target_id NOT IN (SELECT id FROM nodes WHERE valid_to IS NULL))",
+                "SELECT COUNT(*) FROM edges e WHERE e.valid_to IS NULL AND (e.source_id NOT IN (SELECT id FROM nodes WHERE valid_to IS NULL AND lifecycle_state != 'archived') OR e.target_id NOT IN (SELECT id FROM nodes WHERE valid_to IS NULL AND lifecycle_state != 'archived'))",
                 [], |r| r.get(0),
             ).unwrap_or(0);
             let event_count: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap_or(0);
 
-            let fts_coverage = if node_count > 0 { fts_count as f64 / node_count as f64 } else { 1.0 };
-            let emb_coverage = if node_count > 0 { emb_count as f64 / node_count as f64 } else { 1.0 };
+            let fts_coverage = if node_count > 0 { (fts_count as f64 / node_count as f64).min(1.0) } else { 1.0 };
+            let emb_coverage = if node_count > 0 { (emb_count as f64 / node_count as f64).min(1.0) } else { 1.0 };
             let edge_noise = if edge_count > 0 { mentions as f64 / edge_count as f64 } else { 0.0 };
 
             let db_size: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0)).unwrap_or(0)
@@ -868,24 +931,39 @@ impl TdgServer {
                 ids.push(node.id);
             }
             let edges_str = edges_json.as_deref().unwrap_or("[]");
-            let edges: Vec<Value> = serde_json::from_str(edges_str).unwrap_or_default();
+            let edges: Vec<Value> = serde_json::from_str(edges_str)
+                .map_err(|e| McpError::invalid_params(format!("Invalid edges_json: {}", e), None))?;
             let mut ec = 0i64;
+            let mut failed = 0i64;
             for ev in &edges {
                 if let (Some(src), Some(tgt)) = (ev["source_id"].as_str(), ev["target_id"].as_str()) {
-                    let _ = crate::db::crud::add_edge(
+                    let edge_type = ev["edge_type"].as_str().unwrap_or("USES").to_string();
+                    // Dedup: skip if an active edge of the same type already exists
+                    let dup = crate::db::crud::get_edges(
+                        &conn, Some(src), Some(tgt), Some(&edge_type), None, 1,
+                    ).unwrap_or_default();
+                    if !dup.is_empty() {
+                        continue;
+                    }
+                    match crate::db::crud::add_edge(
                         &conn,
                         &NewEdge {
                             source_id: src.to_string(),
                             target_id: tgt.to_string(),
-                            edge_type: ev["edge_type"].as_str().unwrap_or("USES").to_string(),
+                            edge_type,
                             ..Default::default()
                         },
-                    );
-                    ec += 1;
+                    ) {
+                        Ok(_) => ec += 1,
+                        Err(e) => {
+                            tracing::warn!("bulk_create: failed to create edge {} -> {}: {}", src, tgt, e);
+                            failed += 1;
+                        }
+                    }
                 }
             }
             Ok(serde_json::to_string(
-                &json!({"created_nodes": ids.len(), "created_edges": ec, "node_ids": ids}),
+                &json!({"created_nodes": ids.len(), "created_edges": ec, "failed_edges": failed, "node_ids": ids}),
             )
             .unwrap_or_default())
         }).await
@@ -924,15 +1002,34 @@ impl TdgServer {
             )
             .map_err(mcp_err)?;
             if let Ok(Some(agent)) = crate::db::crud::get_node(&conn, "agent:self") {
-                let _ = crate::db::crud::add_edge(
+                // Dedup: only create EXPERIENCES edge if one doesn't already exist
+                // between this observation and agent:self. Previously every
+                // tdg_record_exec call created a new edge, accumulating
+                // duplicates that inflated edge noise.
+                let existing = crate::db::crud::get_edges(
                     &conn,
-                    &NewEdge {
-                        source_id: node.id.clone(),
-                        target_id: agent.id,
-                        edge_type: "EXPERIENCES".to_string(),
-                        ..Default::default()
-                    },
-                );
+                    Some(&node.id),
+                    Some(&agent.id),
+                    Some("EXPERIENCES"),
+                    None,
+                    1,
+                ).unwrap_or_default();
+                if existing.is_empty() {
+                    if let Err(e) = crate::db::crud::add_edge(
+                        &conn,
+                        &NewEdge {
+                            source_id: node.id.clone(),
+                            target_id: agent.id,
+                            edge_type: "EXPERIENCES".to_string(),
+                            ..Default::default()
+                        },
+                    ) {
+                        tracing::warn!(
+                            "Failed to create EXPERIENCES edge {} -> agent:self: {}",
+                            node.id, e
+                        );
+                    }
+                }
             }
             Ok(serde_json::to_string(&json!({"observation_id": node.id, "action_type": action_type, "result": result_val})).unwrap_or_default())
         }).await
@@ -1285,13 +1382,87 @@ impl TdgServer {
             let pref_extractor = crate::plugins::preference_extractor::PreferenceExtractor::new();
             let extracted_preferences = pref_extractor.extract_from_message(&description);
 
+            // Persist extracted preferences as constraint nodes in the graph.
+            // Previously these were only returned in the JSON response and then
+            // discarded — the agent's preferences/corrections were detected but
+            // never stored, so they couldn't influence future behavior.
+            let mut persisted_preferences = 0usize;
+            for pref in &extracted_preferences {
+                // Only persist meaningful preferences (skip low-confidence noise)
+                if pref.confidence < 0.5 {
+                    continue;
+                }
+                // Use the constraint_id if provided, else generate one
+                let constraint_id = if pref.constraint_id.is_empty() {
+                    format!("pref_{}", uuid::Uuid::new_v4().as_simple())
+                } else {
+                    pref.constraint_id.clone()
+                };
+                // Check if this constraint already exists (dedup by id)
+                let exists = crate::db::crud::get_node(&conn, &constraint_id)
+                    .ok()
+                    .flatten()
+                    .is_some();
+                if exists {
+                    continue;
+                }
+                let constraint_name = format!(
+                    "{}: {}",
+                    pref.extraction_type,
+                    pref.constraint_text.chars().take(80).collect::<String>()
+                );
+                let props = json!({
+                    "extraction_type": pref.extraction_type,
+                    "confidence": pref.confidence,
+                    "quadrant": pref.quadrant,
+                    "source": "preference_extractor",
+                    "originating_observation": node.id,
+                });
+                if let Err(e) = crate::db::crud::add_node(
+                    &conn,
+                    &NewNode {
+                        node_type: "constraint".to_string(),
+                        name: constraint_name,
+                        description: Some(pref.constraint_text.clone()),
+                        source: Some("mcp_observe".to_string()),
+                        properties: Some(props),
+                        ..Default::default()
+                    },
+                ) {
+                    tracing::warn!(
+                        "Failed to persist preference as constraint node: {}", e
+                    );
+                    continue;
+                }
+                // Link the observation to the constraint via a MENTIONS edge
+                let _ = crate::db::crud::add_edge(
+                    &conn,
+                    &NewEdge {
+                        source_id: node.id.clone(),
+                        target_id: constraint_id,
+                        edge_type: "MENTIONS".to_string(),
+                        weight: Some(pref.confidence as f64),
+                        agent_id: Some("mcp_observe".to_string()),
+                        ..Default::default()
+                    },
+                );
+                persisted_preferences += 1;
+            }
+
             let mut digested = false;
             let mut hypothesis_count = 0usize;
+            let mut digestion_error: Option<String> = None;
             if trigger_digestion {
                 let engine = crate::digestion::DigestionEngine::new(&conn);
-                if let Ok(hypotheses) = engine.check_upward_cascade() {
-                    hypothesis_count = hypotheses.len();
-                    digested = true;
+                match engine.check_upward_cascade() {
+                    Ok(hypotheses) => {
+                        hypothesis_count = hypotheses.len();
+                        digested = hypothesis_count > 0;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Digestion cascade failed for {}: {}", node.id, e);
+                        digestion_error = Some(e.to_string());
+                    }
                 }
             }
 
@@ -1303,8 +1474,10 @@ impl TdgServer {
                 "entities_connected": entity_ids,
                 "extracted_entities": extracted_entities,
                 "extracted_preferences": extracted_preferences,
+                "preferences_persisted": persisted_preferences,
                 "digested": digested,
                 "hypotheses_generated": hypothesis_count,
+                "digestion_error": digestion_error,
             }))
             .unwrap_or_default())
         }).await
@@ -2184,6 +2357,60 @@ Do NOT include any text outside the JSON block."#
             "circuit_breakers": cb_status,
         });
         Ok(serde_json::to_string(&result).unwrap_or_default())
+    }
+
+    #[tool(description = "Full mind audit: anomalies, drive polarity, stage evidence, graph entropy")]
+    pub(crate) async fn tdg_audit(
+        &self,
+        Parameters(_params): Parameters<AuditParams>,
+    ) -> Result<String, McpError> {
+        if self.lean_guard()? {
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
+        }
+        let pool = self.pool.clone();
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+
+            // Run the AuditEngine — previously this was 767 lines of dead code,
+            // never exposed via any MCP tool. The agent had no way to inspect
+            // its own drive polarity, blind spots, stage evidence, or graph entropy.
+            // We pass a temp file path for the AnomalyRegistry (it's optional
+            // in practice; the engine works without persistent anomaly tracking).
+            let registry_path = std::env::temp_dir().join("tdg_anomaly_registry.json");
+            let engine = crate::audit::AuditEngine::new(&conn, &registry_path);
+            let bundle = engine.full_audit_bundle().map_err(mcp_err)?;
+
+            // Also surface flow.rs diagnostics (also previously dead code)
+            let entropy = crate::flow::compute_graph_entropy(&conn).map_err(mcp_err)?;
+            let polarity_diag = crate::flow::diagnose_polarity(&conn).map_err(mcp_err)?;
+
+            let result = json!({
+                "audit_bundle": bundle,
+                "graph_entropy": entropy,
+                "polarity_diagnosis": polarity_diag,
+            });
+            Ok(serde_json::to_string(&result).unwrap_or_default())
+        }).await
+    }
+
+    #[tool(description = "Run full graph renormalization: heal drives, emit downward, aggregate upward")]
+    pub(crate) async fn tdg_renormalize(
+        &self,
+        Parameters(_params): Parameters<RenormalizeParams>,
+    ) -> Result<String, McpError> {
+        if self.lean_guard()? {
+            return Ok(
+                json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
+            );
+        }
+        let pool = self.pool.clone();
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+            let result = crate::flow::renormalize_graph(&conn, false).map_err(mcp_err)?;
+            Ok(serde_json::to_string(&result).unwrap_or_default())
+        }).await
     }
 
     #[tool(description = "Graph stats: counts, degree, PageRank")]
