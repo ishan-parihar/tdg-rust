@@ -287,11 +287,17 @@ impl<'a> Janitor<'a> {
 
             let mut embedded = 0i64;
             for (id, name, desc) in &nodes {
-                let text = if desc.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{name} {desc}")
-                };
+                // Use build_embedding_text for consistency with add_node, update_node,
+                // and the enricher. Previously used a simple format! that produced
+                // different vectors than the enricher, making cosine similarity
+                // comparisons apples-to-oranges.
+                let text = crate::mind::embedding::build_embedding_text(
+                    self.conn,
+                    id,
+                    name,
+                    desc,
+                    3,
+                );
 
                 match crate::mind::embedding::embed(&text) {
                     Ok(result) => {
@@ -343,26 +349,34 @@ impl<'a> Janitor<'a> {
             .and_then(|v| v.parse::<i64>().ok())
             .unwrap_or(30);
 
+        // Compute cutoffs using to_rfc3339() to match the format used by
+        // crud::now_iso() (which writes mutation_log and health_checks timestamps).
+        //
+        // REGRESSION FIX: The previous implementation used format!("%Y-%m-%dT%H:%M:%SZ")
+        // which produces "2025-01-15T12:34:56Z" (no fractional seconds, Z suffix).
+        // But mutation_log timestamps use to_rfc3339() which produces
+        // "2025-01-15T12:34:56.789+00:00" (fractional seconds, +00:00 offset).
+        // String comparison: at position 19, stored has '.' (0x2E), cutoff has 'Z' (0x5A).
+        // Since '.' < 'Z', a row at 12:34:56.789 sorts BEFORE 12:34:56Z and is
+        // incorrectly purged — even though it's 789ms NEWER than the cutoff.
+        // Using to_rfc3339() for the cutoff ensures both sides use the same format.
+        let mutation_cutoff = (chrono::Utc::now() - chrono::Duration::days(mutation_retention_days))
+            .to_rfc3339();
+        let health_cutoff = (chrono::Utc::now() - chrono::Duration::days(health_check_retention_days))
+            .to_rfc3339();
+
         if dry_run {
             let mutation_count: i64 = self.conn
                 .query_row(
                     "SELECT COUNT(*) FROM mutation_log WHERE timestamp < ?1",
-                    rusqlite::params![format!("{}T00:00:00Z",
-                        chrono::Utc::now().naive_utc()
-                            .checked_sub_signed(chrono::Duration::days(mutation_retention_days))
-                            .map(|t| t.format("%Y-%m-%d").to_string())
-                            .unwrap_or_default())],
+                    rusqlite::params![&mutation_cutoff],
                     |r| r.get(0),
                 )
                 .unwrap_or(0);
             let health_count: i64 = self.conn
                 .query_row(
                     "SELECT COUNT(*) FROM health_checks WHERE timestamp < ?1",
-                    rusqlite::params![format!("{}T00:00:00Z",
-                        chrono::Utc::now().naive_utc()
-                            .checked_sub_signed(chrono::Duration::days(health_check_retention_days))
-                            .map(|t| t.format("%Y-%m-%d").to_string())
-                            .unwrap_or_default())],
+                    rusqlite::params![&health_cutoff],
                     |r| r.get(0),
                 )
                 .unwrap_or(0);
@@ -372,10 +386,6 @@ impl<'a> Janitor<'a> {
         }
 
         // Purge old mutation_log rows
-        let mutation_cutoff = chrono::Utc::now().naive_utc()
-            .checked_sub_signed(chrono::Duration::days(mutation_retention_days))
-            .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-            .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
         match self.conn.execute(
             "DELETE FROM mutation_log WHERE timestamp < ?1",
             rusqlite::params![&mutation_cutoff],
@@ -390,10 +400,6 @@ impl<'a> Janitor<'a> {
         }
 
         // Purge old health_checks rows
-        let health_cutoff = chrono::Utc::now().naive_utc()
-            .checked_sub_signed(chrono::Duration::days(health_check_retention_days))
-            .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-            .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
         match self.conn.execute(
             "DELETE FROM health_checks WHERE timestamp < ?1",
             rusqlite::params![&health_cutoff],

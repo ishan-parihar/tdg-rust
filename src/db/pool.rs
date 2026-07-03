@@ -84,7 +84,17 @@ impl ConnectionPool {
     }
 
     /// Return a connection to the pool.
+    ///
+    /// **Transaction safety:** Before returning the connection, we issue a
+    /// `ROLLBACK` to clean up any in-progress transaction. This prevents a
+    /// panic or early return (e.g., via `?` or `let _ =`) from leaving a
+    /// connection in the pool with an open transaction — which would cause
+    /// the next borrower to get `Err: cannot start a transaction within a
+    /// transaction`. `ROLLBACK` is a no-op if no transaction is open.
     pub fn release_connection(&self, conn: Connection) {
+        // Clean up any open transaction so the next borrower gets a clean state.
+        let _ = conn.execute_batch("ROLLBACK");
+
         if let Ok(mut conns) = self.connections.lock() {
             if conns.len() < self.max_connections {
                 conns.push(conn);

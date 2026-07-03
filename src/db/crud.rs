@@ -285,13 +285,19 @@ pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
                 agent_id.as_deref(),
             );
 
-            // Inline embedding generation (non-blocking, best-effort)
+            // Inline embedding generation (non-blocking, best-effort).
+            // Uses build_embedding_text (same as the enricher) for consistency —
+            // previously used a simple format!("{} {}", name, desc) which
+            // produced different vectors than the enricher, making cosine
+            // similarity comparisons apples-to-oranges.
             #[cfg(feature = "onnx")]
             {
-                let embed_text = format!(
-                    "{} {}",
-                    new.name,
-                    new.description.as_deref().unwrap_or("")
+                let embed_text = crate::mind::embedding::build_embedding_text(
+                    conn,
+                    &id,
+                    &new.name,
+                    new.description.as_deref().unwrap_or(""),
+                    3,
                 );
                 if let Ok(result) = crate::mind::embedding::embed(&embed_text) {
                     let dimension = result.vector.len() as i64;
@@ -440,10 +446,15 @@ pub fn update_node(
                 #[cfg(feature = "onnx")]
                 {
                     if let Ok(Some(updated_node)) = get_node(conn, node_id) {
-                        let embed_text = format!(
-                            "{} {}",
-                            updated_node.name,
-                            updated_node.description
+                        // Use build_embedding_text for consistency with add_node
+                        // and the enricher. Previously used a simple format!
+                        // which produced different vectors than the enricher.
+                        let embed_text = crate::mind::embedding::build_embedding_text(
+                            conn,
+                            node_id,
+                            &updated_node.name,
+                            &updated_node.description,
+                            3,
                         );
                         match crate::mind::embedding::embed(&embed_text) {
                             Ok(result) => {

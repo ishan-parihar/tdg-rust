@@ -932,17 +932,22 @@ pub fn renormalize_graph(conn: &Connection, force_intrinsic: bool) -> TdgResult<
     // polarity edges. If yes, run aggregate_upward on those parents.
     // aggregate_upward itself is a no-op when there are no incoming edges.
     {
+        // Align the edge_type filter with contributes_to_polarity() (line 458-463),
+        // which only allows: DECOMPOSES_TO | ENABLES | REALIZES | SUPPORTS | DEPENDS_ON.
+        //
+        // Previously, Phase 3 selected nodes with incoming EVIDENCES, BLOCKS,
+        // PURSUES, etc. edges — but aggregate_upward's contributes_to_polarity
+        // filter no-ops on those types, so the work was wasted. Worse, SUPPORTS
+        // and REALIZES were MISSING from Phase 3, so hypothesis→observation
+        // drive feedback (via SUPPORTS edges created by the digestion cascade)
+        // never propagated. This unblocks the hypothesis→observation drive flow.
         let mut stmt = conn.prepare(
             "SELECT DISTINCT n.id
              FROM nodes n
              INNER JOIN edges e ON e.target_id = n.id
              WHERE n.valid_to IS NULL
                AND e.valid_to IS NULL
-               AND e.edge_type IN ('DECOMPOSES_TO','ENABLES','PURSUES','CONTEXT',
-                                   'EVIDENCES','BLOCKS','SYNTHESIZES','HAS_CAPABILITY',
-                                   'SENT','RECEIVED','TRIGGERED','DETECTED','ILLUMINATES',
-                                   'OPENS','CREATES','ADVANCES','APPEALS_TO','REPLIES',
-                                   'CONTINUES','SEEKS')",
+               AND e.edge_type IN ('DECOMPOSES_TO','ENABLES','REALIZES','SUPPORTS','DEPENDS_ON')",
         )?;
         let parent_ids: Vec<String> = stmt
             .query_map([], |row| row.get(0))?

@@ -698,7 +698,18 @@ impl TdgServer {
             )
             .map_err(mcp_err)?;
 
-            // Auto-wire edges based on the node's contract (auto_wire_on_parent).
+            // Wrap edge creation + flow propagation in a transaction.
+            // Previously, add_node + auto_wire + BLOCKS/EVIDENCES loops were
+            // separate implicit transactions — a failure mid-way left the node
+            // with partial edges and no rollback. Also, tdg_create never called
+            // flow::emit_downward or renormalize_graph, so drives never
+            // propagated from telos parents to children — the graph was
+            // structurally connected but semantically inert ("drive propagation
+            // island"). We now wrap everything in a transaction and trigger
+            // flow propagation at the end.
+            conn.execute_batch("BEGIN IMMEDIATE").map_err(mcp_err)?;
+            let txn_result: Result<(), McpError> = (|| {
+                // Auto-wire edges based on the node's contract (auto_wire_on_parent).
             //
             // Previously, `parent_ids` was stored as a JSON array on the node row
             // but NO edges were created from parents to the new node. This meant
@@ -801,6 +812,43 @@ impl TdgServer {
                     }
                 }
             }
+
+                // Flow engine: propagate drives downward from each parent,
+                // then renormalize. Errors are logged but non-fatal (matching
+                // tdg_connect semantics — the edge creation is the atomic unit,
+                // flow propagation is best-effort within the same transaction).
+                if let Some(ref pids) = parent_ids_raw {
+                    let parents: Vec<String> = pids
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    for pid in &parents {
+                        if let Err(e) = flow::emit_downward(&conn, pid, flow::DEFAULT_MAX_DEPTH) {
+                            tracing::warn!("flow::emit_downward from parent {} failed: {}", pid, e);
+                        }
+                    }
+                }
+                if let Err(e) = flow::renormalize_graph(&conn, false) {
+                    tracing::warn!("flow::renormalize_graph failed after tdg_create: {}", e);
+                }
+
+                Ok(())
+            })();
+
+            match txn_result {
+                Ok(_) => {
+                    if let Err(e) = conn.execute_batch("COMMIT") {
+                        let _ = conn.execute_batch("ROLLBACK");
+                        return Err(mcp_err(e));
+                    }
+                }
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    return Err(e);
+                }
+            }
+
             Ok(serde_json::to_string(
                 &json!({"id": node.id, "name": node.name, "node_type": node.node_type}),
             )
@@ -1184,7 +1232,10 @@ impl TdgServer {
         run_blocking(move || {
             let conn = get_conn(&pool)?;
             let delta: i32 = if helpful { 1 } else { -1 };
-            conn.execute("UPDATE nodes SET helpful_count = helpful_count + ?1, updated_at = ?2 WHERE id = ?3 AND valid_to IS NULL",
+            // Use MAX(0, helpful_count + ?1) to prevent negative helpful_count.
+            // Previously, unhelpful ratings on a node with helpful_count=0
+            // produced -1, corrupting the trust formula (confidence * (1 + (-1)) = 0).
+            conn.execute("UPDATE nodes SET helpful_count = MAX(0, helpful_count + ?1), updated_at = ?2 WHERE id = ?3 AND valid_to IS NULL",
                 rusqlite::params![delta, crate::db::crud::now_iso(), &node_id]).map_err(mcp_err)?;
             let trust: f64 = conn.query_row("SELECT confidence * (1.0 + helpful_count) / (1.0 + retrieval_count) FROM nodes WHERE id = ?1 AND valid_to IS NULL", rusqlite::params![&node_id], |row| row.get(0)).unwrap_or(0.0);
             Ok(serde_json::to_string(
@@ -2452,12 +2503,22 @@ Do NOT include any text outside the JSON block."#
         }
         // Wrap in run_blocking — TrustStore::adjust_trust does sync DB writes.
         let ts = self.trust_store.clone();
+        let mgr = self.mind_state_manager.clone();
         let agent_name = params.agent_name.clone();
         let delta = params.delta;
         let reason = params.reason;
         let source = params.source;
         run_blocking(move || {
             let new_score = ts.adjust_trust(&agent_name, delta, reason, source)?;
+
+            // Sync MindStateManager.trust_score with the new DB value.
+            // Previously, tdg_adjust_trust updated TrustStore (DB + cache) but
+            // NOT MindStateManager — so tdg_load_mind_state always returned
+            // the stale startup value (0.5). The two stores diverged forever.
+            if let Err(e) = mgr.set_trust(new_score) {
+                tracing::warn!("Failed to sync MindStateManager.trust_score: {}", e);
+            }
+
             Ok(serde_json::to_string(&json!({
                 "agent_name": agent_name,
                 "new_score": new_score,

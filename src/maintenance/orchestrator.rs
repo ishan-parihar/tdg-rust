@@ -138,6 +138,77 @@ impl<'a> SelfManager<'a> {
             }
         }
 
+        // Promote high-confidence hypotheses to capabilities.
+        //
+        // Previously, promote_hypothesis_to_capability was dead code — never
+        // called from any production path. The entire hypothesis→capability
+        // promotion path (which creates PROMOTES_TO edges and is the entire
+        // point of the developmental pipeline) never executed. Hypotheses
+        // accumulated forever; capabilities were never auto-created from them.
+        //
+        // We now promote hypotheses with confidence > 0.7 that have SUPPORTS
+        // edges (indicating evidence backing).
+        if !dry_run {
+            match crate::db::crud::query_nodes(
+                self.conn,
+                &crate::models::NodeQuery {
+                    node_type: Some("hypothesis".to_string()),
+                    limit: Some(1000),
+                    ..Default::default()
+                },
+            ) {
+                Ok(hypotheses) => {
+                    let mut promoted = 0usize;
+                    for hyp in &hypotheses {
+                        // Only promote hypotheses with confidence > 0.7
+                        if hyp.confidence < 0.7 {
+                            continue;
+                        }
+                        // Check if this hypothesis has SUPPORTS edges (evidence backing)
+                        let supports_count: i64 = self.conn
+                            .query_row(
+                                "SELECT COUNT(*) FROM edges WHERE source_id = ?1 AND edge_type = 'SUPPORTS' AND valid_to IS NULL",
+                                rusqlite::params![&hyp.id],
+                                |r| r.get(0),
+                            )
+                            .unwrap_or(0);
+                        if supports_count < 3 {
+                            continue;
+                        }
+                        // Check if already promoted (has a PROMOTES_TO edge)
+                        let already_promoted: i64 = self.conn
+                            .query_row(
+                                "SELECT COUNT(*) FROM edges WHERE source_id = ?1 AND edge_type = 'PROMOTES_TO' AND valid_to IS NULL",
+                                rusqlite::params![&hyp.id],
+                                |r| r.get(0),
+                            )
+                            .unwrap_or(0);
+                        if already_promoted > 0 {
+                            continue;
+                        }
+                        let engine = crate::digestion::DigestionEngine::new(self.conn);
+                        match engine.promote_hypothesis_to_capability(&hyp.id) {
+                            Ok(cap) => {
+                                promoted += 1;
+                                info!("Promoted hypothesis {} to capability {}", hyp.id, cap.id);
+                            }
+                            Err(e) => {
+                                tracing::debug!("Failed to promote hypothesis {}: {}", hyp.id, e);
+                            }
+                        }
+                    }
+                    if promoted > 0 {
+                        info!("Digestion: {} hypotheses promoted to capabilities", promoted);
+                        report.succeeded.push(format!("hypothesis_promotion({})", promoted));
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to query hypotheses for promotion: {}", e);
+                    report.failed.push("hypothesis_promotion".into());
+                }
+            }
+        }
+
         if let (Some(before), Some(after)) = (&report.health_before, &report.health_after) {
             report.health_delta = after.health_score - before.health_score;
         }

@@ -33,8 +33,24 @@ pub static QUADRANT_KEYWORDS: &[(&str, &[&str])] = &[
 
 pub fn infer_quadrant(text: &str) -> String {
     let lower = text.to_lowercase();
+    // Split on non-alphanumeric boundaries to get whole words, then check
+    // for keyword matches. Previously used substring matching (lower.contains(kw))
+    // which caused false positives:
+    //   "do" matched "document", "domain", "todo", "undo"
+    //   "fix" matched "prefix", "suffix", "fixture"
+    //   "make" matched "marketplace", "makeup"
+    //   "test" matched "latest", "protest", "contest"
+    //   "api" matched "rapid", "shaping"
+    //   "note" matched "denote", "quote"
+    //   "name" matched "filename", "namespace"
+    // Almost any technical text contains "document" or "domain", so nearly
+    // everything was classified as UR quadrant.
+    let words: std::collections::HashSet<&str> = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
     for (quadrant, keywords) in QUADRANT_KEYWORDS.iter() {
-        if keywords.iter().any(|kw| lower.contains(kw)) {
+        if keywords.iter().any(|kw| words.contains(*kw)) {
             return quadrant.to_string();
         }
     }
