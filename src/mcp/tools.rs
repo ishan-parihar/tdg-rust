@@ -1402,15 +1402,23 @@ impl TdgServer {
                         for row in rows.flatten() {
                             if let Ok(props) = serde_json::from_str::<serde_json::Value>(&row) {
                                 for dk in &drive_keys {
-                                    let pos = props.get(format!("{}_positive_pole", dk))
-                                        .or_else(|| props.get(format!("{}.positive_pole", dk)))
+                                    // drives_json is stored as {"eros": {"positive_pole": 5.0, "negative_pole": 2.0}, ...}
+                                    // (see flow.rs FlowDriveState::to_json). The previous implementation
+                                    // looked for flat keys like "eros_positive_pole" or literal dotted
+                                    // keys like "eros.positive_pole" — both of which NEVER matched the
+                                    // actual nested format. So drive_scores always returned zeros.
+                                    // We now use nested JSON access: props[dk]["positive_pole"].
+                                    let drive_obj = props.get(*dk);
+                                    let pos = drive_obj
+                                        .and_then(|d| d.get("positive_pole"))
                                         .and_then(|v| v.as_f64());
-                                    let neg = props.get(format!("{}_negative_pole", dk))
-                                        .or_else(|| props.get(format!("{}.negative_pole", dk)))
+                                    let neg = drive_obj
+                                        .and_then(|d| d.get("negative_pole"))
                                         .and_then(|v| v.as_f64());
-                                    let net = props.get(format!("{}_net_score", dk))
-                                        .or_else(|| props.get(format!("{}.net_score", dk)))
-                                        .and_then(|v| v.as_f64());
+                                    let net = match (pos, neg) {
+                                        (Some(p), Some(n)) => Some(p - n),
+                                        _ => None,
+                                    };
                                     if let Some(p) = pos { if let Some(v) = drives.get_mut(*dk) { v.0.push(p); } }
                                     if let Some(n) = neg { if let Some(v) = drives.get_mut(*dk) { v.1.push(n); } }
                                     if let Some(nt) = net { if let Some(v) = drives.get_mut(*dk) { v.2.push(nt); } }

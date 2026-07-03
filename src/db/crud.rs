@@ -367,6 +367,15 @@ pub fn update_node(
 
     let _guard = acquire_write_guard(conn)?;
 
+    // Capture the old node state BEFORE the update for the audit trail.
+    // Previously, record_mutation always passed None for old_value, making
+    // time-travel queries impossible — you could see that a node was updated
+    // but not what it was before. Now we capture the pre-mutation state.
+    let old_node_json: Option<String> = get_node(conn, node_id)
+        .ok()
+        .flatten()
+        .map(|n| serde_json::to_string(&n).unwrap_or_default());
+
     let now = now_iso();
     let mut set_clauses = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -423,14 +432,14 @@ pub fn update_node(
     match stmt.execute(params_ref.as_slice()) {
         Ok(_) => {
             record_write_success();
-            // Audit-log the update (best-effort)
+            // Audit-log the update (best-effort) with old_value for time-travel queries
             let new_value = serde_json::to_string(updates).unwrap_or_default();
             record_mutation(
                 conn,
                 "update",
                 "node",
                 node_id,
-                None,
+                old_node_json.as_deref(),
                 Some(&new_value),
                 None,
             );
@@ -497,6 +506,12 @@ pub fn delete_node(conn: &Connection, node_id: &str) -> TdgResult<bool> {
     check_circuit_breaker()?;
     let _guard = acquire_write_guard(conn)?;
 
+    // Capture old node state for audit trail (time-travel queries)
+    let old_node_json: Option<String> = get_node(conn, node_id)
+        .ok()
+        .flatten()
+        .map(|n| serde_json::to_string(&n).unwrap_or_default());
+
     let now = now_iso();
     let result = conn.execute(
         "UPDATE nodes SET valid_to = ?1 WHERE id = ?2 AND valid_to IS NULL",
@@ -510,13 +525,13 @@ pub fn delete_node(conn: &Connection, node_id: &str) -> TdgResult<bool> {
                     "UPDATE edges SET valid_to = ?1 WHERE (source_id = ?2 OR target_id = ?2) AND valid_to IS NULL",
                     params![now, node_id],
                 )?;
-                // Audit-log the soft-delete (best-effort)
+                // Audit-log the soft-delete (best-effort) with old_value
                 record_mutation(
                     conn,
                     "delete",
                     "node",
                     node_id,
-                    None,
+                    old_node_json.as_deref(),
                     Some(&format!("{{\"valid_to\": \"{}\"}}", now)),
                     None,
                 );
