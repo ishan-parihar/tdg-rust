@@ -7,32 +7,41 @@
 //!
 //! - [`server`] — Transport layer: stdio (for Hermes/Claude integration) and
 //!   streamable HTTP/SSE for remote connections.
-//! - [`tools`] — All 17 TDG MCP tools with automatic schema generation via
+//! - [`tools`] — All 36 TDG MCP tools with automatic schema generation via
 //!   `#[tool]` and `#[tool_router]` macros.
+//! - [`synthesis_helpers`] — LLM provider chain, output parsing, and
+//!   pattern-based synthesis fallback (extracted from `tools.rs` in Phase 0
+//!   refactor to shrink the god module).
+//! - [`params`] — Tool parameter structs (JSON schema generation).
+//! - [`trust`] — Agent trust-score store with SQLite persistence.
+//! - [`health`] — Service health monitor with circuit breakers.
 //!
-//! ## Tools
+//! ## Tools (36)
 //!
-//! The server exposes these MCP tools:
+//! The server exposes these MCP tools, grouped by capability:
 //!
-//! | Tool | Description |
-//! |------|-------------|
-//! | `search` | Full-text search across nodes |
-//! | `create_node` | Create a new graph node |
-//! | `update_node` | Update an existing node |
-//! | `delete_node` | Soft-delete a node |
-//! | `get_node` | Retrieve a node by ID |
-//! | `list_nodes` | List nodes with filters |
-//! | `create_edge` | Create an edge between nodes |
-//! | `get_edges` | Get edges for a node |
-//! | `mind_state` | Query mind injection state |
-//! | `terrain_context` | Get terrain context for skills |
-//! | `page_rank` | Compute PageRank scores |
-//! | `consolidate` | Run memory consolidation |
-//! | `reflect` | Run reflection synthesis |
-//! | `rate_node` | Rate a node helpful/unhelpful |
-//! | `audit_health` | Run audit health check |
-//! | `bulk_create` | Bulk create nodes |
-//! | `event_journal` | Query event journal |
+//! **Search** — `tdg_search`, `tdg_prefetch`
+//! **CRUD** — `tdg_create`, `tdg_update`, `tdg_get_node`, `tdg_bulk_create`,
+//!           `tdg_observe`, `tdg_record_exec`
+//! **Edges** — `tdg_connect`, `tdg_get_related`
+//! **Events** — `tdg_query_events`
+//! **Rating** — `tdg_rate_memory`
+//! **Mind** — `tdg_mind_state`, `tdg_context`, `tdg_consolidate`
+//! **Synthesis** — `tdg_reflect` (LLM-powered), `tdg_reflect_run` (clustering)
+//! **Trust** — `tdg_get_trust`, `tdg_adjust_trust`
+//! **Health** — `tdg_health_check`, `tdg_system_health`, `tdg_graph_health`,
+//!             `tdg_graph_stats`
+//! **Schema** — `tdg_get_schema`
+//! **Multi-agent** — `tdg_bank`
+//! **Entities** — `tdg_entity`
+//! **Maintenance** — `tdg_maintenance`, `tdg_enrich`, `tdg_self_manage`,
+//!                 `tdg_renormalize`
+//! **Audit** — `tdg_audit`
+//! **Persistence** — `tdg_save_mind_state`, `tdg_load_mind_state`,
+//!                  `tdg_get_project_context`, `tdg_set_project_context`
+//! **Import/Export** — `tdg_export`, `tdg_import`
+//!
+//! See `src/mcp/tools.rs` for the canonical tool list and implementations.
 //!
 //! ## Constants
 //!
@@ -46,6 +55,7 @@
 pub mod health;
 pub mod params;
 pub mod server;
+pub(crate) mod synthesis_helpers;
 pub mod tools;
 pub(crate) mod trust;
 
