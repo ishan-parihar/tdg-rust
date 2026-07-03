@@ -1180,6 +1180,252 @@ impl TdgServer {
         .await
     }
 
+    /// Query a holon's attractor field A(H) = ⟨A_M, A_P, A_G, Γ⟩ (Phase 3).
+    ///
+    /// Returns the attractor field: reservoir magnitudes/signs, coupling tensor,
+    /// polarity disposition (π), type_class, choice_flag, archetypal loads,
+    /// and stability. If the field is dirty or force_recompute is set,
+    /// enqueues a recompute job and returns the current (possibly stale) field.
+    #[tool(description = "Query a holon's attractor field (type_class, polarity, stability)")]
+    pub(crate) async fn tdg_attractor(
+        &self,
+        Parameters(params): Parameters<crate::mcp::params::AttractorParams>,
+    ) -> Result<String, McpError> {
+        let pool = self.pool.clone();
+        let node_id = params.node_id.clone();
+        let force = params.force_recompute.unwrap_or(false);
+
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+
+            // Check if dirty or force recompute
+            let dirty = crate::metabolism::attractor::is_dirty(&conn, &node_id)
+                .map_err(mcp_err)?;
+
+            if dirty || force {
+                // Enqueue recompute (async — the worker will update the field)
+                let _ = crate::metabolism::worker::enqueue_job(
+                    &conn,
+                    &node_id,
+                    crate::metabolism::worker::JobType::RecomputeAttractor,
+                    serde_json::json!({"trigger": "tdg_attractor_query"}),
+                    crate::metabolism::worker::PRIORITY_HIGH,
+                );
+            }
+
+            // Load current field (may be stale if just enqueued)
+            let af = crate::metabolism::attractor::load(&conn, &node_id)
+                .map_err(mcp_err)?;
+
+            let result = match af {
+                Some(field) => json!({
+                    "node_id": node_id,
+                    "computed": true,
+                    "dirty": dirty,
+                    "type_class": field.type_class,
+                    "pi": field.pi,
+                    "is_noble": field.is_noble(),
+                    "is_stable": field.is_stable(),
+                    "choice_flag": field.choice_flag.as_ref().map(|c| c.as_str()),
+                    "a_m": {"magnitude": field.a_m.magnitude, "sign": field.a_m.sign},
+                    "a_p": {"magnitude": field.a_p.magnitude, "sign": field.a_p.sign},
+                    "a_g": {
+                        "magnitude": field.a_g.magnitude,
+                        "polarity": field.a_g.polarity,
+                    },
+                    "gamma": {
+                        "ag": field.gamma.ag, "cm": field.gamma.cm,
+                        "er": field.gamma.er, "agp": field.gamma.agp,
+                    },
+                    "loads": {
+                        "m": field.loads.m, "p": field.loads.p,
+                        "c": field.loads.c, "e": field.loads.e,
+                        "s": field.loads.s, "t": field.loads.t,
+                        "g": field.loads.g, "ch": field.loads.ch,
+                    },
+                    "stability": {
+                        "self_consistent": field.stability.self_consistent,
+                        "bondable": field.stability.bondable,
+                        "persistent": field.stability.persistent,
+                    },
+                    "computed_at": field.computed_at,
+                }),
+                None => json!({
+                    "node_id": node_id,
+                    "computed": false,
+                    "dirty": dirty,
+                    "message": "Attractor field not yet computed. A recompute job has been enqueued.",
+                }),
+            };
+
+            Ok(serde_json::to_string(&result).unwrap_or_default())
+        })
+        .await
+    }
+
+    /// Query a holon's health metrics: G_z, P_z, total, state (Phase 3).
+    ///
+    /// Returns integrative efficiency (G_z), transcendental tension (P_z),
+    /// total health, and state classification (Optimal/SubOptimal/Collapse/Sinkhole).
+    #[tool(description = "Query a holon's health metrics (G_z, P_z, state classification)")]
+    pub(crate) async fn tdg_health(
+        &self,
+        Parameters(params): Parameters<crate::mcp::params::HealthParams>,
+    ) -> Result<String, McpError> {
+        let pool = self.pool.clone();
+        let node_id = params.node_id.clone();
+        let force = params.force_recompute.unwrap_or(false);
+
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+
+            // Check if dirty
+            let dirty: bool = conn
+                .query_row(
+                    "SELECT health_dirty FROM nodes WHERE id = ?1",
+                    rusqlite::params![node_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|v| v != 0)
+                .unwrap_or(false);
+
+            if dirty || force {
+                let _ = crate::metabolism::worker::enqueue_job(
+                    &conn,
+                    &node_id,
+                    crate::metabolism::worker::JobType::RecomputeHealth,
+                    serde_json::json!({"trigger": "tdg_health_query"}),
+                    crate::metabolism::worker::PRIORITY_HIGH,
+                );
+            }
+
+            let health = crate::metabolism::health::load(&conn, &node_id)
+                .map_err(mcp_err)?;
+
+            let result = match health {
+                Some(h) => json!({
+                    "node_id": node_id,
+                    "computed": true,
+                    "dirty": dirty,
+                    "g_z": h.g_z,
+                    "p_z": h.p_z,
+                    "total": h.total,
+                    "state": h.state.as_str(),
+                    "a_z": h.a_z,
+                    "c_z": h.c_z,
+                    "b_h": h.b_h,
+                    "b_v": h.b_v,
+                    "grad_psi": h.grad_psi,
+                    "theta_alignment": h.theta_alignment,
+                    "computed_at": h.computed_at,
+                }),
+                None => json!({
+                    "node_id": node_id,
+                    "computed": false,
+                    "dirty": dirty,
+                    "message": "Health not yet computed. A recompute job has been enqueued.",
+                }),
+            };
+
+            Ok(serde_json::to_string(&result).unwrap_or_default())
+        })
+        .await
+    }
+
+    /// Compute resonance R(H1, H2) between two holons (Phase 3).
+    ///
+    /// Returns the resonance score ∈ [0, 1] and its interpretation
+    /// (strong/moderate/weak). Requires both holons to have computed
+    /// attractor fields.
+    #[tool(description = "Compute resonance between two holons (bonding prediction)")]
+    pub(crate) async fn tdg_resonance(
+        &self,
+        Parameters(params): Parameters<crate::mcp::params::ResonanceParams>,
+    ) -> Result<String, McpError> {
+        let pool = self.pool.clone();
+        let id1 = params.holon_id_1.clone();
+        let id2 = params.holon_id_2.clone();
+
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+
+            let af1 = crate::metabolism::attractor::load(&conn, &id1)
+                .map_err(mcp_err)?
+                .ok_or_else(|| McpError::invalid_params(
+                    format!("Holon {} has no attractor field. Call tdg_attractor first.", id1),
+                    None,
+                ))?;
+
+            let af2 = crate::metabolism::attractor::load(&conn, &id2)
+                .map_err(mcp_err)?
+                .ok_or_else(|| McpError::invalid_params(
+                    format!("Holon {} has no attractor field. Call tdg_attractor first.", id2),
+                    None,
+                ))?;
+
+            let r = crate::metabolism::health::resonance(&af1, &af2);
+            let interpretation = crate::metabolism::health::interpret_resonance(r);
+
+            Ok(serde_json::to_string(&json!({
+                "holon_id_1": id1,
+                "holon_id_2": id2,
+                "resonance": r,
+                "interpretation": interpretation,
+                "type_class_1": af1.type_class,
+                "type_class_2": af2.type_class,
+                "stable_1": af1.is_stable(),
+                "stable_2": af2.is_stable(),
+            }))
+            .unwrap_or_default())
+        })
+        .await
+    }
+
+    /// Query a holon's top resonance partners from the materialized graph (Phase 3).
+    ///
+    /// Returns up to N partners with the highest resonance scores.
+    #[tool(description = "Query a holon's top resonance partners (bonding candidates)")]
+    pub(crate) async fn tdg_resonance_partners(
+        &self,
+        Parameters(params): Parameters<crate::mcp::params::ResonancePartnersParams>,
+    ) -> Result<String, McpError> {
+        let pool = self.pool.clone();
+        let node_id = params.node_id.clone();
+        let limit = params.limit.unwrap_or(10).min(50);
+
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+
+            let mut stmt = conn.prepare(
+                "SELECT partner_id, resonance_score, computed_at
+                 FROM resonance_graph
+                 WHERE holon_id = ?1
+                 ORDER BY resonance_score DESC
+                 LIMIT ?2",
+            ).map_err(mcp_err)?;
+
+            let partners: Vec<serde_json::Value> = stmt
+                .query_map(rusqlite::params![node_id, limit], |row| {
+                    Ok(json!({
+                        "partner_id": row.get::<_, String>(0)?,
+                        "resonance": row.get::<_, f64>(1)?,
+                        "computed_at": row.get::<_, String>(2)?,
+                    }))
+                })
+                .map_err(mcp_err)?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            Ok(serde_json::to_string(&json!({
+                "node_id": node_id,
+                "partner_count": partners.len(),
+                "partners": partners,
+            }))
+            .unwrap_or_default())
+        })
+        .await
+    }
+
     #[tool(description = "Connect two nodes with an edge")]
     pub(crate) async fn tdg_connect(
         &self,

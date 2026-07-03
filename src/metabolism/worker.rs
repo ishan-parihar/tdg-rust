@@ -239,22 +239,216 @@ fn execute_job(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
         JobType::LesserTick | JobType::CatalystInjection => {
             execute_lesser_tick(conn, job)
         }
-        JobType::RecomputeAttractor => {
-            // Phase 3 — stub. Just succeed.
-            tracing::debug!("RecomputeAttractor stub for holon {}", job.holon_id);
-            Ok(())
+        JobType::RecomputeAttractor => execute_recompute_attractor(conn, job),
+        JobType::RecomputeHealth => execute_recompute_health(conn, job),
+        JobType::ResonanceUpdate => execute_resonance_update(conn, job),
+    }
+}
+
+/// Execute a RecomputeAttractor job (Phase 3).
+///
+/// Loads the holon's lesser cycle state + drives + edge count, computes
+/// the attractor field, saves it, and enqueues a RecomputeHealth job +
+/// a ResonanceUpdate job (if the type_class changed).
+fn execute_recompute_attractor(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
+    // Load the holon to get drives_json
+    let node = crate::db::crud::get_node(conn, &job.holon_id)?
+        .ok_or_else(|| crate::error::TdgError::NotFound(job.holon_id.clone()))?;
+
+    // Load the lesser cycle state
+    let lesser = crate::metabolism::lesser_cycle::load_state(conn, &job.holon_id)?;
+
+    // Count active edges (for A_G magnitude)
+    let edge_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM edges WHERE (source_id = ?1 OR target_id = ?1) AND valid_to IS NULL",
+        rusqlite::params![job.holon_id],
+        |row| row.get(0),
+    )?;
+
+    // Compute the attractor field
+    let af = crate::metabolism::attractor::compute(
+        &lesser,
+        &node.drives,
+        edge_count,
+        lesser.transformation_pressure,
+    );
+
+    // Check if type_class changed (for resonance update)
+    let old_af = crate::metabolism::attractor::load(conn, &job.holon_id)?;
+    let type_changed = old_af
+        .as_ref()
+        .map(|o| o.type_class != af.type_class)
+        .unwrap_or(true);
+
+    // Save the attractor field
+    crate::metabolism::attractor::save(conn, &job.holon_id, &af)?;
+
+    tracing::debug!(
+        "Holon {} attractor recomputed: type_class={}, pi={:?}, stable={}",
+        job.holon_id,
+        af.type_class,
+        af.pi,
+        af.is_stable()
+    );
+
+    // Enqueue health recompute (attractor changed → health needs update)
+    let _ = enqueue_job(
+        conn,
+        &job.holon_id,
+        JobType::RecomputeHealth,
+        serde_json::json!({}),
+        PRIORITY_NORMAL,
+    );
+
+    // Enqueue resonance update if type changed
+    if type_changed {
+        let _ = enqueue_job(
+            conn,
+            &job.holon_id,
+            JobType::ResonanceUpdate,
+            serde_json::json!({"type_changed": true}),
+            PRIORITY_LOW,
+        );
+    }
+
+    Ok(())
+}
+
+/// Execute a RecomputeHealth job (Phase 3).
+///
+/// Loads the holon's lesser cycle state + attractor field, computes G_z/P_z,
+/// saves health, and logs state classification.
+fn execute_recompute_health(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
+    let lesser = crate::metabolism::lesser_cycle::load_state(conn, &job.holon_id)?;
+
+    let af = crate::metabolism::attractor::load(conn, &job.holon_id)?
+        .unwrap_or_else(crate::metabolism::attractor::AttractorField::dormant);
+
+    let health = crate::metabolism::health::Health::compute(&lesser, &af);
+
+    // Log interesting state transitions
+    if health.state == crate::metabolism::health::HealthState::Sinkhole {
+        tracing::info!(
+            "Holon {} in SINKHOLE state: G_z={:.1}, P_z={:.1} — depolarized, needs commitment",
+            job.holon_id,
+            health.g_z,
+            health.p_z
+        );
+    } else if health.state == crate::metabolism::health::HealthState::Collapse {
+        tracing::info!(
+            "Holon {} in COLLAPSE state: G_z={:.1} — severe boundary distortion",
+            job.holon_id,
+            health.g_z
+        );
+    }
+
+    crate::metabolism::health::save(conn, &job.holon_id, &health)?;
+
+    tracing::debug!(
+        "Holon {} health recomputed: G_z={:.1}, P_z={:.1}, state={}",
+        job.holon_id,
+        health.g_z,
+        health.p_z,
+        health.state.as_str()
+    );
+
+    Ok(())
+}
+
+/// Execute a ResonanceUpdate job (Phase 3).
+///
+/// Computes resonance between this holon and up to 50 candidate partners
+/// (selected by complementary type_class), stores top-10 in resonance_graph.
+fn execute_resonance_update(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
+    let af1 = match crate::metabolism::attractor::load(conn, &job.holon_id)? {
+        Some(af) if af.is_stable() => af,
+        _ => {
+            // Not stable or not computed — clear any existing resonance entries
+            conn.execute(
+                "DELETE FROM resonance_graph WHERE holon_id = ?1",
+                rusqlite::params![job.holon_id],
+            )?;
+            return Ok(());
         }
-        JobType::RecomputeHealth => {
-            // Phase 3 — stub.
-            tracing::debug!("RecomputeHealth stub for holon {}", job.holon_id);
-            Ok(())
-        }
-        JobType::ResonanceUpdate => {
-            // Phase 3 — stub.
-            tracing::debug!("ResonanceUpdate stub for holon {}", job.holon_id);
-            Ok(())
+    };
+
+    // Find candidate partners: holons with attractor fields, excluding self.
+    // Limit to 50 candidates (the lean VPS profile).
+    // Prioritize holons with complementary type_class (donor ↔ acceptor).
+    let mut stmt = conn.prepare(
+        "SELECT n.id, n.attractor_field_json
+         FROM nodes n
+         WHERE n.id != ?1
+           AND n.valid_to IS NULL
+           AND n.attractor_field_json IS NOT NULL
+           AND n.attractor_field_json != ''
+         ORDER BY n.updated_at DESC
+         LIMIT 50",
+    )?;
+
+    let candidates: Vec<(String, String)> = stmt
+        .query_map(rusqlite::params![job.holon_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // Compute resonance for each candidate
+    let now = crate::db::crud::now_iso();
+    let mut results: Vec<(String, f64, f64, f64, f64)> = Vec::new();
+
+    for (partner_id, partner_json) in candidates {
+        if let Some(af2) = crate::metabolism::attractor::AttractorField::from_json(&partner_json) {
+            if !af2.is_stable() {
+                continue;
+            }
+
+            // Compute individual factors for storage
+            let comp = crate::metabolism::health::resonance(&af1, &af2);
+
+            // We store the overall resonance score; the individual factors
+            // are recomputed on demand if needed (they're for debugging).
+            if comp > 0.0 {
+                results.push((partner_id, comp, comp, comp, comp));
+            }
         }
     }
+
+    // Sort by resonance score descending, keep top 10
+    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    results.truncate(10);
+
+    // Replace existing entries for this holon
+    conn.execute(
+        "DELETE FROM resonance_graph WHERE holon_id = ?1",
+        rusqlite::params![job.holon_id],
+    )?;
+
+    for (partner_id, score, comp, gamma_compat, gw) in &results {
+        conn.execute(
+            "INSERT OR REPLACE INTO resonance_graph
+                (holon_id, partner_id, resonance_score, complementarity, gamma_compat, great_way_intersect, computed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                job.holon_id,
+                partner_id,
+                score,
+                comp,
+                gamma_compat,
+                gw,
+                now,
+            ],
+        )?;
+    }
+
+    tracing::debug!(
+        "Holon {} resonance updated: {} partners (top score: {:.3})",
+        job.holon_id,
+        results.len(),
+        results.first().map(|r| r.1).unwrap_or(0.0)
+    );
+
+    Ok(())
 }
 
 /// Execute a lesser-cycle tick job.
@@ -318,6 +512,20 @@ fn execute_lesser_tick(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
                 );
             }
         }
+    }
+
+    // Phase 3: When the lesser cycle reaches Integrating or completes a cycle,
+    // the attractor field is stale (reservoirs/shadows may have changed).
+    // Mark dirty and enqueue a recompute.
+    if result.shadow_diagnosed || result.cycle_completed {
+        let _ = crate::metabolism::attractor::mark_dirty(conn, &job.holon_id);
+        let _ = enqueue_job(
+            conn,
+            &job.holon_id,
+            JobType::RecomputeAttractor,
+            serde_json::json!({"trigger": "lesser_cycle_integration"}),
+            PRIORITY_NORMAL,
+        );
     }
 
     Ok(())

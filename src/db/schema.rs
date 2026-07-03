@@ -143,15 +143,32 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     }
 
     // Phase 10: Lesser cycle + metabolism infrastructure (Phase 2 of refactor).
-    // - lesser_cycle_json column on nodes (stores M·P·C·E state)
-    // - pending_metabolism table (Tier 2 job queue)
-    // - failed_metabolism table (dead-letter queue for failed jobs)
     conn.execute_batch(
         "ALTER TABLE nodes ADD COLUMN lesser_cycle_json TEXT",
     )
     .ok();
 
     conn.execute_batch(MIGRATE_METABOLISM)?;
+
+    // Phase 11: Attractor field + health metrics (Phase 3 of refactor).
+    // - attractor_field_json, health_json columns on nodes
+    // - attractor_dirty, health_dirty flag columns
+    // - resonance_graph table (materialized top-K partners per holon)
+    for (table, column, typedef) in &[
+        ("nodes", "attractor_field_json", "TEXT"),
+        ("nodes", "health_json", "TEXT"),
+        ("nodes", "attractor_dirty", "INTEGER DEFAULT 0"),
+        ("nodes", "health_dirty", "INTEGER DEFAULT 0"),
+    ] {
+        let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {typedef}");
+        match conn.execute_batch(&sql) {
+            Ok(()) => {}
+            Err(rusqlite::Error::ExecuteReturnedResults) => {}
+            Err(_) => { /* column already exists */ }
+        }
+    }
+
+    conn.execute_batch(MIGRATE_RESONANCE_GRAPH)?;
 
     Ok(())
 }
@@ -209,7 +226,12 @@ CREATE TABLE IF NOT EXISTS nodes (
     tetra_lr INTEGER,
     octave_id TEXT,
     -- Phase 2: Lesser cycle state (M·P·C·E)
-    lesser_cycle_json TEXT
+    lesser_cycle_json TEXT,
+    -- Phase 3: Attractor field + health
+    attractor_field_json TEXT,
+    health_json TEXT,
+    attractor_dirty INTEGER DEFAULT 0,
+    health_dirty INTEGER DEFAULT 0
 );
 
 -- Edges table
@@ -345,6 +367,19 @@ CREATE TABLE IF NOT EXISTS failed_metabolism (
     attempts INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_failed_holon ON failed_metabolism(holon_id);
+
+-- Phase 3: Resonance graph (materialized top-K partners per holon)
+CREATE TABLE IF NOT EXISTS resonance_graph (
+    holon_id TEXT NOT NULL,
+    partner_id TEXT NOT NULL,
+    resonance_score REAL NOT NULL,
+    complementarity REAL NOT NULL,
+    gamma_compat REAL NOT NULL,
+    great_way_intersect REAL NOT NULL,
+    computed_at TEXT NOT NULL,
+    PRIMARY KEY (holon_id, partner_id)
+);
+CREATE INDEX IF NOT EXISTS idx_resonance_holon_score ON resonance_graph(holon_id, resonance_score DESC);
 "#;
 
 const FTS_SQL: &str = r#"
@@ -491,6 +526,25 @@ CREATE TABLE IF NOT EXISTS failed_metabolism (
 );
 
 CREATE INDEX IF NOT EXISTS idx_failed_holon ON failed_metabolism(holon_id);
+"#;
+
+const MIGRATE_RESONANCE_GRAPH: &str = r#"
+-- Phase 3: Resonance graph (materialized top-K partners per holon).
+-- Precomputes R(H1, H2) for bonding predictions. Incrementally updated
+-- when a holon's attractor field changes. Full rebuild every 4 hours
+-- (Tier 3 schedule) to correct incremental drift.
+CREATE TABLE IF NOT EXISTS resonance_graph (
+    holon_id TEXT NOT NULL,
+    partner_id TEXT NOT NULL,
+    resonance_score REAL NOT NULL,
+    complementarity REAL NOT NULL,
+    gamma_compat REAL NOT NULL,
+    great_way_intersect REAL NOT NULL,
+    computed_at TEXT NOT NULL,
+    PRIMARY KEY (holon_id, partner_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_resonance_holon_score ON resonance_graph(holon_id, resonance_score DESC);
 "#;
 
 const MIGRATE_TRIGGERS: &str = r#"

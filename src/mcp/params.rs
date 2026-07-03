@@ -418,3 +418,39 @@ pub struct MetabolismStatusParams {
     #[schemars(description = "Max number of job details to return (default: 20)")]
     pub limit: Option<i64>,
 }
+
+/// Parameters for querying a holon's attractor field (Phase 3).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AttractorParams {
+    #[schemars(description = "Node ID to query")]
+    pub node_id: String,
+    #[schemars(description = "Force recompute even if not dirty (default: false)")]
+    pub force_recompute: Option<bool>,
+}
+
+/// Parameters for querying a holon's health metrics (Phase 3).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct HealthParams {
+    #[schemars(description = "Node ID to query")]
+    pub node_id: String,
+    #[schemars(description = "Force recompute even if not dirty (default: false)")]
+    pub force_recompute: Option<bool>,
+}
+
+/// Parameters for computing resonance between two holons (Phase 3).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ResonanceParams {
+    #[schemars(description = "First holon ID")]
+    pub holon_id_1: String,
+    #[schemars(description = "Second holon ID")]
+    pub holon_id_2: String,
+}
+
+/// Parameters for querying a holon's resonance partners (Phase 3).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ResonancePartnersParams {
+    #[schemars(description = "Node ID to query")]
+    pub node_id: String,
+    #[schemars(description = "Max number of partners to return (default: 10)")]
+    pub limit: Option<i64>,
+}
