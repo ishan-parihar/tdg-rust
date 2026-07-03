@@ -115,8 +115,17 @@ pub fn generate_prompt(conn: &Connection, cfg: &Config) -> TdgResult<String> {
 
     if !lean {
         let diag_engine = DiagnosticEngine::new();
-        match diag_engine.analyze(conn, &[], &[]) {
+        // Phase 0.3: Load persisted histories so persistence-warning and
+        // stuck-pattern detection actually fire. Previously these were &[].
+        let drive_history = crate::mind::diagnostic::load_drive_history(conn);
+        let quadrant_history = crate::mind::diagnostic::load_quadrant_history(conn);
+        match diag_engine.analyze(conn, &drive_history, &quadrant_history) {
             Ok(report) => {
+                // Record this snapshot for future persistence detection.
+                // Best-effort: a failure here doesn't invalidate the report.
+                if let Err(e) = crate::mind::diagnostic::record_diagnostic_snapshot(conn, &report) {
+                    warn!("Failed to record diagnostic snapshot: {e}");
+                }
                 let diag_section = diag_engine.diagnostic_prompt_section(&report);
                 if !diag_section.is_empty() {
                     sections.push(diag_section);
@@ -126,7 +135,7 @@ pub fn generate_prompt(conn: &Connection, cfg: &Config) -> TdgResult<String> {
         }
 
         let feeling_engine = FeelingEngine::new();
-        match feeling_engine.generate(conn, &[]) {
+        match feeling_engine.generate(conn, &drive_history) {
             Ok(report) => {
                 let feeling_section = feeling_state_prompt(&report);
                 if !feeling_section.is_empty() {
@@ -251,8 +260,11 @@ pub fn write_mind_state_file(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
+            // Phase 0.3: load persisted histories (was &[]).
+            let dh = crate::mind::diagnostic::load_drive_history(conn);
+            let qh = crate::mind::diagnostic::load_quadrant_history(conn);
             DiagnosticEngine::new()
-                .analyze(conn, &[], &[])
+                .analyze(conn, &dh, &qh)
                 .map(|r| format!("{:?}", r.escalation_level).to_lowercase())
                 .unwrap_or_else(|_| "soft".to_string())
         });

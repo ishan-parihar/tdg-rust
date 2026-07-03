@@ -640,6 +640,161 @@ impl Default for DiagnosticEngine {
     }
 }
 
+// ─── Graph-level diagnostic history (Phase 0.3 of refactor) ─────────────────
+//
+// The injector previously called `diag_engine.analyze(conn, &[], &[])` with
+// empty histories, leaving `detect_drive_persistence`,
+// `detect_quadrant_persistence`, and `detect_stuck_pattern` as dead code.
+// These functions load and record history from the `graph_history` table so
+// the diagnostic and feeling engines can detect temporal patterns.
+
+/// Number of historical cycles to load for pattern detection.
+/// 20 cycles is enough to catch persistence (soft=3, strong=5, mandatory=8)
+/// and quadrant repetition (default 4 cycles) without unbounded growth.
+const HISTORY_WINDOW: i64 = 20;
+
+/// Load recent drive-label history from the `graph_history` table.
+///
+/// Returns a vec of dominant-drive labels (one per recorded cycle, most
+/// recent last). Empty if no history has been recorded yet.
+pub fn load_drive_history(conn: &Connection) -> Vec<String> {
+    let mut stmt = match conn.prepare(
+        "SELECT dominant_drive FROM graph_history
+         WHERE dominant_drive IS NOT NULL
+         ORDER BY id DESC LIMIT ?1",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(), // table may not exist on legacy DBs
+    };
+    let rows: Vec<String> = stmt
+        .query_map([HISTORY_WINDOW], |row| row.get::<_, String>(0))
+        .ok()
+        .map(|iter| iter.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
+    // Reverse so most-recent-last (the order the persistence detector expects)
+    rows.into_iter().rev().collect()
+}
+
+/// Load recent quadrant history from the `graph_history` table.
+///
+/// Returns a vec of dominant-quadrant labels (one per recorded cycle, most
+/// recent last). Empty if no history has been recorded yet.
+pub fn load_quadrant_history(conn: &Connection) -> Vec<String> {
+    let mut stmt = match conn.prepare(
+        "SELECT dominant_quadrant FROM graph_history
+         WHERE dominant_quadrant IS NOT NULL
+         ORDER BY id DESC LIMIT ?1",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows: Vec<String> = stmt
+        .query_map([HISTORY_WINDOW], |row| row.get::<_, String>(0))
+        .ok()
+        .map(|iter| iter.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
+    rows.into_iter().rev().collect()
+}
+
+/// Derive the dominant drive label from a DiagnosticReport.
+///
+/// Returns the drive name with the most severe label (Addicted > Allergic >
+/// Pathological > Healthy > Blind). Ties broken by absolute net value.
+/// Returns "unknown" if no drives are labeled.
+pub fn dominant_drive_label(report: &DiagnosticReport) -> String {
+    use std::cmp::Ordering;
+    let severity_rank = |label: &DriveLabel| match label {
+        DriveLabel::Pathological => 5,
+        DriveLabel::Addicted => 4,
+        DriveLabel::Allergic => 4,
+        DriveLabel::Conflicted => 3,
+        DriveLabel::Healthy => 2,
+        DriveLabel::Blind => 1,
+    };
+    report
+        .drive_labels
+        .iter()
+        .max_by(|(a_name, a_label), (b_name, b_label)| {
+            let rank_cmp = severity_rank(a_label).cmp(&severity_rank(b_label));
+            if rank_cmp != Ordering::Equal {
+                return rank_cmp;
+            }
+            // Tie-break: higher absolute net drive value
+            let a_net = report
+                .drive_distribution
+                .get(a_name.as_str())
+                .copied()
+                .unwrap_or(0.0)
+                .abs();
+            let b_net = report
+                .drive_distribution
+                .get(b_name.as_str())
+                .copied()
+                .unwrap_or(0.0)
+                .abs();
+            a_net.partial_cmp(&b_net).unwrap_or(Ordering::Equal)
+        })
+        .map(|(name, _)| name.clone())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Derive the dominant quadrant from a quadrant distribution.
+///
+/// Returns the quadrant with the highest percentage, or "unknown" if empty.
+pub fn dominant_quadrant(dist: &HashMap<String, f64>) -> String {
+    dist.iter()
+        .max_by(|(_, a), (_, b)| {
+            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(q, _)| q.clone())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Record a diagnostic snapshot to the `graph_history` table.
+///
+/// Called after each diagnostic run so future runs can detect persistence
+/// and stuck patterns. Best-effort: logs a warning on failure but does not
+/// propagate errors (history recording is non-critical).
+pub fn record_diagnostic_snapshot(
+    conn: &Connection,
+    report: &DiagnosticReport,
+) -> TdgResult<()> {
+    let now = crate::db::crud::now_iso();
+    let dominant_drive = dominant_drive_label(report);
+    let dominant_quad = dominant_quadrant(&report.quadrant_distribution);
+    let drive_dist_json = serde_json::to_string(&report.drive_distribution)
+        .unwrap_or_else(|_| "{}".to_string());
+    let quad_dist_json = serde_json::to_string(&report.quadrant_distribution)
+        .unwrap_or_else(|_| "{}".to_string());
+    let escalation = match report.escalation_level {
+        Severity::Soft => "soft",
+        Severity::Strong => "strong",
+        Severity::Mandatory => "mandatory",
+    };
+    conn.execute(
+        "INSERT INTO graph_history
+            (recorded_at, dominant_drive, dominant_quadrant,
+             drive_distribution, quadrant_distribution, escalation_level)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![
+            now,
+            dominant_drive,
+            dominant_quad,
+            drive_dist_json,
+            quad_dist_json,
+            escalation,
+        ],
+    )?;
+    // Prune: keep only the most recent 200 snapshots (10x the window)
+    conn.execute(
+        "DELETE FROM graph_history WHERE id NOT IN (
+            SELECT id FROM graph_history ORDER BY id DESC LIMIT 200
+        )",
+        [],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -802,5 +957,68 @@ mod tests {
         let engine = DiagnosticEngine::new();
         let stale = engine.check_metrics_staleness(&conn).unwrap();
         assert!(stale);
+    }
+
+    #[test]
+    fn graph_history_load_empty() {
+        // Phase 0.3: verify history loads gracefully when table is empty.
+        let conn = setup_db();
+        assert!(load_drive_history(&conn).is_empty());
+        assert!(load_quadrant_history(&conn).is_empty());
+    }
+
+    #[test]
+    fn graph_history_record_and_load() {
+        // Phase 0.3: verify a snapshot is recorded and can be loaded back.
+        let conn = setup_db();
+        // Add a node so the diagnostic engine has something to analyze.
+        crate::db::crud::add_node(
+            &conn,
+            &crate::models::NewNode {
+                node_type: "observation".to_string(),
+                name: "History test".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let engine = DiagnosticEngine::new();
+        let report = engine.analyze(&conn, &[], &[]).unwrap();
+        record_diagnostic_snapshot(&conn, &report).unwrap();
+
+        // After recording, history should have one entry.
+        let dh = load_drive_history(&conn);
+        let qh = load_quadrant_history(&conn);
+        assert_eq!(dh.len(), 1, "drive history should have 1 entry after record");
+        assert_eq!(qh.len(), 1, "quadrant history should have 1 entry after record");
+        // The dominant drive should be a non-empty string.
+        assert!(!dh[0].is_empty(), "dominant drive label should not be empty");
+    }
+
+    #[test]
+    fn graph_history_prune_keeps_recent() {
+        // Phase 0.3: verify the prune keeps only 200 most recent entries.
+        let conn = setup_db();
+        let report = DiagnosticReport {
+            pattern_flags: vec![],
+            drive_distribution: HashMap::new(),
+            quadrant_distribution: HashMap::new(),
+            blind_spots: vec![],
+            persistence_warnings: vec![],
+            drive_labels: HashMap::new(),
+            phantom_nodes: vec![],
+            ghost_nodes: 0,
+            metrics_staleness: false,
+            escalation_level: Severity::Soft,
+            suggestion: "test".to_string(),
+        };
+        // Insert 205 snapshots
+        for _ in 0..205 {
+            record_diagnostic_snapshot(&conn, &report).unwrap();
+        }
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM graph_history", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 200, "prune should keep only 200 most recent entries");
     }
 }

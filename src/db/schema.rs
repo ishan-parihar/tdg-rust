@@ -83,6 +83,14 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     init_fts(conn)?;
     rebuild_fts(conn)?;
 
+    // Phase 8: Graph-level diagnostic history (Phase 0.3 of refactor).
+    // The DiagnosticEngine and FeelingEngine accept drive_history and
+    // quadrant_history parameters, but the injector was passing &[] —
+    // leaving persistence-warning and stuck-pattern features as dead code.
+    // This table stores per-cycle snapshots of the dominant drive label
+    // and dominant quadrant so the engines can detect patterns over time.
+    conn.execute_batch(MIGRATE_GRAPH_HISTORY)?;
+
     Ok(())
 }
 
@@ -226,6 +234,20 @@ CREATE TABLE IF NOT EXISTS trust_scores (
     source TEXT,
     reason TEXT
 );
+
+-- Graph-level diagnostic history (Phase 0.3 of refactor).
+-- See MIGRATE_GRAPH_HISTORY for full rationale.
+CREATE TABLE IF NOT EXISTS graph_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recorded_at TEXT NOT NULL,
+    dominant_drive TEXT,
+    dominant_quadrant TEXT,
+    drive_distribution TEXT,
+    quadrant_distribution TEXT,
+    escalation_level TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_graph_history_recorded ON graph_history(recorded_at);
 "#;
 
 const FTS_SQL: &str = r#"
@@ -317,6 +339,26 @@ CREATE TABLE IF NOT EXISTS leases (
 );
 
 CREATE INDEX IF NOT EXISTS idx_leases_expires ON leases(expires_at);
+"#;
+
+const MIGRATE_GRAPH_HISTORY: &str = r#"
+-- Graph-level diagnostic history (Phase 8 / refactor Phase 0.3).
+-- Stores one row per diagnostic cycle so the DiagnosticEngine and
+-- FeelingEngine can detect persistence and stuck patterns over time.
+-- The injector previously passed &[] for both histories, leaving
+-- detect_drive_persistence, detect_quadrant_persistence, and
+-- detect_stuck_pattern as dead code in production.
+CREATE TABLE IF NOT EXISTS graph_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recorded_at TEXT NOT NULL,
+    dominant_drive TEXT,          -- e.g. "addicted", "healthy", "blind"
+    dominant_quadrant TEXT,       -- e.g. "UL", "UR", "LL", "LR"
+    drive_distribution TEXT,      -- JSON: {"eros": 2.1, "agape": -0.3, ...}
+    quadrant_distribution TEXT,   -- JSON: {"UL": 30.0, "UR": 50.0, ...}
+    escalation_level TEXT         -- e.g. "normal", "warning", "critical"
+);
+
+CREATE INDEX IF NOT EXISTS idx_graph_history_recorded ON graph_history(recorded_at);
 "#;
 
 const MIGRATE_TRIGGERS: &str = r#"
