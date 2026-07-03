@@ -318,7 +318,10 @@ pub fn write_mind_state_file(
     // for MindStateManager's session/working_memory/trust_score data.
     let state_path = cfg.state_dir.join("tdg-mind-snapshot.json");
     std::fs::create_dir_all(&cfg.state_dir)?;
-    std::fs::write(&state_path, serde_json::to_string_pretty(&state)?)?;
+    // G31 fix: atomic write (temp file + rename) to prevent corruption on crash.
+    let tmp_path = state_path.with_extension("json.tmp");
+    std::fs::write(&tmp_path, serde_json::to_string_pretty(&state)?)?;
+    std::fs::rename(&tmp_path, &state_path)?;
     Ok(())
 }
 

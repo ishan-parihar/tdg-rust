@@ -143,7 +143,7 @@ pub fn queue_depth(conn: &Connection) -> TdgResult<i64> {
 /// Marks the job as "in progress" by incrementing attempts. The caller
 /// is responsible for deleting the job on success or leaving it for retry
 /// on failure.
-fn claim_job(conn: &Connection) -> Result<Option<PendingJob>, rusqlite::Error> {
+pub fn claim_job(conn: &Connection) -> Result<Option<PendingJob>, rusqlite::Error> {
     // Use a transaction to atomically claim a job
     let tx = conn.unchecked_transaction()?;
 
@@ -196,7 +196,7 @@ fn claim_job(conn: &Connection) -> Result<Option<PendingJob>, rusqlite::Error> {
 }
 
 /// Mark a job as complete (delete it).
-fn mark_done(conn: &Connection, job_id: i64) -> TdgResult<()> {
+pub fn mark_done(conn: &Connection, job_id: i64) -> TdgResult<()> {
     conn.execute(
         "DELETE FROM pending_metabolism WHERE id = ?1",
         rusqlite::params![job_id],
@@ -206,7 +206,7 @@ fn mark_done(conn: &Connection, job_id: i64) -> TdgResult<()> {
 
 /// Mark a job as failed. If attempts < max_attempts, it stays in the queue
 /// for retry. Otherwise, move it to failed_metabolism.
-fn mark_failed(conn: &Connection, job: &PendingJob, error: &str) -> TdgResult<()> {
+pub fn mark_failed(conn: &Connection, job: &PendingJob, error: &str) -> TdgResult<()> {
     if job.attempts >= job.max_attempts {
         // Move to failed_metabolism table
         let now = crate::db::crud::now_iso();
@@ -238,7 +238,7 @@ fn mark_failed(conn: &Connection, job: &PendingJob, error: &str) -> TdgResult<()
 ///
 /// Returns Ok(()) on success, Err on failure. The caller (worker) handles
 /// retry logic.
-fn execute_job(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
+pub fn execute_job(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
     match job.job_type {
         JobType::LesserTick | JobType::CatalystInjection => {
             execute_lesser_tick(conn, job)
@@ -703,10 +703,9 @@ fn execute_lesser_tick(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
 
                 if updated {
                     let new_drives_json = serde_json::Value::Object(new_drives);
-                    let _ = conn.execute(
-                        "UPDATE nodes SET drives_json = ?1 WHERE id = ?2",
-                        rusqlite::params![new_drives_json.to_string(), job.holon_id],
-                    );
+                    // P1 fix: route through flow::store_drive_state which acquires
+                    // write_guard + checks circuit_breaker, instead of raw UPDATE.
+                    let _ = crate::flow::store_drive_state_pub(conn, &job.holon_id, &new_drives_json);
                     tracing::debug!(
                         "Holon {} drives adapted (learning_rate={:.3}, experience={:.3})",
                         job.holon_id, learning_rate, state.experience_accumulated
@@ -907,14 +906,14 @@ mod tests {
     }
 
     #[test]
-    fn claim_job_returns_none_when_empty() {
+    pub fn claim_job_returns_none_when_empty() {
         let conn = setup_db();
         let job = claim_job(&conn).unwrap();
         assert!(job.is_none());
     }
 
     #[test]
-    fn mark_done_removes_job() {
+    pub fn mark_done_removes_job() {
         let conn = setup_db();
 
         let node = crate::db::crud::add_node(

@@ -128,7 +128,7 @@ impl MindStateManager {
     pub fn get_state(&self) -> MindState {
         self.state
             .lock()
-            .expect("mind state mutex poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
     }
 
@@ -140,7 +140,7 @@ impl MindStateManager {
     where
         F: FnOnce(&mut MindState),
     {
-        let mut guard = self.state.lock().expect("mind state mutex poisoned");
+        let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut guard);
         guard.last_updated = Utc::now();
         guard.version += 1;
@@ -171,7 +171,7 @@ impl MindStateManager {
 
     /// Retrieve a value from working memory by key.
     pub fn recall(&self, key: &str) -> Option<WorkingMemoryItem> {
-        let guard = self.state.lock().expect("mind state mutex poisoned");
+        let guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
         guard
             .working_memory
             .iter()

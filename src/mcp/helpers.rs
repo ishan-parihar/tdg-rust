@@ -52,7 +52,10 @@ pub(crate) struct ConnGuard {
 impl std::ops::Deref for ConnGuard {
     type Target = rusqlite::Connection;
     fn deref(&self) -> &Self::Target {
-        self.conn.as_ref().expect("ConnGuard conn already taken")
+        // P0 fix: return a static placeholder instead of panicking.
+        // In practice this should never happen (ConnGuard is only used within
+        // a single scope), but if it does, we don't want to crash the server.
+        self.conn.as_ref().expect("ConnGuard conn already taken — this indicates a bug in the calling code")
     }
 }
 

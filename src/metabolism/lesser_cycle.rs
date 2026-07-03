@@ -410,6 +410,11 @@ pub fn tick(
                 state.experience_accumulated *= 0.7; // keep 70%
             }
 
+            // G16 fix: per-cycle experience decay prevents monotonic growth.
+            // The brain's synaptic homeostasis downscales during sleep;
+            // TDG's experience decays each cycle to prevent runaway accumulation.
+            state.experience_accumulated *= 0.95; // 5% decay per cycle
+
             transition(state, LesserPhase::Quiescent, &mut result, &now);
         }
         LesserPhase::Quiescent => {

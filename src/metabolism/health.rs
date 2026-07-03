@@ -114,7 +114,10 @@ impl Health {
 
         // ─── A_z: Agency coefficient ────────────────────────────────────────
         // A_z = 100 · exp(−|ln(Ω_A)|), where Ω_A = (M · η_M) / (|C| + ε)
-        let omega_a = (m * eta_m) / (c.abs() + EPSILON);
+        // G19 fix: floor catalyst at 0.1 so dormant holons (catalyst=0) don't
+        // collapse G_z to 0. A dormant holon is at rest, not unhealthy.
+        let c_floored = c.abs().max(0.1);
+        let omega_a = (m * eta_m) / c_floored;
         let a_z = if omega_a <= 0.0 {
             0.0
         } else {
@@ -123,7 +126,9 @@ impl Health {
 
         // ─── C_z: Communion coefficient ────────────────────────────────────
         // C_z = 100 · exp(−|ln(σ_C)|), where σ_C = (P · η_P) / (|E| + ε)
-        let sigma_c = (p * eta_p) / (e.abs() + EPSILON);
+        // G20 fix: same floor for experience
+        let e_floored = e.abs().max(0.1);
+        let sigma_c = (p * eta_p) / e_floored;
         let c_z = if sigma_c <= 0.0 {
             0.0
         } else {

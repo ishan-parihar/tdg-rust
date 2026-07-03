@@ -63,9 +63,18 @@ impl<'a> Archiver<'a> {
                 return Ok(count);
             }
 
+            // G25 fix: instead of hard DELETE, move old events to mutation_log
+            // (which has its own purge cycle). This preserves the audit trail
+            // for forensic analysis while keeping the events table lean.
+            self.conn.execute(
+                "INSERT OR IGNORE INTO mutation_log (timestamp, session_id, mutation_type, target_type, target_id, old_value, new_value, agent_id)
+                 SELECT timestamp, '', 'archive', 'event', event_id, payload, NULL, agent_id
+                 FROM events WHERE timestamp < ?1",
+                rusqlite::params![cutoff],
+            )?;
             self.conn
                 .execute("DELETE FROM events WHERE timestamp < ?1", rusqlite::params![cutoff])?;
-            info!("Events: {} archived", count);
+            info!("Events: {} archived (moved to mutation_log)", count);
             Ok(count)
         })();
 

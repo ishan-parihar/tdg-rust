@@ -112,17 +112,19 @@ impl AnomalyRegistry {
         }
 
         if existing_count + 1 >= 3 {
-            let chronic = reg
+            // P0 fix: use if-let instead of unwrap() to prevent server crash
+            if let Some(chronic) = reg
                 .get_mut("chronic")
                 .and_then(|v| v.as_array_mut())
-                .unwrap();
-            if !chronic
-                .iter()
-                .any(|c| c.get("key").and_then(|k| k.as_str()) == Some(&key))
             {
-                chronic.insert(0, entry);
-                if chronic.len() > 20 {
-                    chronic.truncate(20);
+                if !chronic
+                    .iter()
+                    .any(|c| c.get("key").and_then(|k| k.as_str()) == Some(&key))
+                {
+                    chronic.insert(0, entry);
+                    if chronic.len() > 20 {
+                        chronic.truncate(20);
+                    }
                 }
             }
         }

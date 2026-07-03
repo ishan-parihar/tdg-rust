@@ -502,6 +502,19 @@ fn store_drive_state(conn: &Connection, node_id: &str, state: &FlowDriveState) -
     Ok(())
 }
 
+/// P1 fix: Public wrapper for store_drive_state that accepts raw JSON.
+/// Used by the metabolism worker to adapt drives with write-guard protection.
+pub fn store_drive_state_pub(conn: &Connection, node_id: &str, drives_json: &serde_json::Value) -> TdgResult<()> {
+    crate::db::crud::check_circuit_breaker_pub()?;
+    let _guard = crate::db::crud::acquire_write_guard_pub(conn)?;
+    let now = now_iso();
+    conn.execute(
+        "UPDATE nodes SET drives_json = ?1, updated_at = ?2 WHERE id = ?3 AND valid_to IS NULL",
+        params![drives_json.to_string(), now, node_id],
+    )?;
+    Ok(())
+}
+
 /// Load FlowDriveState from a node's drives_json column.
 /// Falls back to intrinsic signature if not set.
 fn load_drive_state(_conn: &Connection, node: &Node) -> FlowDriveState {
@@ -735,13 +748,20 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
     if let Some(e) = edges.first() {
         let base_rate = edge_flow_rate(&e.edge_type).0;
         // Phase 16: Hebbian learned rate — LTP strengthens frequently co-activated edges
+        // G5 fix: only apply LTP to POSITIVE base rates. Negative rates (BLOCKS,
+        // CONTRADICTS) should not strengthen with co-activation — blocking should
+        // not be reinforced by use.
         let co_activation: i64 = conn.query_row(
             "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
             rusqlite::params![e.id],
             |row| row.get(0),
         ).unwrap_or(0);
-        let learned_rate = base_rate + 0.1 * (1.0 + co_activation as f64).ln();
-        return Ok(learned_rate.min(1.5)); // cap at 1.5x base
+        let learned_rate = if base_rate > 0.0 {
+            (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5)
+        } else {
+            base_rate // negative rates don't get Hebbian strengthening
+        };
+        return Ok(learned_rate);
     }
 
     // Check reversed direction
@@ -753,8 +773,12 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
             rusqlite::params![e.id],
             |row| row.get(0),
         ).unwrap_or(0);
-        let learned_rate = base_rate + 0.1 * (1.0 + co_activation as f64).ln();
-        return Ok(learned_rate.min(1.5));
+        let learned_rate = if base_rate > 0.0 {
+            (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5)
+        } else {
+            base_rate
+        };
+        return Ok(learned_rate);
     }
 
     Ok(0.4) // default
