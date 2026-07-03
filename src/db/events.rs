@@ -21,41 +21,63 @@ pub fn compute_trust(confidence: f64, helpful_count: i32, retrieval_count: i32) 
 }
 
 /// Rate a node with helpful/unhelpful feedback. Updates helpful_count and recomputes trust.
+///
+/// Returns `Ok(None)` if the node doesn't exist or is archived.
+/// Previously returned `Err` for missing nodes (violating the `Option` return type)
+/// and mutated archived nodes (the UPDATE had `valid_to IS NULL` but the SELECT
+/// did not, so archived rows were read and their confidence was mutated).
 pub fn rate_node(conn: &Connection, node_id: &str, helpful: bool) -> TdgResult<Option<Node>> {
     let delta = if helpful { 1 } else { 0 };
     let now = crate::db::crud::now_iso();
 
-    conn.execute(
-        "UPDATE nodes SET helpful_count = helpful_count + ?1, updated_at = ?2
+    // Use MAX(0, ...) to prevent negative helpful_count (same fix as tdg_rate_memory)
+    let affected = conn.execute(
+        "UPDATE nodes SET helpful_count = MAX(0, helpful_count + ?1), updated_at = ?2
          WHERE id = ?3 AND valid_to IS NULL",
         params![delta, now, node_id],
     )?;
 
-    // Recompute confidence based on helpful ratio
-    let (helpful_count, _retrieval_count, current_confidence): (i32, i32, f64) = conn.query_row(
-        "SELECT helpful_count, retrieval_count, confidence FROM nodes WHERE id = ?1",
-        params![node_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    )?;
+    if affected == 0 {
+        // Node doesn't exist or is archived — return Ok(None) instead of Err
+        return Ok(None);
+    }
 
-    if helpful_count > 0 {
-        let new_confidence =
-            current_confidence * 0.8 + (helpful_count as f64 / (helpful_count as f64 + 1.0)) * 0.2;
-        conn.execute(
-            "UPDATE nodes SET confidence = ?1 WHERE id = ?2",
-            params![new_confidence, node_id],
-        )?;
+    // Recompute confidence based on helpful ratio.
+    // Both SELECT and UPDATE now gate on valid_to IS NULL to avoid touching archived nodes.
+    let row: Option<(i32, i32, f64)> = conn
+        .query_row(
+            "SELECT helpful_count, retrieval_count, confidence FROM nodes
+             WHERE id = ?1 AND valid_to IS NULL",
+            params![node_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .ok();
+
+    if let Some((helpful_count, _retrieval_count, current_confidence)) = row {
+        if helpful_count > 0 {
+            let new_confidence = current_confidence * 0.8
+                + (helpful_count as f64 / (helpful_count as f64 + 1.0)) * 0.2;
+            conn.execute(
+                "UPDATE nodes SET confidence = ?1 WHERE id = ?2 AND valid_to IS NULL",
+                params![new_confidence, node_id],
+            )?;
+        }
     }
 
     crate::db::crud::get_node(conn, node_id)
 }
 
 /// Increment retrieval_count for a node.
+///
+/// Uses now_iso() for updated_at (consistent with all other timestamp writes).
+/// Previously used datetime('now','subsec') which produces a THIRD timestamp
+/// format (space-separated, no timezone) — breaking cross-table comparisons.
 pub fn record_retrieval(conn: &Connection, node_id: &str) -> TdgResult<bool> {
+    let now = crate::db::crud::now_iso();
     let affected = conn.execute(
-        "UPDATE nodes SET retrieval_count = retrieval_count + 1, updated_at = datetime('now', 'subsec')
+        "UPDATE nodes SET retrieval_count = retrieval_count + 1, updated_at = ?2
          WHERE id = ?1 AND valid_to IS NULL",
-        params![node_id],
+        params![node_id, now],
     )?;
     Ok(affected > 0)
 }

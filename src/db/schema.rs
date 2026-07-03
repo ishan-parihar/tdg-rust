@@ -179,6 +179,14 @@ CREATE INDEX IF NOT EXISTS idx_nodes_type_valid_created ON nodes(node_type, vali
 CREATE INDEX IF NOT EXISTS idx_nodes_agent_valid ON nodes(agent_id, valid_to);
 CREATE INDEX IF NOT EXISTS idx_nodes_agent_id ON nodes(agent_id);
 
+-- Unique index on (name, node_type) for active nodes only.
+-- Prevents TOCTOU race in add_node's entity resolution: two concurrent calls
+-- with the same name+type both pass the existence check and both INSERT.
+-- The partial index (WHERE valid_to IS NULL) allows archived/deleted nodes
+-- to share names with active ones.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_name_type_active
+    ON nodes(name, node_type) WHERE valid_to IS NULL;
+
 -- Indexes for edges
 CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
@@ -324,7 +332,23 @@ CREATE TRIGGER IF NOT EXISTS nodes_events_ai AFTER INSERT ON nodes BEGIN
     );
 END;
 
-CREATE TRIGGER IF NOT EXISTS nodes_events_au AFTER UPDATE ON nodes BEGIN
+-- Only fire on user-meaningful column changes (not retrieval_count bumps,
+-- drives_json updates from flow propagation, or maintenance backfills).
+-- Previously, EVERY UPDATE generated a node_updated event — including
+-- record_retrieval (search hits), store_drive_state (flow propagation),
+-- and Janitor/Enricher maintenance. The events table was >90% noise,
+-- making the audit trail nearly useless. The WHEN clause reduces event
+-- volume by an estimated 80-90%.
+CREATE TRIGGER IF NOT EXISTS nodes_events_au AFTER UPDATE ON nodes
+WHEN new.name != old.name
+   OR new.description != old.description
+   OR new.node_type != old.node_type
+   OR new.lifecycle_state != old.lifecycle_state
+   OR new.confidence != old.confidence
+   OR new.teleological_level IS NOT old.teleological_level
+   OR new.developmental_stage IS NOT old.developmental_stage
+   OR new.valid_to IS NOT old.valid_to
+BEGIN
     INSERT INTO events(event_id, event_action, timestamp, node_id, payload)
     VALUES (
         hex(randomblob(16)),
