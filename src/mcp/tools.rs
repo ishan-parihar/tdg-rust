@@ -1758,6 +1758,156 @@ impl TdgServer {
         .await
     }
 
+    /// Query the 22 named archetypes library (Phase 6).
+    ///
+    /// Returns the 22 archetypes (7 roles × 3 complexes + Choice meta-pivot).
+    /// Can filter by complex (mind/body/spirit/pivot) or role (M/P/C/E/S/T/G/Ch).
+    #[tool(description = "Query the 22 named archetypes library (filter by complex or role)")]
+    pub(crate) async fn tdg_archetypes(
+        &self,
+        Parameters(params): Parameters<crate::mcp::params::ArchetypesParams>,
+    ) -> Result<String, McpError> {
+        // If a specific number is requested, return that archetype
+        if let Some(num) = params.number {
+            if let Some(arch) = crate::holonic_types::archetype_by_number(num) {
+                return Ok(serde_json::to_string(&json!({
+                    "number": arch.number,
+                    "name": arch.name,
+                    "complex": arch.complex.as_str(),
+                    "role": arch.role.as_str(),
+                    "role_name": arch.role.display_name(),
+                    "description": arch.description,
+                }))
+                .unwrap_or_default());
+            }
+            return Err(McpError::invalid_params(
+                format!("Archetype {} not found (must be 1-22)", num),
+                None,
+            ));
+        }
+
+        // Filter by complex
+        let archetypes: Vec<&crate::holonic_types::Archetype> = if let Some(complex_str) = &params.complex {
+            let complex = match complex_str.as_str() {
+                "mind" => crate::holonic_types::Complex::Mind,
+                "body" => crate::holonic_types::Complex::Body,
+                "spirit" => crate::holonic_types::Complex::Spirit,
+                "pivot" => crate::holonic_types::Complex::Pivot,
+                _ => return Err(McpError::invalid_params(
+                    format!("Invalid complex '{}'. Must be: mind, body, spirit, pivot", complex_str),
+                    None,
+                )),
+            };
+            crate::holonic_types::archetypes_by_complex(&complex)
+        } else if let Some(role_str) = &params.role {
+            let role = match role_str.as_str() {
+                "M" => crate::holonic_types::Role::Matrix,
+                "P" => crate::holonic_types::Role::Potentiator,
+                "C" => crate::holonic_types::Role::Catalyst,
+                "E" => crate::holonic_types::Role::Experience,
+                "S" => crate::holonic_types::Role::Significator,
+                "T" => crate::holonic_types::Role::Transformation,
+                "G" => crate::holonic_types::Role::GreatWay,
+                "Ch" => crate::holonic_types::Role::Choice,
+                _ => return Err(McpError::invalid_params(
+                    format!("Invalid role '{}'. Must be: M, P, C, E, S, T, G, Ch", role_str),
+                    None,
+                )),
+            };
+            crate::holonic_types::archetypes_by_role(&role)
+        } else {
+            // No filter — return all 22
+            crate::holonic_types::all_archetypes().iter().collect()
+        };
+
+        let result: Vec<serde_json::Value> = archetypes
+            .iter()
+            .map(|arch| json!({
+                "number": arch.number,
+                "name": arch.name,
+                "complex": arch.complex.as_str(),
+                "role": arch.role.as_str(),
+                "role_name": arch.role.display_name(),
+                "description": arch.description,
+            }))
+            .collect();
+
+        Ok(serde_json::to_string(&json!({
+            "total": result.len(),
+            "archetypes": result,
+        }))
+        .unwrap_or_default())
+    }
+
+    /// Run T1/T2/T3 type validation on a holon (Phase 6).
+    ///
+    /// Checks if the holon's type_class is a genuine invariant type:
+    /// - T1: Behavioral match (bonding matches type prediction)
+    /// - T2: Excitation-invariance (type fixed across stage transitions)
+    /// - T3: Fixed-point persistence (type persists across metabolic cycles)
+    ///
+    /// Also checks Type⊥Stage orthogonality.
+    #[tool(description = "Run T1/T2/T3 type validation + Type⊥Stage orthogonality check")]
+    pub(crate) async fn tdg_validate_type(
+        &self,
+        Parameters(params): Parameters<crate::mcp::params::ValidateTypeParams>,
+    ) -> Result<String, McpError> {
+        let pool = self.pool.clone();
+        let node_id = params.node_id.clone();
+
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+
+            // Load the attractor field
+            let af = crate::metabolism::attractor::load(&conn, &node_id)
+                .map_err(mcp_err)?
+                .ok_or_else(|| McpError::invalid_params(
+                    format!("Holon {} has no attractor field. Call tdg_attractor first.", node_id),
+                    None,
+                ))?;
+
+            // Load the node (for developmental_stage)
+            let node = crate::db::crud::get_node(&conn, &node_id)
+                .map_err(mcp_err)?
+                .ok_or_else(|| McpError::invalid_params(format!("Node {} not found", node_id), None))?;
+
+            // Run T1/T2/T3 validation
+            let validation = crate::holonic_types::validate_type(&conn, &node_id, &af)
+                .map_err(mcp_err)?;
+
+            // Check Type⊥Stage orthogonality
+            let orthogonality = crate::holonic_types::check_type_stage_orthogonality(
+                &af,
+                node.developmental_stage,
+            );
+
+            Ok(serde_json::to_string(&json!({
+                "node_id": node_id,
+                "type_class": af.type_class,
+                "is_stable": af.is_stable(),
+                "is_noble": af.is_noble(),
+                "pi": af.pi,
+                "developmental_stage": node.developmental_stage,
+                "validation": {
+                    "t1_behavioral_match": validation.t1_behavioral_match,
+                    "t2_excitation_invariance": validation.t2_excitation_invariance,
+                    "t3_fixed_point_persistence": validation.t3_fixed_point_persistence,
+                    "valid": validation.valid,
+                    "details": validation.details,
+                    "validated_at": validation.validated_at,
+                },
+                "type_stage_orthogonality": orthogonality,
+                "message": if validation.valid {
+                    "Type is validated (all 3 tests passed). Type⊥Stage orthogonality maintained."
+                } else {
+                    "Type is NOT validated. See details for which tests failed."
+                },
+            }))
+            .unwrap_or_default())
+        })
+        .await
+    }
+
     #[tool(description = "Connect two nodes with an edge")]
     pub(crate) async fn tdg_connect(
         &self,

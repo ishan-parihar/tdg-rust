@@ -111,6 +111,7 @@ pub mod flow;
 pub mod grammar;
 pub mod graph_projection;
 pub mod holon;
+pub mod holonic_types;
 pub mod knowledge;
 pub mod llm;
 pub mod maintenance;

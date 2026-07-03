@@ -516,3 +516,21 @@ pub struct ValidateSynthesisParams {
     #[schemars(description = "Target status the synthesis claims (default: 'ai-draft')")]
     pub target_status: Option<String>,
 }
+
+/// Parameters for querying the 22 archetypes library (Phase 6).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ArchetypesParams {
+    #[schemars(description = "Filter by complex: 'mind', 'body', 'spirit', 'pivot' (optional)")]
+    pub complex: Option<String>,
+    #[schemars(description = "Filter by role: 'M', 'P', 'C', 'E', 'S', 'T', 'G', 'Ch' (optional)")]
+    pub role: Option<String>,
+    #[schemars(description = "Get a specific archetype by number (1-22, optional)")]
+    pub number: Option<u8>,
+}
+
+/// Parameters for running T1/T2/T3 type validation on a holon (Phase 6).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ValidateTypeParams {
+    #[schemars(description = "Node ID to validate")]
+    pub node_id: String,
+}
