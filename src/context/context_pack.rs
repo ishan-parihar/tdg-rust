@@ -258,12 +258,12 @@ pub fn build(
     };
 
     // Determine what to include based on scope and depth
-    let include_intra = scope.contains("intra") || scope == "all";
-    let include_inter = scope.contains("inter") || scope == "all";
-    let include_extra = scope.contains("extra") || scope == "all";
+    let _include_intra = scope.contains("intra") || scope == "all";
+    let _include_inter = scope.contains("inter") || scope == "all";
+    let _include_extra = scope.contains("extra") || scope == "all";
 
     // ─── Depth 1+: Intra ────────────────────────────────────────────────────
-    if (include_intra || depth >= 1) && depth >= 1 {
+    if depth >= 1 {
         let health = crate::metabolism::health::load(conn, holon_id)?;
         let lesser = crate::metabolism::lesser_cycle::load_state(conn, holon_id)?;
         let greater = crate::metabolism::greater_cycle::load_state(conn, holon_id)?;
@@ -281,7 +281,7 @@ pub fn build(
     }
 
     // ─── Depth 2+: Inter ────────────────────────────────────────────────────
-    if (include_inter || depth >= 2) && depth >= 2 {
+    if depth >= 2 {
         let bonds = build_bonds(conn, holon_id)?;
         let resonances = build_resonances(conn, holon_id, 5)?;
 
@@ -289,7 +289,7 @@ pub fn build(
     }
 
     // ─── Depth 2+: Extra ────────────────────────────────────────────────────
-    if (include_extra || depth >= 2) && depth >= 2 {
+    if depth >= 2 {
         let parent_chain = build_parent_chain(conn, &node, 5)?;
         let sub_holons = build_sub_holons(conn, holon_id)?;
         let great_way = build_great_way(conn, holon_id)?;

@@ -129,9 +129,10 @@ impl<'a> Enricher<'a> {
         let result = (|| -> Result<()> {
             let rows: Vec<(String, String, String)> = {
                 let mut stmt = self.conn.prepare(
-                    "SELECT id, name, COALESCE(description, '') FROM nodes
-                     WHERE valid_to IS NULL
-                     AND id NOT IN (SELECT node_id FROM embeddings)",
+                    "SELECT n.id, n.name, COALESCE(n.description, '') FROM nodes n
+                     LEFT JOIN embeddings e ON n.id = e.node_id
+                     WHERE n.valid_to IS NULL
+                     AND (e.node_id IS NULL OR e.updated_at < n.updated_at)",
                 )?;
                 let mapped = stmt.query_map([], |row| {
                     Ok((

@@ -528,13 +528,11 @@ fn execute_resonance_update(conn: &Connection, job: &PendingJob) -> TdgResult<()
                 continue;
             }
 
-            // Compute individual factors for storage
-            let comp = crate::metabolism::health::resonance(&af1, &af2);
+            // F5 fix: compute and store individual resonance components
+            let rc = crate::metabolism::health::resonance_with_components(&af1, &af2);
 
-            // We store the overall resonance score; the individual factors
-            // are recomputed on demand if needed (they're for debugging).
-            if comp > 0.0 {
-                results.push((partner_id, comp, comp, comp, comp));
+            if rc.resonance > 0.0 {
+                results.push((partner_id, rc.resonance, rc.complementarity, rc.gamma_compat, rc.great_way_intersect));
             }
         }
     }

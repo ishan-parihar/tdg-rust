@@ -725,15 +725,15 @@ fn main() -> anyhow::Result<()> {
                                                 if holon_id == partner_id { continue; }
                                                 if let Some(af2) = tdg_rust::metabolism::attractor::AttractorField::from_json(partner_json) {
                                                     if !af2.is_stable() { continue; }
-                                                    let r = tdg_rust::metabolism::health::resonance(&af1, &af2);
-                                                    if r > 0.0 {
+                                                    let rc = tdg_rust::metabolism::health::resonance_with_components(&af1, &af2);
+                                                    if rc.resonance > 0.0 {
                                                         let now = chrono::Utc::now().to_rfc3339();
                                                         let _ = conn.execute(
                                                             "INSERT OR REPLACE INTO resonance_graph
                                                                 (holon_id, partner_id, resonance_score,
                                                                  complementarity, gamma_compat, great_way_intersect, computed_at)
                                                              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                                                            rusqlite::params![holon_id, partner_id, r, r, r, r, now],
+                                                            rusqlite::params![holon_id, partner_id, rc.resonance, rc.complementarity, rc.gamma_compat, rc.great_way_intersect, now],
                                                         );
                                                     }
                                                 }

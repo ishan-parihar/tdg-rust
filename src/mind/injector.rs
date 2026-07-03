@@ -254,7 +254,7 @@ pub fn write_mind_state_file(
     let constraints = query_sqlite_constraints(conn);
 
     let feeling_data = FeelingEngine::new()
-        .generate(conn, &[])
+        .generate(conn, &crate::mind::diagnostic::load_drive_history(conn))
         .map(|report| {
             json!({
                 "energy_level": report.energy_level,

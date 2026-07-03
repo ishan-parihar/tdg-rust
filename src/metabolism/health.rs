@@ -244,23 +244,37 @@ fn compute_theta_alignment(af: &AttractorField) -> f64 {
 /// - R < 0.3: weak
 ///
 /// Transients and noble holons don't resonate (R = 0).
-pub fn resonance(h1: &AttractorField, h2: &AttractorField) -> f64 {
-    // Transients don't resonate
+/// The individual resonance components (Phase 21 F5 fix).
+#[derive(Debug, Clone, Default)]
+pub struct ResonanceComponents {
+    pub resonance: f64,
+    pub complementarity: f64,
+    pub gamma_compat: f64,
+    pub great_way_intersect: f64,
+}
+
+/// Compute resonance with individual components returned separately.
+/// F5 fix: callers should store components in their respective columns.
+pub fn resonance_with_components(h1: &AttractorField, h2: &AttractorField) -> ResonanceComponents {
     if !h1.is_stable() || !h2.is_stable() {
-        return 0.0;
+        return ResonanceComponents::default();
     }
 
-    // 1. Register complementarity
     let comp = register_complementarity(&h1.pi, &h2.pi);
-
-    // 2. Coupling-tensor cosine similarity (clamped ≥ 0)
     let gamma_compat = coupling_tensor_compatibility(&h1.gamma, &h2.gamma);
-
-    // 3. Great-Way intersection
     let gw = great_way_intersection(&h1.a_g, &h2.a_g);
+    let r = (comp * gamma_compat * gw * 10_000.0).round() / 10_000.0;
 
-    let r = comp * gamma_compat * gw;
-    (r * 10_000.0).round() / 10_000.0 // round to 4 decimal places
+    ResonanceComponents {
+        resonance: r,
+        complementarity: comp,
+        gamma_compat,
+        great_way_intersect: gw,
+    }
+}
+
+pub fn resonance(h1: &AttractorField, h2: &AttractorField) -> f64 {
+    resonance_with_components(h1, h2).resonance
 }
 
 /// Factor 1: Register complementarity.

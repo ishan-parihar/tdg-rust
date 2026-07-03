@@ -52,7 +52,7 @@ pub use greater_cycle::{
     PhaseTransitionReadiness,
 };
 pub use health::{
-    interpret_resonance, load as load_health, resonance, save as save_health, Health, HealthState,
+    interpret_resonance, load as load_health, resonance, resonance_with_components, save as save_health, Health, HealthState, ResonanceComponents,
 };
 pub use lesser_cycle::{
     generate_catalyst, load_state, save_state, tick, CycleThresholds, LesserCycleState,
