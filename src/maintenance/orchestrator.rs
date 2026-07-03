@@ -3,7 +3,7 @@ use chrono::Utc;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use tracing::error;
+use tracing::{error, info};
 
 use super::archiver::{Archiver, ArchiverReport};
 use super::enricher::{Enricher, EnricherReport};
@@ -93,6 +93,49 @@ impl<'a> SelfManager<'a> {
         match monitor.check() {
             Ok(h) => report.health_after = Some(h),
             Err(e) => error!("HealthMonitor.check() failed: {}", e),
+        }
+
+        // Advance developmental stages for telos nodes.
+        //
+        // Previously, `advance_stage` and `promote_tlevel` were dead code —
+        // never called from any production path. The entire 8-stage developmental
+        // framework (Survival → Identity → Power → Heart → Rational → Pluralistic
+        // → Integral → Harvest) was non-functional. We now call advance_stage for
+        // all active telos nodes during the SelfManager cycle.
+        if !dry_run {
+            let telearchy = crate::telearchy::TelearchyEngine::new(self.conn);
+            match crate::db::crud::query_nodes(
+                self.conn,
+                &crate::models::NodeQuery {
+                    node_type: Some("telos".to_string()),
+                    limit: Some(1000),
+                    ..Default::default()
+                },
+            ) {
+                Ok(telos_nodes) => {
+                    let mut promoted = 0usize;
+                    for telos in &telos_nodes {
+                        match telearchy.advance_stage(&telos.id) {
+                            Ok(Some(_)) => promoted += 1,
+                            Ok(None) => {}
+                            Err(e) => {
+                                tracing::debug!(
+                                    "advance_stage failed for telos {}: {}",
+                                    telos.id, e
+                                );
+                            }
+                        }
+                    }
+                    if promoted > 0 {
+                        info!("Telearchy: {} telos nodes advanced to next stage", promoted);
+                        report.succeeded.push(format!("telearchy({})", promoted));
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to query telos nodes for stage advancement: {}", e);
+                    report.failed.push("telearchy".into());
+                }
+            }
         }
 
         if let (Some(before), Some(after)) = (&report.health_before, &report.health_after) {

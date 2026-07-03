@@ -85,9 +85,13 @@ pub fn discover_skills_for_terrain(conn: &Connection) -> TdgResult<Vec<String>> 
 }
 
 pub fn count_active_nodes_by_type(conn: &Connection) -> TdgResult<HashMap<String, i64>> {
+    // Standardized filtering: lifecycle_state = 'active' AND valid_to IS NULL.
+    // The previous filter (`lifecycle_state != 'archived'`) included stale,
+    // emerging, and declining nodes — inconsistent with consolidation_engine
+    // which uses `lifecycle_state = 'active' AND valid_to IS NULL`.
     let mut stmt = conn.prepare(
         "SELECT node_type, COUNT(*) as cnt FROM nodes
-         WHERE lifecycle_state != 'archived'
+         WHERE lifecycle_state = 'active' AND valid_to IS NULL
          GROUP BY node_type ORDER BY cnt DESC",
     )?;
 
@@ -110,7 +114,13 @@ pub fn count_active_nodes_by_type(conn: &Connection) -> TdgResult<HashMap<String
 pub fn generate_terrain_context(conn: &Connection, loop_state: &Value) -> TdgResult<Value> {
     let active_nodes_by_type = count_active_nodes_by_type(conn)?;
 
-    let recent_nodes = crud::query_nodes(
+    // Query top nodes by confidence × retrieval_count × helpful_count.
+    //
+    // The previous implementation queried nodes with `ORDER BY created_at DESC`
+    // (via query_nodes default sorting) and labeled the result "highest_relevance_items".
+    // This was misleading — it returned the 10 MOST RECENT nodes, not the most
+    // relevant. We now sort by a relevance score: confidence * (1 + retrieval_count + helpful_count).
+    let mut top_nodes = crud::query_nodes(
         conn,
         &NodeQuery {
             node_type: None,
@@ -121,19 +131,26 @@ pub fn generate_terrain_context(conn: &Connection, loop_state: &Value) -> TdgRes
             quadrant: None,
             agent_id: None,
             include_deleted: false,
-            limit: Some(10),
+            limit: Some(50), // fetch more, then re-sort by relevance
             offset: None,
         },
     )?;
+    top_nodes.sort_by(|a, b| {
+        let score_a = a.confidence * (1.0 + (a.retrieval_count + a.helpful_count) as f64);
+        let score_b = b.confidence * (1.0 + (b.retrieval_count + b.helpful_count) as f64);
+        score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let top_nodes: Vec<_> = top_nodes.into_iter().take(10).collect();
 
-    let highest_relevance_items: Vec<String> = recent_nodes
+    let highest_relevance_items: Vec<String> = top_nodes
         .iter()
         .map(|n| {
             format!(
-                "{} [{}] (confidence: {:.0}%)",
+                "{} [{}] (confidence: {:.0}%, retrievals: {})",
                 n.name,
                 n.node_type,
-                n.confidence * 100.0
+                n.confidence * 100.0,
+                n.retrieval_count
             )
         })
         .collect();
@@ -202,10 +219,12 @@ fn find_open_edges(conn: &Connection) -> TdgResult<Vec<String>> {
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
+    // Use char-based truncation to avoid panicking on multi-byte UTF-8.
+    let chars: Vec<char> = s.chars().take(max_len).collect();
+    if chars.len() == max_len && s.chars().count() > max_len {
+        format!("{}…", chars.iter().collect::<String>())
     } else {
-        format!("{}…", &s[..max_len])
+        chars.iter().collect()
     }
 }
 

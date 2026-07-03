@@ -43,7 +43,7 @@ impl<'a> DigestionEngine<'a> {
             self.conn,
             &NewNode {
                 node_type: "observation".to_string(),
-                name: format!("{} observation: {}", catalyst_type, &description[..description.len().min(50)]),
+                name: format!("{} observation: {}", catalyst_type, description.chars().take(50).collect::<String>()),
                 description: Some(description.to_string()),
                 properties: Some(serde_json::json!({
                     "catalyst_type": catalyst_type.to_string(),
@@ -98,16 +98,26 @@ impl<'a> DigestionEngine<'a> {
         //
         // We now group by BOTH edge types. When 3+ observations share a source
         // (via either edge type), a hypothesis is created.
+        //
+        // IMPORTANT: an observation can have BOTH a MENTIONS and an EVIDENCES
+        // edge to the same source. The previous implementation would push the
+        // same observation twice into by_source[source], inflating obs_list.len()
+        // and creating duplicate parent_ids + duplicate SUPPORTS edges. We now
+        // dedup by observation ID within each source group.
         let mut by_source: HashMap<String, Vec<&Node>> = HashMap::new();
         for obs in &observations {
+            let mut seen_sources: std::collections::HashSet<String> = std::collections::HashSet::new();
             for edge_type in &["MENTIONS", "EVIDENCES"] {
                 let edges =
                     crud::get_edges(self.conn, Some(&obs.id), None, Some(edge_type), None, 100)?;
                 for e in &edges {
-                    by_source
-                        .entry(e.target_id.clone())
-                        .or_default()
-                        .push(obs);
+                    // Only push this obs once per source (dedup across edge types)
+                    if seen_sources.insert(e.target_id.clone()) {
+                        by_source
+                            .entry(e.target_id.clone())
+                            .or_default()
+                            .push(obs);
+                    }
                 }
             }
         }

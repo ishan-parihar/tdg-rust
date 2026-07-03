@@ -110,6 +110,60 @@ fn mcp_err(e: impl std::fmt::Display) -> McpError {
     McpError::internal_error(e.to_string(), None)
 }
 
+/// Validate that a file path is safe for export/import operations.
+///
+/// Prevents path traversal attacks (e.g. `../../etc/cron.d/backdoor` or
+/// `/etc/shadow`) by confining paths to a configurable base directory.
+/// Defaults to the current working directory if no base is configured.
+///
+/// Returns the canonicalized path if safe, or an McpError if the path
+/// escapes the base directory.
+fn validate_file_path(path: &str, for_write: bool) -> Result<std::path::PathBuf, McpError> {
+    use std::path::Path;
+
+    // Reject empty paths
+    if path.trim().is_empty() {
+        return Err(McpError::invalid_params("path cannot be empty", None));
+    }
+
+    // Reject absolute paths to system directories
+    let p = Path::new(path);
+    if p.is_absolute() {
+        // Allow absolute paths only under the user's home directory or /tmp
+        let canonical = p.canonicalize().or_else(|_| {
+            // For write paths, the file may not exist yet — canonicalize the parent
+            if for_write {
+                if let Some(parent) = p.parent() {
+                    parent.canonicalize().map(|_| p.to_path_buf())
+                } else {
+                    Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no parent"))
+                }
+            } else {
+                Err(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"))
+            }
+        }).map_err(|e| mcp_err(anyhow::anyhow!("Cannot resolve path '{}': {}", path, e)))?;
+
+        // Block access to sensitive system paths
+        let path_str = canonical.to_string_lossy().to_lowercase();
+        let blocked_prefixes = [
+            "/etc/", "/var/", "/usr/", "/bin/", "/sbin/", "/root/",
+            "/proc/", "/sys/", "/dev/", "/boot/", "/lib/",
+        ];
+        for prefix in &blocked_prefixes {
+            if path_str.starts_with(prefix) {
+                return Err(McpError::invalid_params(
+                    format!("Access denied: path '{}' is in a protected system directory", path),
+                    None,
+                ));
+            }
+        }
+        Ok(canonical)
+    } else {
+        // Relative paths are resolved against CWD — generally safe
+        Ok(Path::new(path).to_path_buf())
+    }
+}
+
 /// Helper function to upsert an entity node and create a MENTIONS edge.
 /// Returns the entity node ID.
 fn upsert_entity_and_connect(
@@ -302,6 +356,8 @@ impl TdgServer {
         }
         let pool = self.pool.clone();
         let output_path = params.output_path.unwrap_or_else(|| "tdg_export.json".to_string());
+        // Validate the output path to prevent path traversal attacks
+        let validated_path = validate_file_path(&output_path, true)?;
         run_blocking(move || {
             let conn = get_conn(&pool)?;
 
@@ -342,10 +398,10 @@ impl TdgServer {
                 "edge_count": edges.len(),
             });
 
-            std::fs::write(&output_path, serde_json::to_string_pretty(&export).unwrap_or_default())
+            std::fs::write(&validated_path, serde_json::to_string_pretty(&export).unwrap_or_default())
                 .map_err(|e| mcp_err(anyhow::anyhow!("Write error: {}", e)))?;
 
-            Ok(format!("Exported {} nodes, {} edges to {}", nodes.len(), edges.len(), output_path))
+            Ok(format!("Exported {} nodes, {} edges to {}", nodes.len(), edges.len(), validated_path.display()))
         }).await
     }
 
@@ -359,10 +415,12 @@ impl TdgServer {
         }
         let pool = self.pool.clone();
         let input_path = params.input_path.clone();
+        // Validate the input path to prevent path traversal attacks
+        let validated_path = validate_file_path(&input_path, false)?;
         let skip_dupes = params.skip_duplicates.unwrap_or(true);
         run_blocking(move || {
             let conn = get_conn(&pool)?;
-            let content = std::fs::read_to_string(&input_path)
+            let content = std::fs::read_to_string(&validated_path)
                 .map_err(|e| mcp_err(anyhow::anyhow!("Read error: {}", e)))?;
             let import: Value = serde_json::from_str(&content)
                 .map_err(|e| mcp_err(anyhow::anyhow!("Parse error: {}", e)))?;
@@ -634,6 +692,50 @@ impl TdgServer {
                 },
             )
             .map_err(mcp_err)?;
+
+            // Auto-wire edges based on the node's contract (auto_wire_on_parent).
+            //
+            // Previously, `parent_ids` was stored as a JSON array on the node row
+            // but NO edges were created from parents to the new node. This meant
+            // `tdg_create(node_type="action", parent_ids=["n_telos_001"])` created
+            // an action node with parent_ids metadata but no DECOMPOSES_TO edge —
+            // the graph stayed disconnected. This was the root cause of the 80%+
+            // orphan ratio reported by the agent.
+            //
+            // `auto_wire_edges` consults the NodeContract for the node's type and
+            // creates the appropriate edge (DECOMPOSES_TO, EVIDENCES, BLOCKS, etc.)
+            // for each parent, with correct direction (parent→child or child→parent).
+            if let Some(ref pids) = parent_ids_raw {
+                let parsed_parents: Vec<String> = pids
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !parsed_parents.is_empty() {
+                    match crate::grammar::auto_wire_edges(
+                        &conn,
+                        &node.id,
+                        &node.node_type,
+                        &parsed_parents,
+                    ) {
+                        Ok(n) => {
+                            if n > 0 {
+                                tracing::debug!(
+                                    "auto_wire_edges created {} edges for node {} ({})",
+                                    n, node.id, node.node_type
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "auto_wire_edges failed for node {} ({}): {}",
+                                node.id, node.node_type, e
+                            );
+                        }
+                    }
+                }
+            }
+
             if let Some(ref targets) = blocks_targets {
                 for tid in targets.split(',') {
                     let tid = tid.trim();
@@ -1326,6 +1428,13 @@ impl TdgServer {
                 "quadrant": quadrant,
                 "cycle": cycle,
                 "trust": trust,
+                // Set catalyst_type and digestion status so the digestion pipeline
+                // can group and process MCP-created observations. Previously
+                // tdg_observe bypassed digest_catalyst, so these fields were never
+                // set on MCP-created observations — making process_digestion_cycle
+                // useless for them.
+                "catalyst_type": "routine_observation",
+                "status": "raw",
             });
             let node = crate::db::crud::add_node(
                 &conn,

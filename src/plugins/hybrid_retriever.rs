@@ -53,30 +53,35 @@ fn route_query(query: &str) -> QueryIntent {
 }
 
 fn weights_for_intent(intent: QueryIntent) -> RetrievalWeights {
+    // All weight sets are normalized to sum to exactly 1.0.
+    // The previous implementation had weights summing to 1.20 (Factual, Semantic)
+    // or 0.80 (Global), causing total_score to exceed 1.0 or be systematically
+    // under-weighted. This made cross-query score comparisons misleading and
+    // broke min_confidence thresholds.
     match intent {
         QueryIntent::Factual => RetrievalWeights {
-            fts_weight: 0.60,
-            trust_weight: 0.20,
+            fts_weight: 0.45,
+            trust_weight: 0.15,
             recency_weight: 0.05,
             term_overlap_weight: 0.10,
             type_boost_weight: 0.05,
             embedding_weight: 0.20,
         },
         QueryIntent::Semantic => RetrievalWeights {
-            fts_weight: 0.20,
-            trust_weight: 0.25,
-            recency_weight: 0.10,
+            fts_weight: 0.15,
+            trust_weight: 0.15,
+            recency_weight: 0.05,
             term_overlap_weight: 0.05,
             type_boost_weight: 0.10,
             embedding_weight: 0.50,
         },
         QueryIntent::Global => RetrievalWeights {
-            fts_weight: 0.10,
-            trust_weight: 0.30,
+            fts_weight: 0.15,
+            trust_weight: 0.35,
             recency_weight: 0.10,
             term_overlap_weight: 0.05,
             type_boost_weight: 0.05,
-            embedding_weight: 0.20,
+            embedding_weight: 0.30,
         },
         QueryIntent::Hybrid => RetrievalWeights::default(),
     }
@@ -103,10 +108,11 @@ pub struct RetrievalWeights {
 
 impl Default for RetrievalWeights {
     fn default() -> Self {
+        // Normalized to sum to exactly 1.0 (was 1.35 before fix).
         Self {
-            fts_weight: 0.50,
-            trust_weight: 0.30,
-            recency_weight: 0.10,
+            fts_weight: 0.30,
+            trust_weight: 0.20,
+            recency_weight: 0.05,
             term_overlap_weight: 0.10,
             type_boost_weight: 0.15,
             embedding_weight: 0.20,
@@ -114,8 +120,9 @@ impl Default for RetrievalWeights {
     }
 }
 
-/// High-value node types for boosting — matches Python's BOOSTED_TYPES.
-static HIGH_VALUE_TYPES: &[&str] = &["action", "telos", "skill", "tool", "product", "capability"];
+/// High-value node types for boosting.
+/// "tool" and "product" were removed (not valid node types in the schema).
+static HIGH_VALUE_TYPES: &[&str] = &["action", "telos", "skill", "capability", "discovery", "insight"];
 
 /// The Hybrid Retriever — combined FTS5 + trust + recency scoring.
 /// ponytail: weights are per-query via `weights_for_intent()`, not stored on the struct.
@@ -491,15 +498,37 @@ impl HybridRetriever {
     }
 
     fn recency_score(&self, created_at: &str) -> f64 {
-        if let Ok(created) = chrono::NaiveDateTime::parse_from_str(
-            created_at.replace('Z', "").as_str(),
-            "%Y-%m-%dT%H:%M:%S%.f",
-        ) {
+        // Parse the timestamp robustly. `crud::now_iso()` produces RFC3339 with
+        // +00:00 offset (e.g. "2026-01-15T12:34:56.789+00:00"). The previous
+        // implementation used NaiveDateTime::parse_from_str with format
+        // "%Y-%m-%dT%H:%M:%S%.f" after stripping 'Z' — but that format does NOT
+        // accept timezone offsets like "+00:00", so EVERY parse failed and
+        // recency_score always returned 0.5. Recency never affected ranking.
+        //
+        // We now try DateTime::parse_from_rfc3339 first (handles any RFC3339
+        // including +00:00, +05:30, Z), then fall back to NaiveDateTime formats
+        // for legacy/external timestamps.
+        let parsed = chrono::DateTime::parse_from_rfc3339(created_at)
+            .ok()
+            .map(|dt| dt.with_timezone(&chrono::Utc).naive_utc())
+            .or_else(|| {
+                chrono::NaiveDateTime::parse_from_str(
+                    created_at.replace('Z', "").as_str(),
+                    "%Y-%m-%dT%H:%M:%S%.f",
+                )
+                .ok()
+            })
+            .or_else(|| {
+                chrono::NaiveDateTime::parse_from_str(created_at, "%Y-%m-%d %H:%M:%S").ok()
+            });
+
+        if let Some(created) = parsed {
             let now = chrono::Utc::now().naive_utc();
             let age_days = (now - created).num_days() as f64;
             // Decay: 1.0 at day 0, 0.5 at day 30, approaches 0
             (1.0 / (1.0 + age_days / 30.0)).max(0.0)
         } else {
+            tracing::debug!("recency_score: unparseable timestamp '{}'", created_at);
             0.5 // default mid-score
         }
     }

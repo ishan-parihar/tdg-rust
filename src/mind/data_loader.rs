@@ -38,8 +38,54 @@ pub fn load_constraints(cfg: &Config) -> Value {
 /// Load working memory from state file.
 ///
 /// Python: `load_working_memory()` — reads `hermes-working-memory.json`.
+///
+/// **Rust-specific bridge**: If `hermes-working-memory.json` doesn't exist or
+/// doesn't contain `current_project` / `working_memory`, we fall back to reading
+/// `tdg-mind-state.json` (written by `MindStateManager`). This bridges the gap
+/// between `tdg_set_project_context` (which writes to MindStateManager) and
+/// `tdg_context` / `generate_prompt` (which calls this function). Without this
+/// bridge, project context set via MCP is invisible in the generated prompt.
 pub fn load_working_memory(cfg: &Config) -> Value {
-    robust_json_load(&cfg.working_memory_path(), serde_json::json!({}))
+    let mut wm = robust_json_load(&cfg.working_memory_path(), serde_json::json!({}));
+
+    // Bridge: if the legacy file doesn't have project context, check MindStateManager's file
+    let has_project = wm.get("current_project").is_some()
+        || wm.get("working_memory").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false);
+
+    if !has_project {
+        let mind_state_path = cfg.state_dir.join("tdg-mind-state.json");
+        if let Ok(mind_state_content) = std::fs::read_to_string(&mind_state_path) {
+            if let Ok(mind_state) = serde_json::from_str::<serde_json::Value>(&mind_state_content) {
+                // MindStateManager stores working_memory as Vec<WorkingMemoryItem>
+                // Each item has: { key, value, timestamp }
+                if let Some(items) = mind_state.get("working_memory").and_then(|v| v.as_array()) {
+                    let mut bridged_wm = serde_json::json!([]);
+                    let bridged_arr = bridged_wm.as_array_mut().unwrap();
+                    for item in items {
+                        if let Some(key) = item.get("key").and_then(|v| v.as_str()) {
+                            if let Some(value) = item.get("value") {
+                                bridged_arr.push(serde_json::json!({
+                                    "key": key,
+                                    "value": value,
+                                }));
+                                // If this is project_context, also set current_project
+                                if key == "project_context" {
+                                    if let Some(s) = value.as_str() {
+                                        wm["current_project"] = serde_json::json!(s);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !bridged_arr.is_empty() && !wm.get("working_memory").is_some() {
+                        wm["working_memory"] = bridged_wm;
+                    }
+                }
+            }
+        }
+    }
+
+    wm
 }
 
 /// Load loop state from state file.

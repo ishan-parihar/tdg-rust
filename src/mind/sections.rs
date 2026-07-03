@@ -202,6 +202,54 @@ pub fn generate_pulse_section(conn: &Connection) -> String {
         lines.push(format!("  {} {}: {}", bar, ntype, count));
     }
 
+    // Wire PulseEngine for structural gap detection.
+    //
+    // Previously, PulseEngine (260 lines of closure-based gap detection:
+    // per-node-type min edges, required edge types, direction, age multiplier)
+    // was dead code — generate_pulse_section only showed a composition histogram.
+    // The section header said "Structural Gaps" but the content was just counts.
+    //
+    // We now invoke PulseEngine and append its findings (nodes with structural
+    // gaps: missing required edge types, insufficient edge count, etc.) to the
+    // section, grouped by severity.
+    let pulse_engine = crate::mind::pulse::PulseEngine::new();
+    match pulse_engine.pulse(conn, &[]) {
+        Ok(results) => {
+            use crate::mind::pulse::PulseSeverity;
+            let critical: Vec<_> = results.iter().filter(|r| r.severity == PulseSeverity::Critical).collect();
+            let gaps: Vec<_> = results.iter().filter(|r| r.severity == PulseSeverity::Gap).collect();
+            let minor: Vec<_> = results.iter().filter(|r| r.severity == PulseSeverity::Minor).collect();
+
+            if !critical.is_empty() {
+                lines.push("".to_string());
+                lines.push(format!("**⚠️ Critical structural gaps ({}):**", critical.len()));
+                for gap in critical.iter().take(5) {
+                    lines.push(format!(
+                        "  - **{}** ({}): {} of {} required edges",
+                        gap.name, gap.node_type, gap.existing_edges, gap.required_edges
+                    ));
+                }
+            }
+            if !gaps.is_empty() {
+                lines.push("".to_string());
+                lines.push(format!("**📋 Gaps ({}):**", gaps.len()));
+                for gap in gaps.iter().take(3) {
+                    lines.push(format!(
+                        "  - **{}** ({}): {} of {} required edges",
+                        gap.name, gap.node_type, gap.existing_edges, gap.required_edges
+                    ));
+                }
+            }
+            if minor.is_empty() && critical.is_empty() && gaps.is_empty() {
+                lines.push("".to_string());
+                lines.push("**✓ No structural gaps detected.**".to_string());
+            }
+        }
+        Err(e) => {
+            tracing::debug!("PulseEngine analysis failed: {}", e);
+        }
+    }
+
     lines.join("\n")
 }
 
@@ -323,10 +371,15 @@ pub fn detect_wisdom_signals(conn: &Connection) -> Vec<String> {
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
+    // Use char-based truncation to avoid panicking on multi-byte UTF-8
+    // (e.g. emoji, CJK, accented letters) that straddles the byte boundary.
+    // The previous `&s[..max_len]` would panic if max_len fell inside a
+    // multi-byte character.
+    let chars: Vec<char> = s.chars().take(max_len).collect();
+    if chars.len() == max_len && s.chars().count() > max_len {
+        format!("{}…", chars.iter().collect::<String>())
     } else {
-        format!("{}…", &s[..max_len])
+        chars.iter().collect()
     }
 }
 

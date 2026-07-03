@@ -97,21 +97,32 @@ pub fn auto_capture(
     trust: f64,
     entities: Option<&str>,
 ) -> TdgResult<Value> {
+    // Dual-write quadrant to both quadrants_json["primary"] and properties_json["quadrant"]
+    // for compatibility with tdg_mind_state. Previously auto_capture only wrote to
+    // properties_json, making the quadrant invisible to tdg_mind_state (which reads
+    // quadrants_json). This mirrors the fix applied to tdg_observe in the prior pass.
+    let mut quadrants = serde_json::Map::new();
+    quadrants.insert("primary".to_string(), json!(quadrant));
+    quadrants.insert("trust".to_string(), json!(trust));
+
     let props = json!({
         "quadrant": quadrant,
         "trust": trust,
         "entities": entities.unwrap_or(""),
         "source": "auto_capture",
+        "catalyst_type": "routine_observation",
+        "status": "raw",
     });
 
     let node = crate::db::crud::add_node(
         conn,
         &NewNode {
             node_type: "observation".to_string(),
-            name: format!("Obs: {}", &description[..description.len().min(80)]),
+            name: format!("Obs: {}", description.chars().take(80).collect::<String>()),
             description: Some(description.to_string()),
             source: Some("auto_capture".to_string()),
             properties: Some(props),
+            quadrants: Some(json!(quadrants)),
             ..Default::default()
         },
     )?;

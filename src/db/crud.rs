@@ -127,11 +127,24 @@ pub fn compute_live_confidence(
     retrieval_count: i64,
 ) -> f64 {
     let now = chrono::Utc::now().naive_utc();
-    let created = chrono::NaiveDateTime::parse_from_str(
-        created_at.replace('Z', "").as_str(),
-        "%Y-%m-%dT%H:%M:%S%.f",
-    )
-    .unwrap_or(now);
+    // Robust timestamp parsing: `now_iso()` produces RFC3339 with +00:00 offset.
+    // The previous NaiveDateTime parser didn't accept timezone offsets, so every
+    // parse failed and `created` fell back to `now` — making `age_days = 0` and
+    // `decay = 1.0` always. Live confidence never decayed.
+    let created = chrono::DateTime::parse_from_rfc3339(created_at)
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc).naive_utc())
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(
+                created_at.replace('Z', "").as_str(),
+                "%Y-%m-%dT%H:%M:%S%.f",
+            )
+            .ok()
+        })
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(created_at, "%Y-%m-%d %H:%M:%S").ok()
+        })
+        .unwrap_or(now);
 
     let age_days = (now - created).num_days() as f64;
 
