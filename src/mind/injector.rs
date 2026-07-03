@@ -30,6 +30,20 @@ pub fn generate_prompt(conn: &Connection, cfg: &Config) -> TdgResult<String> {
         sections.push("".to_string());
     }
 
+    // Phase 9: Metabolic context — graph-level health summary from the metabolism.
+    // This surfaces G_z/P_z/state distributions so the agent knows its own
+    // metabolic health without calling tdg_health on every holon.
+    if !lean {
+        if let Ok(metabolic) = generate_metabolic_summary(conn) {
+            if !metabolic.is_empty() {
+                sections.push("## 🧬 Metabolic State — Graph Health Summary".to_string());
+                sections.push("".to_string());
+                sections.push(metabolic);
+                sections.push("".to_string());
+            }
+        }
+    }
+
     sections.push("## 🌐 Terrain Context — What's Happening Now".to_string());
     sections.push("".to_string());
     sections.push(
@@ -306,6 +320,116 @@ pub fn write_mind_state_file(
     std::fs::create_dir_all(&cfg.state_dir)?;
     std::fs::write(&state_path, serde_json::to_string_pretty(&state)?)?;
     Ok(())
+}
+
+/// Phase 9: Generate a graph-level metabolic health summary.
+///
+/// Queries the health_json column across all active holons and computes:
+/// - Mean G_z (integrative efficiency)
+/// - Mean P_z (transcendental tension)
+/// - Count of holons in each HealthState (optimal/sub-optimal/collapse/depolarized)
+/// - Count of holons with active metabolic inefficiencies (shadows)
+/// - Metabolism queue depth (pending jobs)
+///
+/// This is the "graph-level mind" — it tells the agent the overall metabolic
+/// state of its memory, not just per-holon health.
+fn generate_metabolic_summary(conn: &Connection) -> TdgResult<String> {
+    // Load all health_json values
+    let mut stmt = match conn.prepare(
+        "SELECT health_json FROM nodes
+         WHERE valid_to IS NULL AND health_json IS NOT NULL AND health_json != ''",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Ok(String::new()), // table might not exist yet
+    };
+
+    let health_jsons: Vec<String> = stmt
+        .query_map([], |row| row.get(0))
+        .ok()
+        .map(|iter| iter.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
+
+    if health_jsons.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut g_z_sum = 0.0;
+    let mut p_z_sum = 0.0;
+    let mut count = 0;
+    let mut optimal = 0;
+    let mut sub_optimal = 0;
+    let mut collapse = 0;
+    let mut depolarized = 0;
+
+    for json in &health_jsons {
+        if let Ok(health) =
+            serde_json::from_str::<crate::metabolism::health::Health>(json)
+        {
+            g_z_sum += health.g_z;
+            p_z_sum += health.p_z;
+            count += 1;
+            match health.state {
+                crate::metabolism::health::HealthState::Optimal => optimal += 1,
+                crate::metabolism::health::HealthState::SubOptimal => sub_optimal += 1,
+                crate::metabolism::health::HealthState::Collapse => collapse += 1,
+                crate::metabolism::health::HealthState::Depolarized => depolarized += 1,
+            }
+        }
+    }
+
+    if count == 0 {
+        return Ok(String::new());
+    }
+
+    let mean_g_z = g_z_sum / count as f64;
+    let mean_p_z = p_z_sum / count as f64;
+
+    // Get metabolism queue depth
+    let queue_depth: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pending_metabolism WHERE attempts < max_attempts",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let mut summary = String::new();
+    summary.push_str(&format!(
+        "- **Holons with health data**: {} [status: hypothesis-graded]\n",
+        count
+    ));
+    summary.push_str(&format!(
+        "- **Mean G_z** (integrative efficiency): {:.1} / 100\n",
+        mean_g_z
+    ));
+    summary.push_str(&format!(
+        "- **Mean P_z** (transcendental tension): {:.1} / 100\n",
+        mean_p_z
+    ));
+    summary.push_str(&format!(
+        "- **Health distribution**: optimal={}, sub-optimal={}, collapse={}, depolarized={}\n",
+        optimal, sub_optimal, collapse, depolarized
+    ));
+
+    if depolarized > 0 {
+        summary.push_str(&format!(
+            "- ⚠️ **{} holon(s) depolarized** (P_z < 10 — no directional commitment). These holons need catalyst injection to restore tension.\n",
+            depolarized
+        ));
+    }
+    if collapse > 0 {
+        summary.push_str(&format!(
+            "- ⚠️ **{} holon(s) in collapse** (G_z < 30 — severe boundary distortion). These holons need structural repair.\n",
+            collapse
+        ));
+    }
+
+    summary.push_str(&format!(
+        "- **Metabolism queue**: {} pending job(s)\n",
+        queue_depth
+    ));
+
+    Ok(summary)
 }
 
 #[cfg(test)]

@@ -257,6 +257,16 @@ pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
     let tetra_lr = new.tetra_lr;
     let octave_id = new.octave_id.clone();
 
+    // Phase 7: V/C/R/N coordinate fields
+    let realm_placement = new.realm_placement.clone().or_else(|| {
+        // Infer realm from node_type if not specified
+        infer_realm_placement(&node_type).map(|s| s.to_string())
+    });
+    let verticality_json = new.verticality_json.clone();
+    let collectivity = new.collectivity.clone();
+    let nesting_sub = new.nesting_sub.unwrap_or(0);
+    let nesting_sup = new.nesting_sup.unwrap_or(0);
+
     // Compute agent_path from parent_ids
     let agent_path = compute_agent_path(conn, &parent_ids)?;
 
@@ -264,9 +274,10 @@ pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
         "INSERT INTO nodes (id, node_type, name, description, properties_json, quadrants_json,
          drives_json, lifecycle_state, teleological_level, developmental_stage, confidence,
          source, parent_ids, agent_path, created_at, updated_at, valid_from, agent_id,
-         synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id)
+         synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id,
+         realm_placement, verticality_json, collectivity, nesting_sub, nesting_sup)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
-                 ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+                 ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
         params![
             id,
             node_type,
@@ -293,6 +304,11 @@ pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
             tetra_ll,
             tetra_lr,
             octave_id,
+            realm_placement,
+            verticality_json,
+            collectivity,
+            nesting_sub,
+            nesting_sup,
         ],
     );
 
@@ -357,7 +373,8 @@ pub fn get_node(conn: &Connection, node_id: &str) -> TdgResult<Option<Node>> {
          lifecycle_state, teleological_level, developmental_stage, confidence, source,
          parent_ids, agent_path, created_at, updated_at, valid_from, valid_to,
          helpful_count, retrieval_count, agent_id,
-         synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id
+         synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id,
+         realm_placement, verticality_json, collectivity, nesting_sub, nesting_sup
          FROM nodes WHERE id = ?1 AND valid_to IS NULL",
     )?;
 
@@ -377,7 +394,8 @@ pub fn get_node_including_deleted(conn: &Connection, node_id: &str) -> TdgResult
          lifecycle_state, teleological_level, developmental_stage, confidence, source,
          parent_ids, agent_path, created_at, updated_at, valid_from, valid_to,
          helpful_count, retrieval_count, agent_id,
-         synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id
+         synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id,
+         realm_placement, verticality_json, collectivity, nesting_sub, nesting_sup
          FROM nodes WHERE id = ?1",
     )?;
 
@@ -453,6 +471,17 @@ pub fn update_node(
             "tetra_ul" | "tetra_ur" | "tetra_ll" | "tetra_lr" => {
                 set_clauses.push(format!("{key} = ?{idx}"));
                 param_values.push(Box::new(value.as_i64().map(|v| v as i32)));
+                idx += 1;
+            }
+            // Phase 7: V/C/R/N coordinate fields
+            "realm_placement" | "verticality_json" | "collectivity" => {
+                set_clauses.push(format!("{key} = ?{idx}"));
+                param_values.push(Box::new(value.as_str().map(|s| s.to_string())));
+                idx += 1;
+            }
+            "nesting_sub" | "nesting_sup" => {
+                set_clauses.push(format!("{key} = ?{idx}"));
+                param_values.push(Box::new(value.as_i64().unwrap_or(0) as i32));
                 idx += 1;
             }
             _ => continue,
@@ -1229,7 +1258,8 @@ pub fn query_nodes(conn: &Connection, query: &NodeQuery) -> TdgResult<Vec<Node>>
          lifecycle_state, teleological_level, developmental_stage, confidence, source,
          parent_ids, agent_path, created_at, updated_at, valid_from, valid_to,
          helpful_count, retrieval_count, agent_id,
-         synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id
+         synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id,
+         realm_placement, verticality_json, collectivity, nesting_sub, nesting_sup
          FROM nodes {where_clause}
          ORDER BY created_at DESC
          LIMIT ?{idx} OFFSET ?{}",
@@ -1271,7 +1301,9 @@ pub fn search(conn: &Connection, query: &str, limit: i64) -> TdgResult<Vec<(Node
                n.confidence, n.source, n.parent_ids, n.agent_path, n.created_at, n.updated_at,
                n.valid_from, n.valid_to, n.helpful_count, n.retrieval_count, n.agent_id,
                n.synthesis_status, n.scale_code, n.tetra_ul, n.tetra_ur, n.tetra_ll, n.tetra_lr,
-               n.octave_id, rank
+               n.octave_id,
+               n.realm_placement, n.verticality_json, n.collectivity, n.nesting_sub, n.nesting_sup,
+               rank
         FROM nodes_fts fts
         JOIN nodes n ON fts.rowid = n.rowid
         WHERE nodes_fts MATCH ?1 AND n.valid_to IS NULL
@@ -1281,7 +1313,7 @@ pub fn search(conn: &Connection, query: &str, limit: i64) -> TdgResult<Vec<(Node
 
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map(params![query, limit], |row| {
-        let rank: f64 = row.get(28)?;
+        let rank: f64 = row.get(33)?;
         let node = row_to_node(row)?;
         Ok((node, rank))
     })?;
@@ -1298,7 +1330,8 @@ pub fn search(conn: &Connection, query: &str, limit: i64) -> TdgResult<Vec<(Node
                    drives_json, lifecycle_state, teleological_level, developmental_stage,
                    confidence, source, parent_ids, agent_path, created_at, updated_at,
                    valid_from, valid_to, helpful_count, retrieval_count, agent_id,
-                   synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id
+                   synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id,
+         realm_placement, verticality_json, collectivity, nesting_sub, nesting_sup
             FROM nodes
             WHERE valid_to IS NULL AND (name LIKE ?1 OR description LIKE ?2)
             ORDER BY created_at DESC
@@ -1551,6 +1584,12 @@ pub(crate) fn row_to_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<Node> {
         tetra_ll: row.get::<_, Option<i32>>(25)?,
         tetra_lr: row.get::<_, Option<i32>>(26)?,
         octave_id: row.get::<_, Option<String>>(27)?,
+        // Phase 7: V/C/R/N coordinate fields (indices 28-32)
+        realm_placement: row.get::<_, Option<String>>(28)?,
+        verticality_json: row.get::<_, Option<String>>(29)?,
+        collectivity: row.get::<_, Option<String>>(30)?,
+        nesting_sub: row.get::<_, i32>(31).unwrap_or(0),
+        nesting_sup: row.get::<_, i32>(32).unwrap_or(0),
     })
 }
 
@@ -1574,6 +1613,20 @@ fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<Edge> {
         updated_at: row.get(9)?,
         agent_id: row.get(10)?,
     })
+}
+
+/// Infer realm placement from node_type (Phase 7).
+/// Returns "gross", "subtle", or "causal", or None if no clear inference.
+fn infer_realm_placement(node_type: &str) -> Option<&'static str> {
+    match node_type {
+        "observation" | "event" | "artifact" | "action" | "people" | "being" |
+        "communication" | "project" => Some("gross"),
+        "skill" | "capability" | "hypothesis" | "synthesis" | "insight" |
+        "discovery" | "question" | "constraint" | "narrative" | "bond" |
+        "trajectory" => Some("subtle"),
+        "telos" | "value" => Some("causal"),
+        _ => None,
+    }
 }
 
 /// Compute agent_path from parent_ids.

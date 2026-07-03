@@ -168,11 +168,60 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     conn.execute_batch(MIGRATE_RESONANCE_GRAPH)?;
 
     // Phase 12: Greater cycle state (Phase 4 of refactor).
-    // - greater_cycle_json column on nodes (stores S·T·G·Ch state)
     conn.execute_batch(
         "ALTER TABLE nodes ADD COLUMN greater_cycle_json TEXT",
     )
     .ok();
+
+    // Phase 13: V/C/R/N coordinate system (audit Phase 7).
+    // - realm_placement: "gross" | "subtle" | "causal"
+    // - verticality_json: {"octave": N, "density": D, "sub_density": S}
+    // - collectivity: "individual" | "collective" | "universal"
+    // - nesting_sub, nesting_sup: directional exploration depth
+    for (table, column, typedef) in &[
+        ("nodes", "realm_placement", "TEXT"),
+        ("nodes", "verticality_json", "TEXT"),
+        ("nodes", "collectivity", "TEXT"),
+        ("nodes", "nesting_sub", "INTEGER DEFAULT 0"),
+        ("nodes", "nesting_sup", "INTEGER DEFAULT 0"),
+    ] {
+        let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {typedef}");
+        match conn.execute_batch(&sql) {
+            Ok(()) => {}
+            Err(rusqlite::Error::ExecuteReturnedResults) => {}
+            Err(_) => { /* column already exists */ }
+        }
+    }
+
+    // Backfill realm_placement for existing nodes based on node_type inference.
+    for (node_type, realm) in &[
+        ("observation", "gross"),
+        ("event", "gross"),
+        ("artifact", "gross"),
+        ("action", "gross"),
+        ("people", "gross"),
+        ("being", "gross"),
+        ("communication", "gross"),
+        ("skill", "subtle"),
+        ("capability", "subtle"),
+        ("hypothesis", "subtle"),
+        ("synthesis", "subtle"),
+        ("insight", "subtle"),
+        ("discovery", "subtle"),
+        ("question", "subtle"),
+        ("constraint", "subtle"),
+        ("narrative", "subtle"),
+        ("telos", "causal"),
+        ("value", "causal"),
+        ("bond", "subtle"),
+        ("project", "gross"),
+        ("trajectory", "subtle"),
+    ] {
+        let sql = format!(
+            "UPDATE nodes SET realm_placement = '{realm}' WHERE node_type = '{node_type}' AND realm_placement IS NULL"
+        );
+        conn.execute_batch(&sql).ok();
+    }
 
     Ok(())
 }
@@ -237,7 +286,13 @@ CREATE TABLE IF NOT EXISTS nodes (
     attractor_dirty INTEGER DEFAULT 0,
     health_dirty INTEGER DEFAULT 0,
     -- Phase 4: Greater cycle state (S·T·G·Ch)
-    greater_cycle_json TEXT
+    greater_cycle_json TEXT,
+    -- Phase 7: V/C/R/N coordinate system
+    realm_placement TEXT,
+    verticality_json TEXT,
+    collectivity TEXT,
+    nesting_sub INTEGER DEFAULT 0,
+    nesting_sup INTEGER DEFAULT 0
 );
 
 -- Edges table

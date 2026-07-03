@@ -367,17 +367,52 @@ fn gate4_cosmological_scope(
         .filter_map(|r| r.ok())
         .collect();
 
-    if scales.len() >= 2 {
+    // Phase 11: Also check realm diversity (Gross/Subtle/Causal).
+    // An invariant citing 2 scales but only 1 realm is not cosmologically
+    // universal — it's grounded in one dimensional layer.
+    let mut realm_stmt = conn.prepare(
+        "SELECT DISTINCT n.realm_placement
+         FROM edges e
+         JOIN nodes n ON n.id = e.target_id
+         WHERE e.source_id = ?1
+           AND e.edge_type = 'EVIDENCES'
+           AND e.valid_to IS NULL
+           AND n.realm_placement IS NOT NULL",
+    )?;
+
+    let realms: Vec<String> = realm_stmt
+        .query_map(rusqlite::params![synthesis_id], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if scales.len() >= 2 && realms.len() >= 2 {
         Ok(GateResult::passed(
             "cosmological_scope",
-            &format!("Invariant cites {} scales: {}", scales.len(), scales.join(", ")),
+            &format!(
+                "Invariant cites {} scales ({}) and {} realms ({}) — cosmologically grounded",
+                scales.len(),
+                scales.join(", "),
+                realms.len(),
+                realms.join(", ")
+            ),
+        ))
+    } else if scales.len() >= 2 {
+        Ok(GateResult::passed(
+            "cosmological_scope",
+            &format!(
+                "Invariant cites {} scales but only {} realm(s) ({}) — passes scale check, but lacks realm diversity",
+                scales.len(),
+                realms.len(),
+                realms.join(", ")
+            ),
         ))
     } else {
         Ok(GateResult::blocked(
             "cosmological_scope",
             &format!(
-                "Invariant claim cites only {} scale(s). Must cite ≥2 scales (atom AND galaxy). Relabel as decoration.",
-                scales.len()
+                "Invariant claim cites only {} scale(s) and {} realm(s). Must cite ≥2 scales AND ≥2 realms. Relabel as decoration.",
+                scales.len(),
+                realms.len()
             ),
         ))
     }

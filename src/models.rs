@@ -184,7 +184,7 @@ pub struct Node {
     /// Organisational scale code (e.g. "S11"). None = unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_code: Option<String>,
-    /// Tetra-Axes UL coordinate (1-19). None = unassigned.
+    /// Tetra-Axes UL coordinate (1-19). DEPRECATED — use verticality_json + collectivity + realm_placement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tetra_ul: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -196,6 +196,26 @@ pub struct Node {
     /// Octave identifier ("N", "N-1", ...). None = current octave.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub octave_id: Option<String>,
+    // ─── Phase 7: V/C/R/N coordinate system ──────────────────────────────────
+    /// Realm placement: "gross" | "subtle" | "causal". None = unassigned.
+    /// Source: HoloOS 08.8.3 — within-octave dimensional architecture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realm_placement: Option<String>,
+    /// Verticality JSON: {"octave": N, "density": D, "sub_density": S}.
+    /// Source: HoloOS 08.8.1 — consciousness-condensation altitude.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verticality_json: Option<String>,
+    /// Collectivity: "individual" | "collective" | "universal". None = unassigned.
+    /// Source: HoloOS 08.8.2 — Individual ↔ Collective gradient.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collectivity: Option<String>,
+    /// Nesting Sub depth (how many density-layers DOWN to explore). 0 = none.
+    /// Source: HoloOS 08.8.4 — directional exploration parameter.
+    #[serde(default)]
+    pub nesting_sub: i32,
+    /// Nesting Sup depth (how many density-layers UP to explore). 0 = none.
+    #[serde(default)]
+    pub nesting_sup: i32,
 }
 
 fn default_synthesis_status() -> String {
@@ -291,6 +311,12 @@ pub struct NewNode {
     pub tetra_ll: Option<i32>,
     pub tetra_lr: Option<i32>,
     pub octave_id: Option<String>,
+    // ─── Phase 7: V/C/R/N coordinate system (all optional, backward-compatible) ───
+    pub realm_placement: Option<String>,
+    pub verticality_json: Option<String>,
+    pub collectivity: Option<String>,
+    pub nesting_sub: Option<i32>,
+    pub nesting_sup: Option<i32>,
 }
 
 /// Edge creation parameters.

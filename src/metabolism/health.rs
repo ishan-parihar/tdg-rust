@@ -85,8 +85,10 @@ pub enum HealthState {
     SubOptimal,
     /// G_z < 30 — severe boundary distortion.
     Collapse,
-    /// P_z < 10 — no tension between what-is and what-could-be. The pathology.
-    Sinkhole,
+    /// P_z < 10 — depolarized: no tension between what-is and what-could-be.
+    /// (formerly Sinkhole — renamed per HoloOS universal semantics protocol)
+    #[serde(alias = "sinkhole", alias = "Sinkhole")]
+    Depolarized,
 }
 
 impl HealthState {
@@ -95,7 +97,7 @@ impl HealthState {
             Self::Optimal => "optimal",
             Self::SubOptimal => "sub-optimal",
             Self::Collapse => "collapse",
-            Self::Sinkhole => "sinkhole",
+            Self::Depolarized => "depolarized",
         }
     }
 }
@@ -174,7 +176,7 @@ impl Health {
         let state = if g_z < 30.0 {
             HealthState::Collapse
         } else if p_z < 10.0 {
-            HealthState::Sinkhole
+            HealthState::Depolarized
         } else if g_z > 70.0 && p_z > 50.0 {
             HealthState::Optimal
         } else {
@@ -477,7 +479,7 @@ mod tests {
 
         // Neutral → θ = π/2 → cos = 0 → P_z = 0 (sinkhole)
         assert!(health.p_z < 1.0, "P_z should be ~0 (sinkhole), got {}", health.p_z);
-        assert_eq!(health.state, HealthState::Sinkhole);
+        assert_eq!(health.state, HealthState::Depolarized);
     }
 
     #[test]
@@ -502,7 +504,7 @@ mod tests {
 
         // Should not be collapse or sinkhole
         assert_ne!(health.state, HealthState::Collapse);
-        assert_ne!(health.state, HealthState::Sinkhole);
+        assert_ne!(health.state, HealthState::Depolarized);
     }
 
     #[test]

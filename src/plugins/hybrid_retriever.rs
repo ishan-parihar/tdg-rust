@@ -348,7 +348,9 @@ impl HybridRetriever {
                    n.confidence, n.source, n.parent_ids, n.agent_path, n.created_at, n.updated_at,
                    n.valid_from, n.valid_to, n.helpful_count, n.retrieval_count, n.agent_id,
                    n.synthesis_status, n.scale_code, n.tetra_ul, n.tetra_ur, n.tetra_ll,
-                   n.tetra_lr, n.octave_id, fts.rank
+                   n.tetra_lr, n.octave_id,
+                   n.realm_placement, n.verticality_json, n.collectivity, n.nesting_sub, n.nesting_sup,
+                   fts.rank
             FROM nodes_fts fts
             JOIN nodes n ON fts.rowid = n.rowid
             WHERE nodes_fts MATCH ?1 AND n.valid_to IS NULL
@@ -363,7 +365,7 @@ impl HybridRetriever {
 
         let rows = stmt.query_map(params![query, limit], |row| {
             let node = crate::db::crud::row_to_node(row)?;
-            let rank: f64 = row.get(28)?;
+            let rank: f64 = row.get(33)?;
             Ok((node, rank))
         })?;
         let results: Vec<(Node, f64)> = rows.flatten().collect();
@@ -397,7 +399,8 @@ impl HybridRetriever {
                    drives_json, lifecycle_state, teleological_level, developmental_stage,
                    confidence, source, parent_ids, agent_path, created_at, updated_at,
                    valid_from, valid_to, helpful_count, retrieval_count, agent_id,
-                   synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id
+                   synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id,
+         realm_placement, verticality_json, collectivity, nesting_sub, nesting_sup
             FROM nodes
             WHERE valid_to IS NULL AND ({})
             ORDER BY confidence DESC, created_at DESC
@@ -425,7 +428,8 @@ impl HybridRetriever {
                  drives_json, lifecycle_state, teleological_level, developmental_stage,
                  confidence, source, parent_ids, agent_path, created_at, updated_at,
                  valid_from, valid_to, helpful_count, retrieval_count, agent_id,
-                 synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id
+                 synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id,
+         realm_placement, verticality_json, collectivity, nesting_sub, nesting_sup
                  FROM nodes WHERE valid_to IS NULL AND node_type = ?1
                  ORDER BY confidence DESC LIMIT ?2"
                     .to_string(),
@@ -436,7 +440,8 @@ impl HybridRetriever {
                  drives_json, lifecycle_state, teleological_level, developmental_stage,
                  confidence, source, parent_ids, agent_path, created_at, updated_at,
                  valid_from, valid_to, helpful_count, retrieval_count, agent_id,
-                 synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id
+                 synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id,
+         realm_placement, verticality_json, collectivity, nesting_sub, nesting_sup
                  FROM nodes WHERE valid_to IS NULL
                  ORDER BY confidence DESC LIMIT ?1"
                     .to_string(),

@@ -130,32 +130,54 @@ impl ReservoirState {
     }
 }
 
-/// The 4 shadows — digestive inefficiencies (2×2 matrix).
+/// The 4 metabolic inefficiencies — digestive pattern deviations (2×2 matrix).
+///
+/// Phase 8: Renamed from D3-human-experiential terms ("addiction", "allergy",
+/// "shadow") to holonically-universal terms per HoloOS Epistemology doc 6.
+/// Old names kept as aliases for backward-compatible JSON serialization.
 ///
 /// | | Hyper-ingestion | Hypo-ingestion |
 /// |---|---|---|
-/// | Matrix (current-state) | DarkAddiction (rigid boundary) | DarkAllergy (fragile) |
-/// | Potentiator (latent) | GoldenAddiction (premature expansion) | GoldenAllergy (refuses emergence) |
+/// | Matrix (current-state) | MatrixHyperIngestion | MatrixHypoIngestion |
+/// | Potentiator (latent) | PotentiatorHyperIngestion | PotentiatorHypoIngestion |
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Shadow {
     /// Matrix hyper-ingestion: excess Catalyst fixated without metabolism → rigid.
-    DarkAddiction,
+    /// (formerly DarkAddiction)
+    #[serde(alias = "dark-addiction", alias = "DarkAddiction")]
+    MatrixHyperIngestion,
     /// Matrix hypo-ingestion: too little Catalyst → fragile configuration.
-    DarkAllergy,
+    /// (formerly DarkAllergy)
+    #[serde(alias = "dark-allergy", alias = "DarkAllergy")]
+    MatrixHypoIngestion,
     /// Potentiator hyper-ingestion: ungrounded Experience floods → premature.
-    GoldenAddiction,
+    /// (formerly GoldenAddiction)
+    #[serde(alias = "golden-addiction", alias = "GoldenAddiction")]
+    PotentiatorHyperIngestion,
     /// Potentiator hypo-ingestion: too little Experience → refuses emergence.
-    GoldenAllergy,
+    /// (formerly GoldenAllergy)
+    #[serde(alias = "golden-allergy", alias = "GoldenAllergy")]
+    PotentiatorHypoIngestion,
 }
 
 impl Shadow {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::DarkAddiction => "dark-addiction",
-            Self::DarkAllergy => "dark-allergy",
-            Self::GoldenAddiction => "golden-addiction",
-            Self::GoldenAllergy => "golden-allergy",
+            Self::MatrixHyperIngestion => "matrix-hyper-ingestion",
+            Self::MatrixHypoIngestion => "matrix-hypo-ingestion",
+            Self::PotentiatorHyperIngestion => "potentiator-hyper-ingestion",
+            Self::PotentiatorHypoIngestion => "potentiator-hypo-ingestion",
+        }
+    }
+
+    /// Backward-compatible alias (old D3-human-experiential name).
+    pub fn legacy_name(&self) -> &'static str {
+        match self {
+            Self::MatrixHyperIngestion => "dark-addiction",
+            Self::MatrixHypoIngestion => "dark-allergy",
+            Self::PotentiatorHyperIngestion => "golden-addiction",
+            Self::PotentiatorHypoIngestion => "golden-allergy",
         }
     }
 }
@@ -436,9 +458,9 @@ fn diagnose_shadows(
 
     // Matrix shadows
     state.matrix.shadow = if catalyst_ratio > thresholds.dark_addiction_ratio {
-        Some(Shadow::DarkAddiction)
+        Some(Shadow::MatrixHyperIngestion)
     } else if catalyst_ratio < thresholds.dark_allergy_ratio && state.catalyst_pending > 0.0 {
-        Some(Shadow::DarkAllergy)
+        Some(Shadow::MatrixHypoIngestion)
     } else {
         None
     };
@@ -446,11 +468,11 @@ fn diagnose_shadows(
     // Potentiator shadows (based on experience)
     state.potentiator.shadow = if state.experience_accumulated > thresholds.golden_addiction_threshold
     {
-        Some(Shadow::GoldenAddiction)
+        Some(Shadow::PotentiatorHyperIngestion)
     } else if state.experience_accumulated < thresholds.golden_allergy_threshold
         && state.cycle_count > 0
     {
-        Some(Shadow::GoldenAllergy)
+        Some(Shadow::PotentiatorHypoIngestion)
     } else {
         None
     };
@@ -468,13 +490,13 @@ fn diagnose_shadows(
 /// - No shadow → balanced (0)
 fn update_reservoir_signs(state: &mut LesserCycleState) {
     state.matrix.sign = match &state.matrix.shadow {
-        Some(Shadow::DarkAddiction) => 1,
-        Some(Shadow::DarkAllergy) => -1,
+        Some(Shadow::MatrixHyperIngestion) => 1,
+        Some(Shadow::MatrixHypoIngestion) => -1,
         _ => 0,
     };
     state.potentiator.sign = match &state.potentiator.shadow {
-        Some(Shadow::GoldenAddiction) => 1,
-        Some(Shadow::GoldenAllergy) => -1,
+        Some(Shadow::PotentiatorHyperIngestion) => 1,
+        Some(Shadow::PotentiatorHypoIngestion) => -1,
         _ => 0,
     };
 }
@@ -503,6 +525,41 @@ pub fn generate_catalyst(
     // Catalyst = type_weight × edge_weight × (0.5 + complementarity)
     // The 0.5 base ensures even non-complementary interactions generate some catalyst
     type_weight * edge_weight * (0.5 + complementarity * 0.5)
+}
+
+/// Phase 11: Generate catalyst with realm-awareness.
+///
+/// Cross-realm interactions (e.g., a Causal principle manifesting in Gross
+/// reality) generate MORE catalyst than same-realm interactions, because they
+/// represent a bigger perturbation — a dimensional boundary crossing.
+///
+/// Realm distance multiplier:
+/// - Same realm: 1.0x (normal catalyst)
+/// - Adjacent realms (Gross↔Subtle, Subtle↔Causal): 1.5x
+/// - Distant realms (Gross↔Causal): 2.0x
+pub fn generate_catalyst_realm_aware(
+    edge_type: &str,
+    edge_weight: f64,
+    source_drives: &serde_json::Value,
+    target_drives: &serde_json::Value,
+    source_realm: Option<&str>,
+    target_realm: Option<&str>,
+) -> f64 {
+    let base_catalyst = generate_catalyst(edge_type, edge_weight, source_drives, target_drives);
+    let realm_multiplier = realm_distance_multiplier(source_realm, target_realm);
+    base_catalyst * realm_multiplier
+}
+
+/// Compute the realm distance multiplier for catalyst generation.
+pub fn realm_distance_multiplier(source: Option<&str>, target: Option<&str>) -> f64 {
+    match (source, target) {
+        (None, _) | (_, None) => 1.0, // no realm info → normal catalyst
+        (Some(s), Some(t)) if s == t => 1.0, // same realm → normal
+        (Some("gross"), Some("subtle")) | (Some("subtle"), Some("gross")) => 1.5,
+        (Some("subtle"), Some("causal")) | (Some("causal"), Some("subtle")) => 1.5,
+        (Some("gross"), Some("causal")) | (Some("causal"), Some("gross")) => 2.0,
+        _ => 1.0, // unknown realm → normal
+    }
 }
 
 /// Get the catalyst weight for an edge type.
@@ -764,7 +821,7 @@ mod tests {
         let r = tick(&mut state, 0.0, &thresholds);
 
         // catalyst_ratio = 10.0 / 0.5 = 20.0 > dark_addiction_ratio (2.0)
-        assert_eq!(state.matrix.shadow, Some(Shadow::DarkAddiction));
+        assert_eq!(state.matrix.shadow, Some(Shadow::MatrixHyperIngestion));
         assert_eq!(state.matrix.sign, 1); // donor
     }
 
@@ -782,7 +839,7 @@ mod tests {
         let r = tick(&mut state, 0.0, &thresholds);
 
         // catalyst_ratio = 0.02 / 0.5 = 0.04 < dark_allergy_ratio (0.1)
-        assert_eq!(state.matrix.shadow, Some(Shadow::DarkAllergy));
+        assert_eq!(state.matrix.shadow, Some(Shadow::MatrixHypoIngestion));
         assert_eq!(state.matrix.sign, -1); // acceptor
     }
 
@@ -816,7 +873,7 @@ mod tests {
                 magnitude: 0.7,
                 sign: 1,
                 eta: 0.6,
-                shadow: Some(Shadow::DarkAddiction),
+                shadow: Some(Shadow::MatrixHyperIngestion),
             },
             potentiator: ReservoirState::balanced(),
             catalyst_pending: 0.5,

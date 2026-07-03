@@ -101,6 +101,51 @@ impl<'a> Holon<'a> {
         self.node.octave_id.as_deref()
     }
 
+    // ─── Phase 7: V/C/R/N coordinate system ─────────────────────────────────
+
+    /// Realm placement: "gross" | "subtle" | "causal" (within-octave dimensional axis).
+    pub fn realm_placement(&self) -> Option<&str> {
+        self.node.realm_placement.as_deref()
+    }
+
+    /// Collectivity: "individual" | "collective" | "universal".
+    pub fn collectivity(&self) -> Option<&str> {
+        self.node.collectivity.as_deref()
+    }
+
+    /// Verticality JSON (parsed): {"octave": N, "density": D, "sub_density": S}.
+    pub fn verticality(&self) -> Option<serde_json::Value> {
+        self.node
+            .verticality_json
+            .as_ref()
+            .and_then(|s| serde_json::from_str(s).ok())
+    }
+
+    /// Nesting Sub depth (how many density-layers DOWN to explore).
+    pub fn nesting_sub(&self) -> i32 {
+        self.node.nesting_sub
+    }
+
+    /// Nesting Sup depth (how many density-layers UP to explore).
+    pub fn nesting_sup(&self) -> i32 {
+        self.node.nesting_sup
+    }
+
+    /// Whether this holon operates in the Gross realm (physical manifestation).
+    pub fn is_gross(&self) -> bool {
+        self.realm_placement() == Some("gross")
+    }
+
+    /// Whether this holon operates in the Subtle realm (archetypal form).
+    pub fn is_subtle(&self) -> bool {
+        self.realm_placement() == Some("subtle")
+    }
+
+    /// Whether this holon operates in the Causal realm (formless potentiality).
+    pub fn is_causal(&self) -> bool {
+        self.realm_placement() == Some("causal")
+    }
+
     // ─── Compositional Algebra (whole/part) ────────────────────────────────
 
     /// The canonical parent (first in `parent_ids`).
@@ -149,7 +194,8 @@ impl<'a> Holon<'a> {
              drives_json, lifecycle_state, teleological_level, developmental_stage,
              confidence, source, parent_ids, agent_path, created_at, updated_at,
              valid_from, valid_to, helpful_count, retrieval_count, agent_id,
-             synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id
+             synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id,
+         realm_placement, verticality_json, collectivity, nesting_sub, nesting_sup
              FROM nodes
              WHERE valid_to IS NULL AND parent_ids LIKE ?1
              ORDER BY created_at DESC",

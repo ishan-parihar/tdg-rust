@@ -452,7 +452,7 @@ fn execute_recompute_health(conn: &Connection, job: &PendingJob) -> TdgResult<()
     let health = crate::metabolism::health::Health::compute(&lesser, &af);
 
     // Log interesting state transitions
-    if health.state == crate::metabolism::health::HealthState::Sinkhole {
+    if health.state == crate::metabolism::health::HealthState::Depolarized {
         tracing::info!(
             "Holon {} in SINKHOLE state: G_z={:.1}, P_z={:.1} — depolarized, needs commitment",
             job.holon_id,

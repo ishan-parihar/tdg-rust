@@ -242,11 +242,16 @@ class TDGMemoryProvider(MemoryProvider):
         logger.info("TDG-Rust memory provider initialized (session=%s)", session_id)
 
     def system_prompt_block(self) -> str:
-        """Return terrain context for system prompt."""
+        """Return terrain context for system prompt.
+
+        Phase 10: Now uses tdg_context (which includes the Phase 9 metabolic
+        summary) as the primary context source. Falls back to tdg_fetch_context
+        for the most recent observation if available.
+        """
         if not self._client:
             return ""
 
-        # tdg_context returns markdown text, not JSON — use raw call
+        # tdg_context returns markdown text (includes metabolic summary from Phase 9)
         try:
             result = self._client.call_tool("tdg_context", {})
         except Exception as e:
@@ -268,7 +273,11 @@ class TDGMemoryProvider(MemoryProvider):
         return ""
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
-        """Recall relevant context for the upcoming turn."""
+        """Recall relevant context for the upcoming turn.
+
+        Phase 10: Now also fetches resonance partners for top search results,
+        giving the agent bonding-aware recall (not just text similarity).
+        """
         if not self._client:
             return ""
 
@@ -291,7 +300,25 @@ class TDGMemoryProvider(MemoryProvider):
             name = node.get("name", "")[:100]
             node_type = node.get("node_type", "unknown")
             score = node.get("score", 0)
+            node_id = node.get("id", "")
             lines.append(f"[{node_type}] {name} (relevance: {score:.2f})")
+
+            # Phase 10: Fetch resonance partners for this node
+            if node_id:
+                try:
+                    res_result = self._client.call_tool("tdg_resonance_partners", {
+                        "node_id": node_id,
+                        "limit": 3,
+                    })
+                    if isinstance(res_result, dict) and "partners" in res_result:
+                        partners = res_result.get("partners", [])
+                        for p in partners[:2]:
+                            p_score = p.get("resonance", 0)
+                            p_id = p.get("partner_id", "")
+                            if p_score > 0.3:
+                                lines.append(f"  ↳ resonates with {p_id[:12]}... (R={p_score:.2f})")
+                except Exception:
+                    pass  # resonance not available yet — skip silently
 
         return "TDG Memory Recall:\n" + "\n".join(lines)
 
@@ -350,6 +377,25 @@ class TDGMemoryProvider(MemoryProvider):
         }
 
         mcp_tool = tool_map.get(tool_name, tool_name)
+
+        # Phase 10: For tdg_memory_status, also fetch metabolism queue depth
+        if mcp_tool == "tdg_graph_stats":
+            result = self._client.call_tool(mcp_tool, arguments)
+            # Also get metabolism status (best-effort, non-blocking)
+            try:
+                metab_result = self._client.call_tool("tdg_metabolism_status", {
+                    "include_pending": False,
+                    "include_failed": False,
+                })
+                if isinstance(metab_result, dict):
+                    result["metabolism"] = {
+                        "pending": metab_result.get("pending_count", 0),
+                        "failed": metab_result.get("failed_count", 0),
+                    }
+            except Exception:
+                pass  # metabolism not available — skip silently
+            return json.dumps(result)
+
         result = self._client.call_tool(mcp_tool, arguments)
         return json.dumps(result)
 

@@ -290,8 +290,8 @@ pub fn compute(
     // Magnitude from Matrix reservoir magnitude.
     // Sign from Matrix shadow: addiction → +1 (donor), allergy → -1 (acceptor).
     let a_m_sign = match &lesser.matrix.shadow {
-        Some(Shadow::DarkAddiction) => 1,
-        Some(Shadow::DarkAllergy) => -1,
+        Some(Shadow::MatrixHyperIngestion) => 1,
+        Some(Shadow::MatrixHypoIngestion) => -1,
         _ => 0,
     };
     let a_m = ReservoirAttractor::new(lesser.matrix.magnitude, a_m_sign);
@@ -300,8 +300,8 @@ pub fn compute(
     // Magnitude from Potentiator reservoir magnitude.
     // Sign from Potentiator shadow: golden-addiction → +1, golden-allergy → -1.
     let a_p_sign = match &lesser.potentiator.shadow {
-        Some(Shadow::GoldenAddiction) => 1,
-        Some(Shadow::GoldenAllergy) => -1,
+        Some(Shadow::PotentiatorHyperIngestion) => 1,
+        Some(Shadow::PotentiatorHypoIngestion) => -1,
         _ => 0,
     };
     let a_p = ReservoirAttractor::new(lesser.potentiator.magnitude, a_p_sign);
@@ -524,7 +524,7 @@ mod tests {
     fn compute_basic_attractor_field() {
         let mut lesser = LesserCycleState::dormant();
         lesser.matrix.magnitude = 0.7;
-        lesser.matrix.shadow = Some(Shadow::DarkAddiction); // → donor
+        lesser.matrix.shadow = Some(Shadow::MatrixHyperIngestion); // → donor
         lesser.potentiator.magnitude = 0.4;
         lesser.catalyst_pending = 1.0;
         lesser.experience_accumulated = 2.0;
