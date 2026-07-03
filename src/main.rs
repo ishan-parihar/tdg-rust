@@ -527,11 +527,17 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or(15 * 60);
 
             // Phase 15: Resonance graph full rebuild interval (default 4 hours).
-            // Corrects incremental drift in the resonance_graph table.
             let resonance_rebuild_interval_secs = std::env::var("TDG_RESONANCE_REBUILD_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(4 * 60 * 60);
+
+            // Phase 16: Synaptic decay (LTD) interval (default 1 hour).
+            // Decays co_activation_count for edges that haven't fired recently.
+            let synaptic_decay_interval_secs = std::env::var("TDG_SYNAPTIC_DECAY_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(60 * 60);
 
             // Clone the pool Arc for the metabolism worker (before moving into maintenance spawn)
             let metabolism_pool = maintenance_pool.clone();
@@ -551,12 +557,15 @@ fn main() -> anyhow::Result<()> {
                     tokio::time::interval(mind_integration_interval);
                 let mut resonance_rebuild_ticker =
                     tokio::time::interval(std::time::Duration::from_secs(resonance_rebuild_interval_secs));
+                let mut synaptic_decay_ticker =
+                    tokio::time::interval(std::time::Duration::from_secs(synaptic_decay_interval_secs));
                 // Skip the first immediate tick (we don't want to run maintenance
                 // during startup — let the server stabilize first).
                 self_manager_ticker.tick().await;
                 health_check_ticker.tick().await;
                 greater_cycle_ticker.tick().await;
                 mind_integration_ticker.tick().await;
+                synaptic_decay_ticker.tick().await;
                 resonance_rebuild_ticker.tick().await;
                 loop {
                     tokio::select! {
@@ -746,6 +755,47 @@ fn main() -> anyhow::Result<()> {
                                         "Resonance graph rebuilt: {} holons processed",
                                         rebuilt
                                     );
+                                    pool.release_connection(conn);
+                                }
+                            }).await.ok();
+                        }
+                        _ = synaptic_decay_ticker.tick() => {
+                            // Phase 16: Synaptic decay (LTD) — "use it or lose it".
+                            // Decays co_activation_count for edges that haven't fired recently.
+                            // Soft-deletes edges with zero co-activation AND low weight.
+                            let pool = maintenance_pool.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if let Ok(conn) = pool.get_connection() {
+                                    // LTD: decay co_activation_count by 50% for edges
+                                    // not co-activated in the last 7 days
+                                    let cutoff = chrono::Utc::now() - chrono::Duration::days(7);
+                                    let cutoff_str = cutoff.to_rfc3339();
+                                    let decayed = conn.execute(
+                                        "UPDATE edges SET co_activation_count = co_activation_count / 2
+                                         WHERE valid_to IS NULL
+                                           AND co_activation_count > 0
+                                           AND (last_co_activation IS NULL OR last_co_activation < ?1)",
+                                        rusqlite::params![cutoff_str],
+                                    ).unwrap_or(0);
+
+                                    // Pruning: soft-delete edges with zero co-activation
+                                    // AND weight < 0.3 (truly unused weak edges)
+                                    let now = chrono::Utc::now().to_rfc3339();
+                                    let pruned = conn.execute(
+                                        "UPDATE edges SET valid_to = ?1
+                                         WHERE valid_to IS NULL
+                                           AND co_activation_count = 0
+                                           AND weight < 0.3
+                                           AND created_at < ?2",
+                                        rusqlite::params![now, cutoff_str],
+                                    ).unwrap_or(0);
+
+                                    if decayed > 0 || pruned > 0 {
+                                        tracing::info!(
+                                            "Synaptic decay (LTD): {} edges decayed, {} pruned",
+                                            decayed, pruned
+                                        );
+                                    }
                                     pool.release_connection(conn);
                                 }
                             }).await.ok();

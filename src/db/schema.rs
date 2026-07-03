@@ -223,10 +223,24 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
         conn.execute_batch(&sql).ok();
     }
 
+    // Phase 16: Hebbian edge-weight learning — co-activation tracking.
+    // - co_activation_count: how many times source+target co-activated (LTP signal)
+    // - last_co_activation: timestamp of last co-activation (for LTD decay)
+    for (table, column, typedef) in &[
+        ("edges", "co_activation_count", "INTEGER DEFAULT 0"),
+        ("edges", "last_co_activation", "TEXT"),
+        ("nodes", "salience_tag", "TEXT DEFAULT 'normal'"),
+    ] {
+        let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {typedef}");
+        match conn.execute_batch(&sql) {
+            Ok(()) => {}
+            Err(rusqlite::Error::ExecuteReturnedResults) => {}
+            Err(_) => { /* column already exists */ }
+        }
+    }
+
     Ok(())
 }
-
-/// Backup database to a file using SQLite's online backup API.
 pub fn backup_database(conn: &Connection, backup_path: &std::path::Path) -> TdgResult<()> {
     // Ensure parent directory exists
     if let Some(parent) = backup_path.parent() {

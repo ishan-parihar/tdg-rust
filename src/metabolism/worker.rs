@@ -591,6 +591,21 @@ fn execute_lesser_tick(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
     let thresholds = CycleThresholds::default();
     let result = lesser_cycle::tick(&mut state, incoming_catalyst, &thresholds);
 
+    // Phase 16: Hebbian co-activation tracking (LTP signal).
+    // When a holon processes catalyst from an edge, increment the co-activation
+    // count on that edge. This is the "fire together" signal.
+    if incoming_catalyst > 0.0 {
+        if let Some(source_holon) = job.payload.get("source_holon").and_then(|v| v.as_str()) {
+            let now = crate::db::crud::now_iso();
+            let _ = conn.execute(
+                "UPDATE edges SET co_activation_count = co_activation_count + 1, last_co_activation = ?1
+                 WHERE ((source_id = ?2 AND target_id = ?3) OR (source_id = ?3 AND target_id = ?2))
+                 AND valid_to IS NULL",
+                rusqlite::params![now, source_holon, job.holon_id],
+            );
+        }
+    }
+
     // Save the updated state
     lesser_cycle::save_state(conn, &job.holon_id, &state)?;
 

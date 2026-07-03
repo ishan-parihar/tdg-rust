@@ -733,13 +733,28 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
     // Check standard direction
     let edges = get_edges(conn, Some(source_id), Some(target_id), None, None, 10)?;
     if let Some(e) = edges.first() {
-        return Ok(edge_flow_rate(&e.edge_type).0);
+        let base_rate = edge_flow_rate(&e.edge_type).0;
+        // Phase 16: Hebbian learned rate — LTP strengthens frequently co-activated edges
+        let co_activation: i64 = conn.query_row(
+            "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
+            rusqlite::params![e.id],
+            |row| row.get(0),
+        ).unwrap_or(0);
+        let learned_rate = base_rate + 0.1 * (1.0 + co_activation as f64).ln();
+        return Ok(learned_rate.min(1.5)); // cap at 1.5x base
     }
 
     // Check reversed direction
     let edges = get_edges(conn, Some(target_id), Some(source_id), None, None, 10)?;
     if let Some(e) = edges.first() {
-        return Ok(edge_flow_rate(&e.edge_type).0);
+        let base_rate = edge_flow_rate(&e.edge_type).0;
+        let co_activation: i64 = conn.query_row(
+            "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
+            rusqlite::params![e.id],
+            |row| row.get(0),
+        ).unwrap_or(0);
+        let learned_rate = base_rate + 0.1 * (1.0 + co_activation as f64).ln();
+        return Ok(learned_rate.min(1.5));
     }
 
     Ok(0.4) // default
