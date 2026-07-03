@@ -1,8 +1,9 @@
-//! MCP Tools — All 36 TDG tools using official rmcp SDK
+//! MCP Tools — All 45 TDG tools using official rmcp SDK
 //!
 //! Uses `#[tool]` and `#[tool_router]` macros for automatic schema generation.
-//! Synthesis helper functions (LLM provider chain, output parsing, pattern
-//! fallback, synthesis persistence) live in `super::synthesis_helpers`.
+//! Helper functions (connection management, error conversion, path validation,
+//! entity upsert, health scoring) live in `super::helpers`.
+//! Synthesis helper functions live in `super::synthesis_helpers`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,231 +20,19 @@ use crate::mind::reflect_engine::ReflectEngine;
 use crate::flow;
 use crate::mind::state::MindStateManager;
 
-type DriveScores = HashMap<String, (Vec<f64>, Vec<f64>, Vec<f64>)>;
 use crate::models::{NewEdge, NewNode, NodeQuery};
 
 use super::MAX_BULK_NODES;
 use super::health::HealthMonitor;
+use super::helpers::{
+    calculate_health_score, get_conn, mcp_err, run_blocking, upsert_entity_and_connect,
+    validate_file_path, DriveScores,
+};
 use super::params::*;
 use super::synthesis_helpers::{
     auto_detect_edge_type, pattern_synthesis, store_synthesis, try_llm_providers,
 };
 use super::trust::TrustStore;
-
-pub(crate) fn calculate_health_score(
-    node_count: i64,
-    edge_count: i64,
-    type_count: i64,
-    embedding_count: i64,
-    fts_count: i64,
-) -> f64 {
-    let node_score = if node_count > 0 { 1.0 } else { 0.0 };
-    let edge_score = (edge_count as f64 / node_count.max(1) as f64).min(1.0);
-    // Type diversity: normalize against the known node-type vocabulary (~20 types)
-    // rather than against node_count. The previous formula
-    // (type_count / node_count) gave ~0.0024 for a 5000-node graph with 12
-    // types, contributing effectively zero to the health score.
-    let type_score = (type_count as f64 / 20.0).min(1.0);
-    let embedding_score = if node_count > 0 {
-        (embedding_count as f64 / node_count as f64).min(1.0)
-    } else {
-        1.0
-    };
-    let fts_score = if node_count > 0 {
-        (fts_count as f64 / node_count as f64).min(1.0)
-    } else {
-        1.0
-    };
-
-    node_score * 0.35
-        + edge_score * 0.20
-        + type_score * 0.15
-        + embedding_score * 0.20
-        + fts_score * 0.10
-}// ─── Helper to get a connection ──────────────────────────────────────────────
-
-/// RAII guard that borrows a connection from the pool and automatically
-/// releases it back when dropped.
-///
-/// Previously `get_conn` returned a bare `rusqlite::Connection` that was
-/// dropped (closed) at the end of each `run_blocking` closure instead of being
-/// returned to the pool. This meant every tool call opened a fresh connection
-/// (re-running 5 PRAGMAs: WAL, synchronous, foreign_keys, cache_size,
-/// busy_timeout), the pool's `Vec<Connection>` stayed permanently empty, and
-/// the `max_connections` cap was meaningless. With ~29 tool call sites each
-/// running on `spawn_blocking`, this was a significant performance and
-/// correctness issue (no connection reuse, no shared cache).
-///
-/// `ConnGuard` derefs to `rusqlite::Connection` so existing code that does
-/// `let conn = get_conn(&pool)?;` and then passes `&conn` or `&*conn` keeps
-/// working unchanged.
-pub(crate) struct ConnGuard {
-    pool: std::sync::Arc<ConnectionPool>,
-    conn: Option<rusqlite::Connection>,
-}
-
-impl std::ops::Deref for ConnGuard {
-    type Target = rusqlite::Connection;
-    fn deref(&self) -> &Self::Target {
-        self.conn.as_ref().expect("ConnGuard conn already taken")
-    }
-}
-
-impl Drop for ConnGuard {
-    fn drop(&mut self) {
-        if let Some(conn) = self.conn.take() {
-            self.pool.release_connection(conn);
-        }
-    }
-}
-
-/// Get a connection wrapped in an RAII guard that releases it back to the pool
-/// on drop. Call sites do `let pool = self.pool.clone();` (Arc clone) then
-/// `let conn = get_conn(&pool)?;` — the guard keeps the Arc alive until the
-/// connection is returned, even if the surrounding closure is dropped early.
-fn get_conn(pool: &std::sync::Arc<ConnectionPool>) -> Result<ConnGuard, McpError> {
-    let conn = pool
-        .get_connection()
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-    Ok(ConnGuard {
-        pool: std::sync::Arc::clone(pool),
-        conn: Some(conn),
-    })
-}
-
-fn mcp_err(e: impl std::fmt::Display) -> McpError {
-    McpError::internal_error(e.to_string(), None)
-}
-
-/// Validate that a file path is safe for export/import operations.
-///
-/// Prevents path traversal attacks (e.g. `../../etc/cron.d/backdoor` or
-/// `/etc/shadow`) by confining paths to a configurable base directory.
-/// Defaults to the current working directory if no base is configured.
-///
-/// Returns the canonicalized path if safe, or an McpError if the path
-/// escapes the base directory.
-fn validate_file_path(path: &str, for_write: bool) -> Result<std::path::PathBuf, McpError> {
-    use std::path::Path;
-
-    // Reject empty paths
-    if path.trim().is_empty() {
-        return Err(McpError::invalid_params("path cannot be empty", None));
-    }
-
-    // Reject absolute paths to system directories
-    let p = Path::new(path);
-    if p.is_absolute() {
-        // Allow absolute paths only under the user's home directory or /tmp
-        let canonical = p.canonicalize().or_else(|_| {
-            // For write paths, the file may not exist yet — canonicalize the parent
-            if for_write {
-                if let Some(parent) = p.parent() {
-                    parent.canonicalize().map(|_| p.to_path_buf())
-                } else {
-                    Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no parent"))
-                }
-            } else {
-                Err(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"))
-            }
-        }).map_err(|e| mcp_err(anyhow::anyhow!("Cannot resolve path '{}': {}", path, e)))?;
-
-        // Block access to sensitive system paths
-        let path_str = canonical.to_string_lossy().to_lowercase();
-        let blocked_prefixes = [
-            "/etc/", "/var/", "/usr/", "/bin/", "/sbin/", "/root/",
-            "/proc/", "/sys/", "/dev/", "/boot/", "/lib/",
-        ];
-        for prefix in &blocked_prefixes {
-            if path_str.starts_with(prefix) {
-                return Err(McpError::invalid_params(
-                    format!("Access denied: path '{}' is in a protected system directory", path),
-                    None,
-                ));
-            }
-        }
-        Ok(canonical)
-    } else {
-        // Relative paths are resolved against CWD — generally safe
-        Ok(Path::new(path).to_path_buf())
-    }
-}
-
-/// Helper function to upsert an entity node and create a MENTIONS edge.
-/// Returns the entity node ID.
-fn upsert_entity_and_connect(
-    conn: &rusqlite::Connection,
-    observation_id: &str,
-    entity_name: &str,
-    entity_type: &str,
-) -> Result<String, McpError> {
-    let name = entity_name.trim().to_string();
-    if name.is_empty() {
-        return Err(McpError::invalid_params("entity name cannot be empty", None));
-    }
-
-    // Search for existing entity by name and type
-    let existing = crate::db::crud::search(&conn, &name, 1)
-        .unwrap_or_default()
-        .into_iter()
-        .find(|(n, _)| n.node_type == entity_type && n.name == name)
-        .map(|(n, _)| n);
-
-    let entity_node = if let Some(n) = existing {
-        n
-    } else {
-        crate::db::crud::add_node(
-            conn,
-            &NewNode {
-                node_type: entity_type.to_string(),
-                name: name.clone(),
-                source: Some("mcp_observe".to_string()),
-                ..Default::default()
-            },
-        )
-        .map_err(mcp_err)?
-    };
-
-    // Create MENTIONS edge from observation to entity (with dedup)
-    let existing = crate::db::crud::get_edges(
-        conn,
-        Some(observation_id),
-        Some(&entity_node.id),
-        Some("MENTIONS"),
-        None,
-        1,
-    )
-    .unwrap_or_default();
-    if existing.is_empty() {
-        if let Err(e) = crate::db::crud::add_edge(
-            conn,
-            &crate::models::NewEdge {
-                source_id: observation_id.to_string(),
-                target_id: entity_node.id.clone(),
-                edge_type: "MENTIONS".to_string(),
-                weight: Some(1.0),
-                properties: None,
-                agent_id: Some("mcp_observe".to_string()),
-            },
-        ) {
-            tracing::warn!("Failed to create MENTIONS edge {} -> {}: {}", observation_id, entity_node.id, e);
-        }
-    }
-
-    Ok(entity_node.id)
-}
-
-/// Offload blocking SQLite I/O to a dedicated thread pool.
-/// Prevents blocking the tokio async executor on every tool call.
-async fn run_blocking<F, T>(f: F) -> Result<T, McpError>
-where
-    F: FnOnce() -> Result<T, McpError> + Send + 'static,
-    T: Send + 'static,
-{
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
-}
 
 // ─── TdgServer — the MCP server handler ──────────────────────────────────────
 

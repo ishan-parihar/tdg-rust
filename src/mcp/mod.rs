@@ -53,6 +53,7 @@
 //! - [`MAX_BULK_NODES`] — Maximum nodes per bulk operation (500)
 
 pub mod health;
+pub(crate) mod helpers;
 pub mod params;
 pub mod server;
 pub(crate) mod synthesis_helpers;

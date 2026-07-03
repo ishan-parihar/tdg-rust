@@ -3,7 +3,7 @@ use chrono::Utc;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::mcp::tools::calculate_health_score;
+use crate::mcp::helpers::calculate_health_score;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Action {
