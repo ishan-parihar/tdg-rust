@@ -95,6 +95,18 @@ pub(crate) fn now_iso() -> String {
 /// * `old_value` - optional JSON snapshot of pre-mutation state
 /// * `new_value` - optional JSON snapshot of post-mutation state
 /// * `agent_id` - optional agent identifier (e.g. "mcp_observe", "auto_wire")
+///
+/// # Phase 0.6 refactor: return type changed from `()` to `TdgResult<()>`
+///
+/// Previously this function swallowed all errors with `tracing::warn!`,
+/// which meant provenance gaps could accumulate silently under load. The
+/// function now returns `TdgResult<()>` so callers can choose to propagate
+/// (via `?`) or explicitly discard (via `let _ =`).
+///
+/// Current call sites use `let _ =` (best-effort) to preserve existing
+/// behavior. Future hardening (planned for Phase 1+) will propagate errors
+/// and trip the circuit breaker after N consecutive failures, making
+/// provenance gaps a blocking failure rather than a warning.
 pub fn record_mutation(
     conn: &Connection,
     mutation_type: &str,
@@ -103,17 +115,15 @@ pub fn record_mutation(
     old_value: Option<&str>,
     new_value: Option<&str>,
     agent_id: Option<&str>,
-) {
+) -> TdgResult<()> {
     let now = now_iso();
     let session_id = std::env::var("TDG_SESSION_ID").ok();
-    let result = conn.execute(
+    conn.execute(
         "INSERT INTO mutation_log (timestamp, session_id, mutation_type, target_type, target_id, old_value, new_value, agent_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![now, session_id, mutation_type, target_type, target_id, old_value, new_value, agent_id],
-    );
-    if let Err(e) = result {
-        tracing::warn!("mutation_log write failed ({} {} {}): {}", mutation_type, target_type, target_id, e);
-    }
+    )?;
+    Ok(())
 }
 
 /// Compute live confidence with temporal decay and access reinforcement.
@@ -275,7 +285,7 @@ pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
                 "lifecycle_state": lifecycle_state,
             })
             .to_string();
-            record_mutation(
+            let _ = record_mutation(
                 conn,
                 "create",
                 "node",
@@ -434,7 +444,7 @@ pub fn update_node(
             record_write_success();
             // Audit-log the update (best-effort) with old_value for time-travel queries
             let new_value = serde_json::to_string(updates).unwrap_or_default();
-            record_mutation(
+            let _ = record_mutation(
                 conn,
                 "update",
                 "node",
@@ -526,7 +536,7 @@ pub fn delete_node(conn: &Connection, node_id: &str) -> TdgResult<bool> {
                     params![now, node_id],
                 )?;
                 // Audit-log the soft-delete (best-effort) with old_value
-                record_mutation(
+                let _ = record_mutation(
                     conn,
                     "delete",
                     "node",
@@ -611,7 +621,7 @@ pub fn add_edge(conn: &Connection, new: &NewEdge) -> TdgResult<Edge> {
                 "weight": weight,
             })
             .to_string();
-            record_mutation(
+            let _ = record_mutation(
                 conn,
                 "create",
                 "edge",
@@ -718,7 +728,7 @@ pub fn delete_edge(conn: &Connection, edge_id: &str) -> TdgResult<bool> {
         Ok(affected) => {
             if affected > 0 {
                 // Audit-log the edge soft-delete (best-effort)
-                record_mutation(
+                let _ = record_mutation(
                     conn,
                     "delete",
                     "edge",
@@ -1612,7 +1622,7 @@ pub fn set_trust(
         "reason": reason,
     })
     .to_string();
-    record_mutation(
+    let _ = record_mutation(
         conn,
         "update",
         "trust",

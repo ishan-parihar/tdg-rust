@@ -131,7 +131,7 @@ impl<'a> Archiver<'a> {
                 rows.filter_map(|r| r.ok()).collect()
             };
             for eid in &dead_edge_ids {
-                crate::db::crud::record_mutation(
+                let _ = crate::db::crud::record_mutation(
                     self.conn,
                     "delete",
                     "edge",
