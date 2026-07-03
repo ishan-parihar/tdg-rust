@@ -1024,6 +1024,162 @@ impl TdgServer {
         .await
     }
 
+    /// Explicitly tick a holon's lesser cycle (Phase 2).
+    ///
+    /// Normally the lesser cycle is event-driven (ticks on catalyst injection).
+    /// This tool allows manual triggering for testing and debugging — it
+    /// injects an optional catalyst amount and runs one metabolic step.
+    #[tool(description = "Tick a holon's lesser cycle (manual metabolism trigger for testing/debugging)")]
+    pub(crate) async fn tdg_tick(
+        &self,
+        Parameters(params): Parameters<crate::mcp::params::TickParams>,
+    ) -> Result<String, McpError> {
+        let pool = self.pool.clone();
+        let node_id = params.node_id.clone();
+        let catalyst = params.catalyst_amount.unwrap_or(0.0);
+
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+
+            // Load current state
+            let mut state = crate::metabolism::load_state(&conn, &node_id)
+                .map_err(mcp_err)?;
+
+            let previous_phase = state.phase.clone();
+
+            // Run the tick
+            let thresholds = crate::metabolism::CycleThresholds::default();
+            let result = crate::metabolism::tick(&mut state, catalyst, &thresholds);
+
+            // Save the updated state
+            crate::metabolism::save_state(&conn, &node_id, &state)
+                .map_err(mcp_err)?;
+
+            // Enqueue upward pressure to parents if needed
+            if result.upward_pressure && result.upward_experience > 0.0 {
+                if let Some(node) = crate::db::crud::get_node(&conn, &node_id).map_err(mcp_err)? {
+                    for parent_id in &node.parent_ids {
+                        let payload = serde_json::json!({
+                            "catalyst_amount": result.upward_experience,
+                            "source": "manual_tick_upward",
+                            "source_holon": node_id,
+                        });
+                        let _ = crate::metabolism::worker::enqueue_job(
+                            &conn,
+                            parent_id,
+                            crate::metabolism::worker::JobType::CatalystInjection,
+                            payload,
+                            crate::metabolism::worker::PRIORITY_NORMAL,
+                        );
+                    }
+                }
+            }
+
+            Ok(serde_json::to_string(&json!({
+                "node_id": node_id,
+                "previous_phase": previous_phase.as_str(),
+                "current_phase": state.phase.as_str(),
+                "catalyst_injected": catalyst,
+                "catalyst_pending": state.catalyst_pending,
+                "experience_accumulated": state.experience_accumulated,
+                "transformation_pressure": state.transformation_pressure,
+                "cycle_count": state.cycle_count,
+                "transitioned": result.transitioned,
+                "shadow_diagnosed": result.shadow_diagnosed,
+                "upward_pressure": result.upward_pressure,
+                "cycle_completed": result.cycle_completed,
+                "matrix_shadow": state.matrix.shadow.as_ref().map(|s| s.as_str()),
+                "potentiator_shadow": state.potentiator.shadow.as_ref().map(|s| s.as_str()),
+            }))
+            .unwrap_or_default())
+        })
+        .await
+    }
+
+    /// Query the metabolism job queue status (Phase 2).
+    ///
+    /// Returns the number of pending and failed jobs, plus optional details.
+    #[tool(description = "Query metabolism job queue status (pending/failed counts and details)")]
+    pub(crate) async fn tdg_metabolism_status(
+        &self,
+        Parameters(params): Parameters<crate::mcp::params::MetabolismStatusParams>,
+    ) -> Result<String, McpError> {
+        let pool = self.pool.clone();
+        let include_pending = params.include_pending.unwrap_or(false);
+        let include_failed = params.include_failed.unwrap_or(false);
+        let limit = params.limit.unwrap_or(20).min(100);
+
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+
+            let pending_count: i64 = crate::metabolism::worker::queue_depth(&conn)
+                .map_err(mcp_err)?;
+
+            let failed_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM failed_metabolism", [], |r| r.get(0))
+                .unwrap_or(0);
+
+            let mut result = json!({
+                "pending_count": pending_count,
+                "failed_count": failed_count,
+                "backpressure_warning": pending_count > crate::metabolism::worker::BACKPRESSURE_WARNING,
+                "backpressure_critical": pending_count > crate::metabolism::worker::BACKPRESSURE_CRITICAL,
+            });
+
+            if include_pending && pending_count > 0 {
+                let mut stmt = conn.prepare(
+                    "SELECT id, holon_id, job_type, priority, attempts, enqueued_at
+                     FROM pending_metabolism
+                     WHERE attempts < max_attempts
+                     ORDER BY priority DESC, enqueued_at ASC
+                     LIMIT ?1",
+                ).map_err(mcp_err)?;
+                let rows: Vec<serde_json::Value> = stmt
+                    .query_map(rusqlite::params![limit], |row| {
+                        Ok(json!({
+                            "id": row.get::<_, i64>(0)?,
+                            "holon_id": row.get::<_, String>(1)?,
+                            "job_type": row.get::<_, String>(2)?,
+                            "priority": row.get::<_, i32>(3)?,
+                            "attempts": row.get::<_, i32>(4)?,
+                            "enqueued_at": row.get::<_, String>(5)?,
+                        }))
+                    })
+                    .map_err(mcp_err)?
+                    .filter_map(|r| r.ok())
+                    .collect();
+                result["pending_jobs"] = json!(rows);
+            }
+
+            if include_failed && failed_count > 0 {
+                let mut stmt = conn.prepare(
+                    "SELECT id, holon_id, job_type, error, failed_at, attempts
+                     FROM failed_metabolism
+                     ORDER BY failed_at DESC
+                     LIMIT ?1",
+                ).map_err(mcp_err)?;
+                let rows: Vec<serde_json::Value> = stmt
+                    .query_map(rusqlite::params![limit], |row| {
+                        Ok(json!({
+                            "id": row.get::<_, i64>(0)?,
+                            "holon_id": row.get::<_, String>(1)?,
+                            "job_type": row.get::<_, String>(2)?,
+                            "error": row.get::<_, String>(3)?,
+                            "failed_at": row.get::<_, String>(4)?,
+                            "attempts": row.get::<_, i32>(5)?,
+                        }))
+                    })
+                    .map_err(mcp_err)?
+                    .filter_map(|r| r.ok())
+                    .collect();
+                result["failed_jobs"] = json!(rows);
+            }
+
+            Ok(serde_json::to_string(&result).unwrap_or_default())
+        })
+        .await
+    }
+
     #[tool(description = "Connect two nodes with an edge")]
     pub(crate) async fn tdg_connect(
         &self,
@@ -1147,6 +1303,52 @@ impl TdgServer {
             }
             if let Err(e) = flow::renormalize_graph(&conn, false) {
                 tracing::warn!("flow::renormalize_graph failed after connect {}: {}", edge.id, e);
+            }
+
+            // Phase 2: Generate catalyst at the contact boundary and enqueue
+            // metabolism jobs. This is where novelty enters the system —
+            // drives are *born* at boundaries, not just propagated.
+            // Best-effort: failures logged but don't abort the transaction.
+            let catalyst = crate::metabolism::generate_catalyst(
+                &edge_type,
+                weight.unwrap_or(1.0),
+                &src.drives,
+                &tgt.drives,
+            );
+            if catalyst > 0.0 {
+                // Inject catalyst into the target holon (the one receiving the edge)
+                let payload = serde_json::json!({
+                    "catalyst_amount": catalyst,
+                    "source": "edge_creation",
+                    "source_holon": src.id,
+                    "edge_type": edge_type,
+                });
+                if let Err(e) = crate::metabolism::worker::enqueue_job(
+                    &conn,
+                    &tgt.id,
+                    crate::metabolism::worker::JobType::CatalystInjection,
+                    payload,
+                    crate::metabolism::worker::PRIORITY_NORMAL,
+                ) {
+                    tracing::warn!("Failed to enqueue catalyst injection for {}: {}", tgt.id, e);
+                }
+                // Also inject a smaller amount into the source (the interaction perturbs both)
+                let source_catalyst = catalyst * 0.3;
+                let payload = serde_json::json!({
+                    "catalyst_amount": source_catalyst,
+                    "source": "edge_creation",
+                    "source_holon": tgt.id,
+                    "edge_type": edge_type,
+                });
+                if let Err(e) = crate::metabolism::worker::enqueue_job(
+                    &conn,
+                    &src.id,
+                    crate::metabolism::worker::JobType::CatalystInjection,
+                    payload,
+                    crate::metabolism::worker::PRIORITY_LOW,
+                ) {
+                    tracing::warn!("Failed to enqueue catalyst injection for {}: {}", src.id, e);
+                }
             }
 
             match conn.execute_batch("COMMIT") {
@@ -1753,6 +1955,26 @@ impl TdgServer {
             let mut digested = false;
             let mut hypothesis_count = 0usize;
             let mut digestion_error: Option<String> = None;
+
+            // Phase 2: Inject catalyst into the new observation to kickstart
+            // its lesser cycle. Every new observation is a perturbation that
+            // should trigger metabolic processing.
+            {
+                let payload = serde_json::json!({
+                    "catalyst_amount": 0.5,  // base catalyst for a new observation
+                    "source": "observation_creation",
+                });
+                if let Err(e) = crate::metabolism::worker::enqueue_job(
+                    &conn,
+                    &node.id,
+                    crate::metabolism::worker::JobType::CatalystInjection,
+                    payload,
+                    crate::metabolism::worker::PRIORITY_NORMAL,
+                ) {
+                    tracing::warn!("Failed to enqueue catalyst injection for observation {}: {}", node.id, e);
+                }
+            }
+
             if trigger_digestion {
                 let engine = crate::digestion::DigestionEngine::new(&conn);
                 match engine.check_upward_cascade() {

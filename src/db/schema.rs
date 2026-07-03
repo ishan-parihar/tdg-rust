@@ -142,6 +142,17 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
         conn.execute_batch(&sql).ok();
     }
 
+    // Phase 10: Lesser cycle + metabolism infrastructure (Phase 2 of refactor).
+    // - lesser_cycle_json column on nodes (stores M·P·C·E state)
+    // - pending_metabolism table (Tier 2 job queue)
+    // - failed_metabolism table (dead-letter queue for failed jobs)
+    conn.execute_batch(
+        "ALTER TABLE nodes ADD COLUMN lesser_cycle_json TEXT",
+    )
+    .ok();
+
+    conn.execute_batch(MIGRATE_METABOLISM)?;
+
     Ok(())
 }
 
@@ -196,7 +207,9 @@ CREATE TABLE IF NOT EXISTS nodes (
     tetra_ur INTEGER,
     tetra_ll INTEGER,
     tetra_lr INTEGER,
-    octave_id TEXT
+    octave_id TEXT,
+    -- Phase 2: Lesser cycle state (M·P·C·E)
+    lesser_cycle_json TEXT
 );
 
 -- Edges table
@@ -307,6 +320,31 @@ CREATE TABLE IF NOT EXISTS graph_history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_graph_history_recorded ON graph_history(recorded_at);
+
+-- Phase 2: Metabolism infrastructure (Tier 2 job queue)
+CREATE TABLE IF NOT EXISTS pending_metabolism (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    holon_id TEXT NOT NULL,
+    job_type TEXT NOT NULL,
+    payload TEXT,
+    enqueued_at TEXT NOT NULL,
+    priority INTEGER DEFAULT 1,
+    attempts INTEGER DEFAULT 0,
+    max_attempts INTEGER DEFAULT 3
+);
+CREATE INDEX IF NOT EXISTS idx_pending_priority ON pending_metabolism(priority DESC, enqueued_at);
+CREATE INDEX IF NOT EXISTS idx_pending_holon ON pending_metabolism(holon_id);
+
+CREATE TABLE IF NOT EXISTS failed_metabolism (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    holon_id TEXT,
+    job_type TEXT,
+    payload TEXT,
+    error TEXT,
+    failed_at TEXT NOT NULL,
+    attempts INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_failed_holon ON failed_metabolism(holon_id);
 "#;
 
 const FTS_SQL: &str = r#"
@@ -418,6 +456,41 @@ CREATE TABLE IF NOT EXISTS graph_history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_graph_history_recorded ON graph_history(recorded_at);
+"#;
+
+const MIGRATE_METABOLISM: &str = r#"
+-- Phase 2: Metabolism infrastructure (Tier 2 job queue).
+-- The pending_metabolism table holds async jobs for the lesser cycle,
+-- attractor field, health, and resonance computations. Jobs are enqueued
+-- by Tier 1 write paths (tdg_connect, tdg_observe) and processed by
+-- background MetabolismWorker threads.
+CREATE TABLE IF NOT EXISTS pending_metabolism (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    holon_id TEXT NOT NULL,
+    job_type TEXT NOT NULL,        -- 'lesser_tick', 'catalyst_injection', 'recompute_attractor', 'recompute_health', 'resonance_update'
+    payload TEXT,                  -- JSON
+    enqueued_at TEXT NOT NULL,
+    priority INTEGER DEFAULT 1,   -- 0=low, 1=normal, 2=high
+    attempts INTEGER DEFAULT 0,
+    max_attempts INTEGER DEFAULT 3
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_priority ON pending_metabolism(priority DESC, enqueued_at);
+CREATE INDEX IF NOT EXISTS idx_pending_holon ON pending_metabolism(holon_id);
+
+-- Dead-letter queue for jobs that exceeded max_attempts.
+-- Allows manual inspection and retry via tdg_retry_failed.
+CREATE TABLE IF NOT EXISTS failed_metabolism (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    holon_id TEXT,
+    job_type TEXT,
+    payload TEXT,
+    error TEXT,
+    failed_at TEXT NOT NULL,
+    attempts INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_failed_holon ON failed_metabolism(holon_id);
 "#;
 
 const MIGRATE_TRIGGERS: &str = r#"

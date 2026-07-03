@@ -114,6 +114,7 @@ pub mod knowledge;
 pub mod llm;
 pub mod maintenance;
 pub mod mcp;
+pub mod metabolism;
 pub mod mind;
 pub mod models;
 pub mod plugins;

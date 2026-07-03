@@ -398,3 +398,23 @@ pub struct ElevateParams {
     #[schemars(description = "Optional reason for the elevation (recorded in provenance)")]
     pub reason: Option<String>,
 }
+
+/// Parameters for explicitly ticking a holon's lesser cycle (Phase 2).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TickParams {
+    #[schemars(description = "Node ID to tick")]
+    pub node_id: String,
+    #[schemars(description = "Optional catalyst amount to inject before ticking (default: 0.0)")]
+    pub catalyst_amount: Option<f64>,
+}
+
+/// Parameters for querying metabolism status (Phase 2).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MetabolismStatusParams {
+    #[schemars(description = "Include details of pending jobs (default: false)")]
+    pub include_pending: Option<bool>,
+    #[schemars(description = "Include details of failed jobs (default: false)")]
+    pub include_failed: Option<bool>,
+    #[schemars(description = "Max number of job details to return (default: 20)")]
+    pub limit: Option<i64>,
+}

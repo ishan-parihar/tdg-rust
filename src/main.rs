@@ -497,7 +497,7 @@ fn main() -> anyhow::Result<()> {
                 ConnectionPool::new(
                     config.db_path.to_str()
                         .ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?,
-                    2,
+                    4,  // 2 for maintenance + 2 for metabolism workers
                     30000,
                 )?
             );
@@ -514,6 +514,9 @@ fn main() -> anyhow::Result<()> {
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(5 * 60);
+
+            // Clone the pool Arc for the metabolism worker (before moving into maintenance spawn)
+            let metabolism_pool = maintenance_pool.clone();
 
             let maintenance_handle = rt.spawn(async move {
                 let self_manager_interval = std::time::Duration::from_secs(self_manager_interval_secs);
@@ -578,6 +581,33 @@ fn main() -> anyhow::Result<()> {
                 self_manager_interval_secs, health_check_interval_secs
             );
 
+            // Phase 2: Spawn the metabolism worker pool.
+            //
+            // The metabolism worker processes Tier 2 async jobs from the
+            // pending_metabolism table — lesser cycle ticks, catalyst
+            // injections, and (in Phase 3) attractor field recomputations.
+            //
+            // Default: 1 worker (lean VPS profile). Configurable via
+            // TDG_METABOLISM_WORKERS env var. Each worker holds its own
+            // SQLite connection from the maintenance pool.
+            let metabolism_workers = std::env::var("TDG_METABOLISM_WORKERS")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(1)
+                .max(1);
+            let metabolism_handle = rt.spawn(async move {
+                let worker = tdg_rust::metabolism::MetabolismWorker::new(
+                    metabolism_pool,
+                    metabolism_workers,
+                );
+                worker.run().await;
+            });
+            tracing::info!(
+                "Metabolism worker pool started ({} worker{})",
+                metabolism_workers,
+                if metabolism_workers == 1 { "" } else { "s" }
+            );
+
             // Use stdio transport by default (for AI integration)
             // If port is non-default (not 3000), use HTTP transport
             if port != 3000 {
@@ -585,8 +615,9 @@ fn main() -> anyhow::Result<()> {
             } else {
                 rt.block_on(server::serve_stdio(pool))?;
             }
-            // When the server shuts down, cancel the maintenance scheduler.
+            // When the server shuts down, cancel the background tasks.
             maintenance_handle.abort();
+            metabolism_handle.abort();
         }
     }
 
