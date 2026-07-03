@@ -282,7 +282,15 @@ pub fn write_mind_state_file(
         "_prompt_length": prompt.len(),
     });
 
-    let state_path = cfg.state_dir.join("tdg-mind-state.json");
+    // Write to tdg-mind-snapshot.json (NOT tdg-mind-state.json).
+    //
+    // Previously this wrote to tdg-mind-state.json — the SAME file that
+    // MindStateManager writes to with a DIFFERENT schema. The two schemas
+    // share zero fields, so whichever writer ran last would destroy the
+    // other's data. We now use a separate file (tdg-mind-snapshot.json)
+    // for the diagnostic snapshot, leaving tdg-mind-state.json exclusively
+    // for MindStateManager's session/working_memory/trust_score data.
+    let state_path = cfg.state_dir.join("tdg-mind-snapshot.json");
     std::fs::create_dir_all(&cfg.state_dir)?;
     std::fs::write(&state_path, serde_json::to_string_pretty(&state)?)?;
     Ok(())
@@ -358,7 +366,7 @@ mod tests {
         let terrain = json!({"active_nodes_by_type": {}});
         let report = json!({"pattern_flags": []});
         write_mind_state_file(&conn, &cfg, "test prompt", &report, &terrain).unwrap();
-        let state_path = cfg.state_dir.join("tdg-mind-state.json");
+        let state_path = cfg.state_dir.join("tdg-mind-snapshot.json");
         assert!(state_path.exists());
     }
 
@@ -445,7 +453,7 @@ mod tests {
         let report = json!({"pattern_flags": ["flag1"]});
         write_mind_state_file(&conn, &cfg, "my prompt", &report, &terrain).unwrap();
 
-        let state_path = cfg.state_dir.join("tdg-mind-state.json");
+        let state_path = cfg.state_dir.join("tdg-mind-snapshot.json");
         let content = std::fs::read_to_string(&state_path).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
@@ -463,7 +471,7 @@ mod tests {
         let report = json!({"pattern_flags": []});
 
         write_mind_state_file(&conn, &cfg, "lean prompt", &report, &terrain).unwrap();
-        let state_path = cfg.state_dir.join("tdg-mind-state.json");
+        let state_path = cfg.state_dir.join("tdg-mind-snapshot.json");
         let content = std::fs::read_to_string(&state_path).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["_generator"], "injector_rust_v1");
@@ -563,7 +571,7 @@ mod tests {
         let report = json!({"pattern_flags": []});
         write_mind_state_file(&conn, &cfg, "short", &report, &terrain).unwrap();
 
-        let state_path = cfg.state_dir.join("tdg-mind-state.json");
+        let state_path = cfg.state_dir.join("tdg-mind-snapshot.json");
         let content = std::fs::read_to_string(&state_path).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["_prompt_length"], 5);
@@ -582,7 +590,7 @@ mod tests {
         let report = json!({"pattern_flags": []});
         write_mind_state_file(&conn, &cfg, "test", &report, &terrain).unwrap();
 
-        let state_path = cfg.state_dir.join("tdg-mind-state.json");
+        let state_path = cfg.state_dir.join("tdg-mind-snapshot.json");
         let content = std::fs::read_to_string(&state_path).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 

@@ -1575,17 +1575,22 @@ impl TdgServer {
                     continue;
                 }
                 // Link the observation to the constraint via a MENTIONS edge
-                let _ = crate::db::crud::add_edge(
+                if let Err(e) = crate::db::crud::add_edge(
                     &conn,
                     &NewEdge {
                         source_id: node.id.clone(),
-                        target_id: constraint_id,
+                        target_id: constraint_id.clone(),
                         edge_type: "MENTIONS".to_string(),
                         weight: Some(pref.confidence as f64),
                         agent_id: Some("mcp_observe".to_string()),
                         ..Default::default()
                     },
-                );
+                ) {
+                    tracing::warn!(
+                        "Failed to create MENTIONS edge to constraint {}: {}",
+                        constraint_id, e
+                    );
+                }
                 persisted_preferences += 1;
             }
 
@@ -2780,6 +2785,29 @@ Do NOT include any text outside the JSON block."#
             let cfg = Config::from_env();
             let prompt =
                 crate::mind::injector::generate_prompt(&conn, &cfg).map_err(mcp_err)?;
+
+            // Also write the mind-state snapshot to disk (tdg-mind-snapshot.json).
+            //
+            // Previously, write_mind_state_file was dead code — never called
+            // from production. The rich diagnostic snapshot (feeling, escalation,
+            // terrain, active_constraints, active_skills, projects, prompt_length)
+            // was never persisted. External monitors had no way to inspect the
+            // agent's state without calling tdg_context (which returns the prompt
+            // text, not structured data). Now we write the snapshot on every
+            // tdg_context call so external tools can read it.
+            let diagnostic = crate::mind::diagnostic::DiagnosticEngine::new()
+                .analyze(&conn, &[], &[])
+                .map(|r| serde_json::to_value(&r).unwrap_or_default())
+                .unwrap_or_default();
+            let terrain = crate::mind::terrain::generate_terrain_context(&conn, &serde_json::json!({}))
+                .map(|v| serde_json::to_value(&v).unwrap_or_default())
+                .unwrap_or_default();
+            if let Err(e) = crate::mind::injector::write_mind_state_file(
+                &conn, &cfg, &prompt, &diagnostic, &terrain,
+            ) {
+                tracing::debug!("Failed to write mind-state snapshot: {}", e);
+            }
+
             Ok(prompt)
         }).await
     }
@@ -3325,17 +3353,22 @@ fn store_synthesis(
                     },
                 ) {
                     created.push(sub_node.id.clone());
-                    let _ = crate::db::crud::add_edge(
+                    if let Err(e) = crate::db::crud::add_edge(
                         conn,
                         &NewEdge {
-                            source_id: sub_node.id,
+                            source_id: sub_node.id.clone(),
                             target_id: main_id.clone(),
                             edge_type: "SYNTHESIZES".to_string(),
                             weight: Some(0.9),
                             properties: Some(json!({"kind": "insight_contribution"})),
                             ..Default::default()
                         },
-                    );
+                    ) {
+                        tracing::warn!(
+                            "Failed to create SYNTHESIZES edge from {}: {}",
+                            sub_node.id, e
+                        );
+                    }
                 }
             }
         }

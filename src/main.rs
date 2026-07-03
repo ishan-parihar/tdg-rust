@@ -501,9 +501,23 @@ fn main() -> anyhow::Result<()> {
                     30000,
                 )?
             );
+            // Configurable intervals via env vars (with sensible defaults).
+            // TDG_MAINTENANCE_INTERVAL_SECS: how often to run full SelfManager
+            //   (janitor + enricher + archiver + telearchy). Default: 21600 (6h)
+            // TDG_HEALTH_CHECK_INTERVAL_SECS: how often to record internal
+            //   health checks. Default: 300 (5m)
+            let self_manager_interval_secs = std::env::var("TDG_MAINTENANCE_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(6 * 60 * 60);
+            let health_check_interval_secs = std::env::var("TDG_HEALTH_CHECK_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(5 * 60);
+
             let maintenance_handle = rt.spawn(async move {
-                let self_manager_interval = std::time::Duration::from_secs(6 * 60 * 60);
-                let health_check_interval = std::time::Duration::from_secs(5 * 60);
+                let self_manager_interval = std::time::Duration::from_secs(self_manager_interval_secs);
+                let health_check_interval = std::time::Duration::from_secs(health_check_interval_secs);
                 let mut self_manager_ticker =
                     tokio::time::interval(self_manager_interval);
                 let mut health_check_ticker =
@@ -559,7 +573,10 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             });
-            tracing::info!("Background maintenance scheduler started (self_manager=6h, health_check=5m)");
+            tracing::info!(
+                "Background maintenance scheduler started (self_manager={}s, health_check={}s)",
+                self_manager_interval_secs, health_check_interval_secs
+            );
 
             // Use stdio transport by default (for AI integration)
             // If port is non-default (not 3000), use HTTP transport
