@@ -135,6 +135,8 @@ pub const EDGE_TYPES: &[&str] = &[
     "APPEALS_TO",
     "REPLIES",
     "CONTINUES",
+    // Phase 17: Structural plasticity — synaptogenesis edge type
+    "RESONATES_WITH",
 ];
 
 /// A graph node, matching Python wire format exactly.

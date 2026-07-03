@@ -533,11 +533,24 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or(4 * 60 * 60);
 
             // Phase 16: Synaptic decay (LTD) interval (default 1 hour).
-            // Decays co_activation_count for edges that haven't fired recently.
             let synaptic_decay_interval_secs = std::env::var("TDG_SYNAPTIC_DECAY_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(60 * 60);
+
+            // Phase 17: Synaptogenesis interval (default 30 min).
+            // Grows new RESONATES_WITH edges for high-resonance holon pairs.
+            let synaptogenesis_interval_secs = std::env::var("TDG_SYNAPTOGENESIS_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(30 * 60);
+
+            // Phase 18: Memory replay interval (default 6 hours).
+            // Re-activates recent memories to strengthen their edges (sleep replay).
+            let memory_replay_interval_secs = std::env::var("TDG_MEMORY_REPLAY_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(6 * 60 * 60);
 
             // Clone the pool Arc for the metabolism worker (before moving into maintenance spawn)
             let metabolism_pool = maintenance_pool.clone();
@@ -559,6 +572,10 @@ fn main() -> anyhow::Result<()> {
                     tokio::time::interval(std::time::Duration::from_secs(resonance_rebuild_interval_secs));
                 let mut synaptic_decay_ticker =
                     tokio::time::interval(std::time::Duration::from_secs(synaptic_decay_interval_secs));
+                let mut synaptogenesis_ticker =
+                    tokio::time::interval(std::time::Duration::from_secs(synaptogenesis_interval_secs));
+                let mut memory_replay_ticker =
+                    tokio::time::interval(std::time::Duration::from_secs(memory_replay_interval_secs));
                 // Skip the first immediate tick (we don't want to run maintenance
                 // during startup — let the server stabilize first).
                 self_manager_ticker.tick().await;
@@ -566,6 +583,8 @@ fn main() -> anyhow::Result<()> {
                 greater_cycle_ticker.tick().await;
                 mind_integration_ticker.tick().await;
                 synaptic_decay_ticker.tick().await;
+                synaptogenesis_ticker.tick().await;
+                memory_replay_ticker.tick().await;
                 resonance_rebuild_ticker.tick().await;
                 loop {
                     tokio::select! {
@@ -794,6 +813,120 @@ fn main() -> anyhow::Result<()> {
                                         tracing::info!(
                                             "Synaptic decay (LTD): {} edges decayed, {} pruned",
                                             decayed, pruned
+                                        );
+                                    }
+                                    pool.release_connection(conn);
+                                }
+                            }).await.ok();
+                        }
+                        _ = synaptogenesis_ticker.tick() => {
+                            // Phase 17: Synaptogenesis — grow new edges from resonance.
+                            let pool = maintenance_pool.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if let Ok(conn) = pool.get_connection() {
+                                    let pairs: Vec<(String, String, f64)> = {
+                                        let stmt_result = conn.prepare(
+                                            "SELECT rg.holon_id, rg.partner_id, rg.resonance_score
+                                             FROM resonance_graph rg
+                                             WHERE rg.resonance_score > 0.7
+                                             AND NOT EXISTS (
+                                                 SELECT 1 FROM edges e
+                                                 WHERE ((e.source_id = rg.holon_id AND e.target_id = rg.partner_id)
+                                                    OR (e.source_id = rg.partner_id AND e.target_id = rg.holon_id))
+                                                   AND e.valid_to IS NULL
+                                             )
+                                             LIMIT 20",
+                                        );
+                                        match stmt_result {
+                                            Ok(mut stmt) => {
+                                                stmt.query_map([], |row| {
+                                                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                                                })
+                                                .ok()
+                                                .map(|iter| iter.filter_map(|r| r.ok()).collect())
+                                                .unwrap_or_default()
+                                            }
+                                            Err(_) => { return; }
+                                        }
+                                    };
+
+                                    let mut created = 0;
+                                    for (holon_id, partner_id, score) in &pairs {
+                                        let _ = conn.execute(
+                                            "INSERT INTO edges (id, source_id, target_id, edge_type, weight, properties_json, created_at, updated_at, agent_id)
+                                             VALUES (?1, ?2, ?3, 'RESONATES_WITH', 0.3, ?4, ?5, ?5, 'synaptogenesis')",
+                                            rusqlite::params![
+                                                format!("e{}", uuid::Uuid::new_v4().simple()),
+                                                holon_id, partner_id,
+                                                serde_json::json!({"resonance_score": score, "auto_created": true}).to_string(),
+                                                chrono::Utc::now().to_rfc3339(),
+                                            ],
+                                        );
+                                        created += 1;
+                                    }
+
+                                    if created > 0 {
+                                        tracing::info!(
+                                            "Synaptogenesis: {} new RESONATES_WITH edges created",
+                                            created
+                                        );
+                                    }
+                                    pool.release_connection(conn);
+                                }
+                            }).await.ok();
+                        }
+                        _ = memory_replay_ticker.tick() => {
+                            // Phase 18: Memory replay (sleep consolidation).
+                            let pool = maintenance_pool.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if let Ok(conn) = pool.get_connection() {
+                                    let node_ids: Vec<String> = {
+                                        let cutoff = chrono::Utc::now() - chrono::Duration::hours(24);
+                                        let stmt_result = conn.prepare(
+                                            "SELECT DISTINCT node_id FROM events
+                                             WHERE node_id IS NOT NULL
+                                               AND timestamp > ?1
+                                             LIMIT 50",
+                                        );
+                                        match stmt_result {
+                                            Ok(mut stmt) => {
+                                                stmt.query_map(rusqlite::params![cutoff.to_rfc3339()], |row| row.get(0))
+                                                    .ok()
+                                                    .map(|iter| iter.filter_map(|r| r.ok()).collect())
+                                                    .unwrap_or_default()
+                                            }
+                                            Err(_) => { return; }
+                                        }
+                                    };
+
+                                    let mut replayed = 0;
+                                    for node_id in &node_ids {
+                                        let _ = tdg_rust::metabolism::worker::enqueue_job(
+                                            &conn, node_id,
+                                            tdg_rust::metabolism::worker::JobType::CatalystInjection,
+                                            serde_json::json!({"catalyst_amount": 0.3, "source": "memory_replay"}),
+                                            tdg_rust::metabolism::worker::PRIORITY_LOW,
+                                        );
+                                        replayed += 1;
+                                    }
+
+                                    // Value-based forgetting
+                                    let forget_cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+                                    let now = chrono::Utc::now().to_rfc3339();
+                                    let forgotten = conn.execute(
+                                        "UPDATE nodes SET lifecycle_state = 'archived', valid_to = ?1
+                                         WHERE valid_to IS NULL
+                                           AND retrieval_count = 0
+                                           AND confidence < 0.3
+                                           AND created_at < ?2
+                                           AND node_type NOT IN ('telos', 'skill', 'capability')",
+                                        rusqlite::params![now, forget_cutoff.to_rfc3339()],
+                                    ).unwrap_or(0);
+
+                                    if replayed > 0 || forgotten > 0 {
+                                        tracing::info!(
+                                            "Memory replay: {} nodes re-activated, {} forgotten",
+                                            replayed, forgotten
                                         );
                                     }
                                     pool.release_connection(conn);
