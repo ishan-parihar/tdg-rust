@@ -413,7 +413,7 @@ fn main() -> anyhow::Result<()> {
                             node_id,
                             name,
                             description,
-                            5,
+                            3,
                         );
                         let result = embedding::embed(&text)?;
                         tdg_rust::db::crud::upsert_embedding(

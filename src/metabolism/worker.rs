@@ -666,6 +666,56 @@ fn execute_lesser_tick(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
         );
     }
 
+    // Phase 19: Drive-metabolism unification — drives adapt based on experience.
+    // When a holon completes a cycle, its drive profile shifts slightly toward
+    // the metabolic state it just processed. This makes drives_json a LEARNED
+    // representation, not a hardcoded one. The brain's neural representations
+    // adapt through experience; TDG's drives now do the same.
+    if result.cycle_completed && state.experience_accumulated > 0.1 {
+        if let Ok(Some(node)) = crate::db::crud::get_node(conn, &job.holon_id) {
+            let drives = node.drives.clone();
+            if let Some(drives_obj) = drives.as_object() {
+                let mut updated = false;
+                let mut new_drives = drives_obj.clone();
+
+                // Adaptation rule: drives that were exercised (high catalyst processing)
+                // strengthen their positive pole by a small learning rate.
+                // The adaptation is proportional to experience_accumulated.
+                let learning_rate = (state.experience_accumulated * 0.05).min(0.5);
+
+                for (drive_name, drive_val) in drives_obj.iter() {
+                    if let Some(drive_obj) = drive_val.as_object() {
+                        let pos = drive_obj.get("positive_pole").and_then(|v| v.as_f64()).unwrap_or(5.0);
+                        let neg = drive_obj.get("negative_pole").and_then(|v| v.as_f64()).unwrap_or(2.0);
+
+                        // Strengthen positive pole (the drive was exercised)
+                        let new_pos = (pos + learning_rate).min(10.0);
+                        // Slightly weaken negative pole (resistance decreases with use)
+                        let new_neg = (neg - learning_rate * 0.3).max(0.0);
+
+                        let mut new_drive = drive_obj.clone();
+                        new_drive.insert("positive_pole".to_string(), serde_json::json!(new_pos));
+                        new_drive.insert("negative_pole".to_string(), serde_json::json!(new_neg));
+                        new_drives.insert(drive_name.clone(), serde_json::json!(new_drive));
+                        updated = true;
+                    }
+                }
+
+                if updated {
+                    let new_drives_json = serde_json::Value::Object(new_drives);
+                    let _ = conn.execute(
+                        "UPDATE nodes SET drives_json = ?1 WHERE id = ?2",
+                        rusqlite::params![new_drives_json.to_string(), job.holon_id],
+                    );
+                    tracing::debug!(
+                        "Holon {} drives adapted (learning_rate={:.3}, experience={:.3})",
+                        job.holon_id, learning_rate, state.experience_accumulated
+                    );
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
