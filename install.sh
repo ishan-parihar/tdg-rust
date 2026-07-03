@@ -103,7 +103,7 @@ download_binary() {
 download_onnx_runtime() {
     local tdg_dir="${HERMES_HOME}/tdg-rust"
     local lib_dir="${tdg_dir}/lib"
-    local ort_version="1.21.1"
+    local ort_version="1.20.1"
     # Map detected architecture to ONNX Runtime archive naming
     local ort_arch
     case "${ARCH}" in
