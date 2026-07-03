@@ -8,7 +8,7 @@ repository = "https://github.com/ishan-parihar/tdg-rust"
 
 [dependencies]
 # Core
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "process", "signal"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
@@ -29,7 +29,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # UUID
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -39,7 +39,7 @@ dotenvy = "0.15"
 shellexpand = "3"
 
 # Configuration (YAML + JSON + env vars)
-figment = { version = "0.10", features = ["yaml", "toml", "json", "env"] }
+figment = { version = "0.10", features = ["yaml", "json", "env"] }
 
 # LLM (Ollama)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
