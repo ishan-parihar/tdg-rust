@@ -960,7 +960,18 @@ impl TdgServer {
                 }
             }
 
-            let edge = crate::db::crud::add_edge(
+            // Wrap edge creation + flow propagation in a transaction.
+            //
+            // Previously, add_edge + emit_downward + renormalize_graph ran as
+            // three separate implicit transactions. If emit_downward failed
+            // mid-way, the edge was committed but drive states were partially
+            // updated — leaving the graph inconsistent with no rollback.
+            //
+            // We now wrap the full sequence in BEGIN IMMEDIATE / COMMIT.
+            // If any step fails, the entire operation rolls back.
+            conn.execute_batch("BEGIN IMMEDIATE").map_err(mcp_err)?;
+
+            let edge = match crate::db::crud::add_edge(
                 &conn,
                 &NewEdge {
                     source_id: source_id.clone(),
@@ -969,16 +980,31 @@ impl TdgServer {
                     weight,
                     ..Default::default()
                 },
-            )
-            .map_err(mcp_err)?;
+            ) {
+                Ok(e) => e,
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    return Err(mcp_err(e));
+                }
+            };
 
             // Flow engine: propagate drives downward from source, then renormalize.
-            // Errors are logged, not propagated — flow is non-blocking.
+            // Errors are logged but DON'T abort the transaction — flow is non-blocking
+            // and partial flow propagation is acceptable (the graph is still consistent
+            // because the edge itself was created atomically).
             if let Err(e) = flow::emit_downward(&conn, &source_id, flow::DEFAULT_MAX_DEPTH) {
                 tracing::warn!("flow::emit_downward failed after connect {}: {}", edge.id, e);
             }
             if let Err(e) = flow::renormalize_graph(&conn, false) {
                 tracing::warn!("flow::renormalize_graph failed after connect {}: {}", edge.id, e);
+            }
+
+            match conn.execute_batch("COMMIT") {
+                Ok(_) => {}
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    return Err(mcp_err(e));
+                }
             }
 
             Ok(serde_json::to_string(&json!({
@@ -1671,7 +1697,7 @@ impl TdgServer {
             a
         } else if let Some(p) = phase {
             // Log deprecation warning for phase usage
-            eprintln!("WARNING: 'phase' parameter is deprecated. Use 'action' instead.");
+            tracing::warn!("WARNING: 'phase' parameter is deprecated. Use 'action' instead.");
             p
         } else {
             return Err(McpError::invalid_params(
@@ -1683,15 +1709,15 @@ impl TdgServer {
         // Map old phase names to new action names for backward compatibility
         let normalized_action = match actual_action {
             "fts_rebuild" => {
-                eprintln!("WARNING: 'fts_rebuild' is deprecated. Use 'rebuild_fts' instead.");
+                tracing::warn!("WARNING: 'fts_rebuild' is deprecated. Use 'rebuild_fts' instead.");
                 "rebuild_fts"
             }
             "hygiene" => {
-                eprintln!("WARNING: 'hygiene' is deprecated. Use 'health' instead.");
+                tracing::warn!("WARNING: 'hygiene' is deprecated. Use 'health' instead.");
                 "health"
             }
             "archive" => {
-                eprintln!("WARNING: 'archive' action is deprecated and will be removed in a future version.");
+                tracing::warn!("WARNING: 'archive' action is deprecated and will be removed in a future version.");
                 "archive"
             }
             "all" => "all",
@@ -2379,24 +2405,29 @@ Do NOT include any text outside the JSON block."#
                 json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
             );
         }
-        let ts: &TrustStore = &self.trust_store;
-        match ts.get_trust(&params.agent_name) {
-            Ok(Some(entry)) => Ok(serde_json::to_string(&json!({
-                "agent_name": params.agent_name,
-                "score": entry.score,
-                "updated_at": entry.updated_at,
-                "source": entry.source,
-                "reason": entry.reason,
-            }))
-            .unwrap_or_default()),
-            Ok(None) => Ok(serde_json::to_string(&json!({
-                "agent_name": params.agent_name,
-                "score": 0.5,
-                "note": "No trust record found; returning default score 0.5",
-            }))
-            .unwrap_or_default()),
-            Err(e) => Err(e),
-        }
+        // Wrap in run_blocking — TrustStore::get_trust does sync DB I/O.
+        // Previously this ran on the tokio async executor, blocking it.
+        let ts = self.trust_store.clone();
+        let agent_name = params.agent_name.clone();
+        run_blocking(move || {
+            match ts.get_trust(&agent_name) {
+                Ok(Some(entry)) => Ok(serde_json::to_string(&json!({
+                    "agent_name": agent_name,
+                    "score": entry.score,
+                    "updated_at": entry.updated_at,
+                    "source": entry.source,
+                    "reason": entry.reason,
+                }))
+                .unwrap_or_default()),
+                Ok(None) => Ok(serde_json::to_string(&json!({
+                    "agent_name": agent_name,
+                    "score": 0.5,
+                    "note": "No trust record found; returning default score 0.5",
+                }))
+                .unwrap_or_default()),
+                Err(e) => Err(e),
+            }
+        }).await
     }
 
     #[tool(description = "Adjust agent trust score by delta")]
@@ -2409,17 +2440,20 @@ Do NOT include any text outside the JSON block."#
                 json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
             );
         }
-        let new_score = self.trust_store.adjust_trust(
-            &params.agent_name,
-            params.delta,
-            params.reason,
-            params.source,
-        )?;
-        Ok(serde_json::to_string(&json!({
-            "agent_name": params.agent_name,
-            "new_score": new_score,
-        }))
-        .unwrap_or_default())
+        // Wrap in run_blocking — TrustStore::adjust_trust does sync DB writes.
+        let ts = self.trust_store.clone();
+        let agent_name = params.agent_name.clone();
+        let delta = params.delta;
+        let reason = params.reason;
+        let source = params.source;
+        run_blocking(move || {
+            let new_score = ts.adjust_trust(&agent_name, delta, reason, source)?;
+            Ok(serde_json::to_string(&json!({
+                "agent_name": agent_name,
+                "new_score": new_score,
+            }))
+            .unwrap_or_default())
+        }).await
     }
 
     // ─── Health Tools ───────────────────────────────────────────────────────
@@ -2434,19 +2468,22 @@ Do NOT include any text outside the JSON block."#
                 json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
             );
         }
-        self.health_monitor.record_health_check(
-            &params.service,
-            params.latency_ms,
-            params.success,
-            params.error_message,
-            params.metadata,
-        )?;
-        Ok(serde_json::to_string(&json!({
-            "status": "recorded",
-            "service": params.service,
-            "success": params.success,
-        }))
-        .unwrap_or_default())
+        // Wrap in run_blocking — HealthMonitor::record_health_check does sync DB writes.
+        let hm = self.health_monitor.clone();
+        let service = params.service.clone();
+        let latency_ms = params.latency_ms;
+        let success = params.success;
+        let error_message = params.error_message;
+        let metadata = params.metadata;
+        run_blocking(move || {
+            hm.record_health_check(&service, latency_ms, success, error_message, metadata)?;
+            Ok(serde_json::to_string(&json!({
+                "status": "recorded",
+                "service": service,
+                "success": success,
+            }))
+            .unwrap_or_default())
+        }).await
     }
 
     #[tool(description = "System health + circuit breaker status")]
@@ -2459,13 +2496,17 @@ Do NOT include any text outside the JSON block."#
                 json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
             );
         }
-        let summary = self.health_monitor.get_health_summary()?;
-        let cb_status = self.health_monitor.get_circuit_breaker_status()?;
-        let result = json!({
-            "health": summary,
-            "circuit_breakers": cb_status,
-        });
-        Ok(serde_json::to_string(&result).unwrap_or_default())
+        // Wrap in run_blocking — both methods do sync DB reads.
+        let hm = self.health_monitor.clone();
+        run_blocking(move || {
+            let summary = hm.get_health_summary()?;
+            let cb_status = hm.get_circuit_breaker_status()?;
+            let result = json!({
+                "health": summary,
+                "circuit_breakers": cb_status,
+            });
+            Ok(serde_json::to_string(&result).unwrap_or_default())
+        }).await
     }
 
     #[tool(description = "Full mind audit: anomalies, drive polarity, stage evidence, graph entropy")]
@@ -2593,22 +2634,26 @@ Do NOT include any text outside the JSON block."#
                 json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
             );
         }
-        if let Some(ref session_id) = params.session_id {
-            if !session_id.is_empty() {
-                self.mind_state_manager
-                    .update(|state| {
-                        state.session_id = session_id.clone();
+        // Wrap in run_blocking — MindStateManager::update does sync file I/O.
+        let mgr = self.mind_state_manager.clone();
+        let session_id = params.session_id.clone();
+        run_blocking(move || {
+            if let Some(ref sid) = session_id {
+                if !sid.is_empty() {
+                    mgr.update(|state| {
+                        state.session_id = sid.clone();
                     })
                     .map_err(mcp_err)?;
+                }
             }
-        }
-        let state = self.mind_state_manager.get_state();
-        Ok(serde_json::to_string(&json!({
-            "status": "saved",
-            "session_id": state.session_id,
-            "version": state.version,
-        }))
-        .unwrap_or_default())
+            let state = mgr.get_state();
+            Ok(serde_json::to_string(&json!({
+                "status": "saved",
+                "session_id": state.session_id,
+                "version": state.version,
+            }))
+            .unwrap_or_default())
+        }).await
     }
 
     #[tool(description = "Load mind state from disk")]
@@ -2621,22 +2666,26 @@ Do NOT include any text outside the JSON block."#
                 json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
             );
         }
-        let state = self.mind_state_manager.get_state();
-        Ok(serde_json::to_string(&json!({
-            "session_id": state.session_id,
-            "agent_name": state.agent_name,
-            "active_plan": state.active_plan,
-            "trust_score": state.trust_score,
-            "working_memory_count": state.working_memory.len(),
-            "version": state.version,
-            "last_updated": state.last_updated.to_rfc3339(),
-            "metrics": {
-                "tasks_completed": state.metrics.tasks_completed,
-                "tasks_failed": state.metrics.tasks_failed,
-                "avg_response_time_ms": state.metrics.avg_response_time_ms,
-            },
-        }))
-        .unwrap_or_default())
+        // Wrap in run_blocking — get_state does sync file read (via Mutex).
+        let mgr = self.mind_state_manager.clone();
+        run_blocking(move || {
+            let state = mgr.get_state();
+            Ok(serde_json::to_string(&json!({
+                "session_id": state.session_id,
+                "agent_name": state.agent_name,
+                "active_plan": state.active_plan,
+                "trust_score": state.trust_score,
+                "working_memory_count": state.working_memory.len(),
+                "version": state.version,
+                "last_updated": state.last_updated.to_rfc3339(),
+                "metrics": {
+                    "tasks_completed": state.metrics.tasks_completed,
+                    "tasks_failed": state.metrics.tasks_failed,
+                    "avg_response_time_ms": state.metrics.avg_response_time_ms,
+                },
+            }))
+            .unwrap_or_default())
+        }).await
     }
 
     #[tool(description = "Get project context")]
@@ -2646,15 +2695,18 @@ Do NOT include any text outside the JSON block."#
                 json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
             );
         }
-        let context = self
-            .mind_state_manager
-            .recall("project_context")
-            .map(|item| item.value)
-            .unwrap_or_default();
-        Ok(serde_json::to_string(&json!({
-            "project_context": context,
-        }))
-        .unwrap_or_default())
+        // Wrap in run_blocking — recall does sync file I/O.
+        let mgr = self.mind_state_manager.clone();
+        run_blocking(move || {
+            let context = mgr
+                .recall("project_context")
+                .map(|item| item.value)
+                .unwrap_or_default();
+            Ok(serde_json::to_string(&json!({
+                "project_context": context,
+            }))
+            .unwrap_or_default())
+        }).await
     }
 
     #[tool(description = "Set project context string")]
@@ -2670,14 +2722,18 @@ Do NOT include any text outside the JSON block."#
         if params.context.is_empty() {
             return Err(McpError::invalid_params("context is required", None));
         }
-        self.mind_state_manager
-            .remember("project_context", &params.context, None)
-            .map_err(mcp_err)?;
-        Ok(serde_json::to_string(&json!({
-            "status": "saved",
-            "project_context": params.context,
-        }))
-        .unwrap_or_default())
+        // Wrap in run_blocking — remember does sync file write.
+        let mgr = self.mind_state_manager.clone();
+        let context = params.context.clone();
+        run_blocking(move || {
+            mgr.remember("project_context", &context, None)
+                .map_err(mcp_err)?;
+            Ok(serde_json::to_string(&json!({
+                "status": "saved",
+                "project_context": context,
+            }))
+            .unwrap_or_default())
+        }).await
     }
 
     #[tool(description = "Generate terrain-first context prompt for LLM consumption")]
@@ -2722,127 +2778,93 @@ Do NOT include any text outside the JSON block."#
 }
 
 async fn try_llm_providers(
-    client: &reqwest::Client,
+    _client: &reqwest::Client,
     cfg: &crate::llm::config::LlmConfig,
     prompt: &str,
 ) -> Option<(Value, String)> {
-    if cfg.provider_available("openai") && cfg.openai.api_key.is_some() {
-        if let Some(raw) = call_openai(client, cfg, prompt).await {
-            if let Some(parsed) = parse_llm_output(&raw) {
-                return Some((parsed, "openai".to_string()));
+    // Build the provider chain, respecting the configured default_provider.
+    //
+    // Previously this function:
+    // 1. Hardcoded the order openai -> anthropic -> ollama, ignoring
+    //    cfg.default_provider (which defaults to "ollama"). A user who set
+    //    TDG_LLM_DEFAULT_PROVIDER=ollama to avoid cloud egress would still
+    //    hit OpenAI first if any key was present.
+    // 2. Used inline call_openai/call_anthropic/call_ollama functions that
+    //    swallowed ALL errors with .ok()? — a 401 (bad key) was silently
+    //    treated the same as a network error, and the agent wasted 30s
+    //    per provider before falling back.
+    // 3. call_anthropic didn't extract system messages (Anthropic requires
+    //    them top-level, not in the messages array).
+    //
+    // We now use the trait-based LlmProvider implementations which properly
+    // surface errors, extract system messages for Anthropic, and support
+    // token usage tracking.
+    let request = crate::llm::LlmCompletionRequest {
+        messages: vec![crate::llm::LlmMessage {
+            role: "user".to_string(),
+            content: prompt.to_string(),
+        }],
+        model: None,
+        temperature: None,
+        max_tokens: None,
+    };
+
+    // Determine provider order based on default_provider config
+    let order: Vec<&str> = match cfg.default_provider.as_str() {
+        "openai" => vec!["openai", "anthropic", "ollama"],
+        "anthropic" => vec!["anthropic", "openai", "ollama"],
+        "ollama" => vec!["ollama", "openai", "anthropic"],
+        _ => vec!["ollama", "openai", "anthropic"],
+    };
+
+    for provider_name in &order {
+        if !cfg.provider_available(provider_name) {
+            continue;
+        }
+
+        let provider: Box<dyn crate::llm::LlmProvider> = match *provider_name {
+            "openai" => Box::new(crate::llm::openai::OpenAiProvider::new(cfg.openai.clone())),
+            "anthropic" => {
+                Box::new(crate::llm::anthropic::AnthropicProvider::new(cfg.anthropic.clone()))
+            }
+            "ollama" => Box::new(crate::llm::ollama::OllamaProvider::new(cfg.ollama.clone())),
+            _ => continue,
+        };
+
+        match provider.complete(&request).await {
+            Ok(response) => {
+                tracing::info!(
+                    "LLM provider '{}' succeeded (prompt_tokens={}, completion_tokens={})",
+                    provider.name(),
+                    response.usage.prompt_tokens,
+                    response.usage.completion_tokens
+                );
+                if let Some(parsed) = parse_llm_output(&response.content) {
+                    return Some((parsed, provider.name().to_string()));
+                } else {
+                    tracing::warn!(
+                        "LLM provider '{}' returned unparseable output ({} chars)",
+                        provider.name(),
+                        response.content.len()
+                    );
+                }
+            }
+            Err(e) => {
+                // Surface the error instead of silently swallowing it.
+                // The previous .ok()? pattern made it impossible to distinguish
+                // a 401 (bad key) from a network timeout from a malformed response.
+                tracing::warn!(
+                    "LLM provider '{}' failed: {} — trying next provider",
+                    provider.name(),
+                    e
+                );
             }
         }
     }
-    if cfg.provider_available("anthropic") && cfg.anthropic.api_key.is_some() {
-        if let Some(raw) = call_anthropic(client, cfg, prompt).await {
-            if let Some(parsed) = parse_llm_output(&raw) {
-                return Some((parsed, "anthropic".to_string()));
-            }
-        }
-    }
-    if let Some(raw) = call_ollama(client, cfg, prompt).await {
-        if let Some(parsed) = parse_llm_output(&raw) {
-            return Some((parsed, "ollama".to_string()));
-        }
-    }
+
     None
 }
 
-async fn call_openai(
-    client: &reqwest::Client,
-    cfg: &crate::llm::config::LlmConfig,
-    prompt: &str,
-) -> Option<String> {
-    let url = format!(
-        "{}/chat/completions",
-        cfg.openai.base_url.trim_end_matches('/')
-    );
-    let payload = json!({
-        "model": cfg.openai.model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": cfg.openai.temperature,
-        "max_tokens": cfg.openai.max_tokens,
-        "response_format": {"type": "json_object"},
-    });
-    let resp = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .header(
-            "Authorization",
-            format!("Bearer {}", cfg.openai.api_key.as_deref()?),
-        )
-        .json(&payload)
-        .send()
-        .await
-        .ok()?;
-    let body: Value = resp.json().await.ok()?;
-    let content = body
-        .get("choices")?
-        .get(0)?
-        .get("message")?
-        .get("content")?
-        .as_str()?;
-    Some(content.to_string())
-}
-
-async fn call_anthropic(
-    client: &reqwest::Client,
-    cfg: &crate::llm::config::LlmConfig,
-    prompt: &str,
-) -> Option<String> {
-    let url = format!("{}/messages", cfg.anthropic.base_url.trim_end_matches('/'));
-    let payload = json!({
-        "model": cfg.anthropic.model,
-        "max_tokens": cfg.anthropic.max_tokens,
-        "messages": [{"role": "user", "content": prompt}],
-    });
-    let resp = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .header("x-api-key", cfg.anthropic.api_key.as_deref()?)
-        .header("anthropic-version", "2023-06-01")
-        .json(&payload)
-        .send()
-        .await
-        .ok()?;
-    let body: Value = resp.json().await.ok()?;
-    let content_list = body.get("content")?.as_array()?;
-    let text_block = content_list
-        .iter()
-        .find(|b| b.get("type").and_then(|v| v.as_str()) == Some("text"))?;
-    Some(text_block.get("text")?.as_str()?.to_string())
-}
-
-async fn call_ollama(
-    client: &reqwest::Client,
-    cfg: &crate::llm::config::LlmConfig,
-    prompt: &str,
-) -> Option<String> {
-    let url = format!(
-        "{}/v1/chat/completions",
-        cfg.ollama.base_url.trim_end_matches('/')
-    );
-    let payload = json!({
-        "model": cfg.ollama.model,
-        "messages": [{"role": "user", "content": prompt}],
-        "stream": false,
-    });
-    let resp = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .json(&payload)
-        .send()
-        .await
-        .ok()?;
-    let body: Value = resp.json().await.ok()?;
-    let content = body
-        .get("choices")?
-        .get(0)?
-        .get("message")?
-        .get("content")?
-        .as_str()?;
-    Some(content.to_string())
-}
 
 fn parse_llm_output(raw: &str) -> Option<Value> {
     let mut text = raw.trim();
@@ -3287,7 +3309,7 @@ fn store_synthesis(
             }
         }
         Err(e) => {
-            eprintln!("Failed to store synthesis node: {}", e);
+            tracing::warn!("Failed to store synthesis node: {}", e);
         }
     }
     created

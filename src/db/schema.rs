@@ -192,6 +192,8 @@ CREATE INDEX IF NOT EXISTS idx_edges_source_target_valid ON edges(source_id, tar
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_events_action ON events(event_action);
 CREATE INDEX IF NOT EXISTS idx_events_node ON events(node_id);
+CREATE INDEX IF NOT EXISTS idx_events_source ON events(source_id);
+CREATE INDEX IF NOT EXISTS idx_events_target ON events(target_id);
 
 -- Health checks table
 CREATE TABLE IF NOT EXISTS health_checks (
@@ -305,6 +307,8 @@ CREATE TABLE IF NOT EXISTS leases (
     expires_at REAL NOT NULL,
     renewal_count INTEGER DEFAULT 0
 );
+
+CREATE INDEX IF NOT EXISTS idx_leases_expires ON leases(expires_at);
 "#;
 
 const MIGRATE_TRIGGERS: &str = r#"

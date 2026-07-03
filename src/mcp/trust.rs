@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use rmcp::Error as McpError;
+use rmcp::ErrorData as McpError;
 
 use crate::db::pool::ConnectionPool;
 

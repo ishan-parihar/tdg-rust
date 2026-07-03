@@ -15,6 +15,8 @@ pub struct JanitorReport {
     pub parents_backfilled: i64,
     pub vec_missing: i64,
     pub vec_embedded: i64,
+    pub mutations_purged: i64,
+    pub health_checks_purged: i64,
     pub dry_run: bool,
     pub timestamp: String,
 }
@@ -37,6 +39,8 @@ impl<'a> Janitor<'a> {
             parents_backfilled: 0,
             vec_missing: 0,
             vec_embedded: 0,
+            mutations_purged: 0,
+            health_checks_purged: 0,
             dry_run,
             timestamp: Utc::now().to_rfc3339(),
         };
@@ -48,6 +52,7 @@ impl<'a> Janitor<'a> {
         self.prune_orphaned_edges(&mut report, dry_run);
         self.backfill_parent_ids(&mut report, dry_run);
         self.backfill_vec(&mut report, dry_run);
+        self.purge_old_audit_data(&mut report, dry_run);
 
         info!("Janitor finished: {}", report_summary(&report));
         Ok(report)
@@ -318,6 +323,90 @@ impl<'a> Janitor<'a> {
             warn!("Vec backfill failed: {}", e);
         }
     }
+
+    /// Purge old mutation_log and health_checks rows to prevent unbounded growth.
+    ///
+    /// - mutation_log: keep 90 days (configurable via TDG_MUTATION_RETENTION_DAYS)
+    /// - health_checks: keep 30 days (configurable via TDG_HEALTH_CHECK_RETENTION_DAYS)
+    ///
+    /// Previously, mutation_log and health_checks had NO purge mechanism — they
+    /// grew forever. The events table had a 90-day purge in the Archiver, but
+    /// only ran when SelfManager was explicitly invoked. Now the Janitor purges
+    /// all three audit tables on every run.
+    fn purge_old_audit_data(&self, report: &mut JanitorReport, dry_run: bool) {
+        let mutation_retention_days = std::env::var("TDG_MUTATION_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(90);
+        let health_check_retention_days = std::env::var("TDG_HEALTH_CHECK_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(30);
+
+        if dry_run {
+            let mutation_count: i64 = self.conn
+                .query_row(
+                    "SELECT COUNT(*) FROM mutation_log WHERE timestamp < ?1",
+                    rusqlite::params![format!("{}T00:00:00Z",
+                        chrono::Utc::now().naive_utc()
+                            .checked_sub_signed(chrono::Duration::days(mutation_retention_days))
+                            .map(|t| t.format("%Y-%m-%d").to_string())
+                            .unwrap_or_default())],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            let health_count: i64 = self.conn
+                .query_row(
+                    "SELECT COUNT(*) FROM health_checks WHERE timestamp < ?1",
+                    rusqlite::params![format!("{}T00:00:00Z",
+                        chrono::Utc::now().naive_utc()
+                            .checked_sub_signed(chrono::Duration::days(health_check_retention_days))
+                            .map(|t| t.format("%Y-%m-%d").to_string())
+                            .unwrap_or_default())],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            report.mutations_purged = mutation_count;
+            report.health_checks_purged = health_count;
+            return;
+        }
+
+        // Purge old mutation_log rows
+        let mutation_cutoff = chrono::Utc::now().naive_utc()
+            .checked_sub_signed(chrono::Duration::days(mutation_retention_days))
+            .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
+        match self.conn.execute(
+            "DELETE FROM mutation_log WHERE timestamp < ?1",
+            rusqlite::params![&mutation_cutoff],
+        ) {
+            Ok(count) => {
+                report.mutations_purged = count as i64;
+                if count > 0 {
+                    info!("Purged {} mutation_log rows older than {} days", count, mutation_retention_days);
+                }
+            }
+            Err(e) => warn!("Failed to purge mutation_log: {}", e),
+        }
+
+        // Purge old health_checks rows
+        let health_cutoff = chrono::Utc::now().naive_utc()
+            .checked_sub_signed(chrono::Duration::days(health_check_retention_days))
+            .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
+        match self.conn.execute(
+            "DELETE FROM health_checks WHERE timestamp < ?1",
+            rusqlite::params![&health_cutoff],
+        ) {
+            Ok(count) => {
+                report.health_checks_purged = count as i64;
+                if count > 0 {
+                    info!("Purged {} health_checks rows older than {} days", count, health_check_retention_days);
+                }
+            }
+            Err(e) => warn!("Failed to purge health_checks: {}", e),
+        }
+    }
 }
 
 fn report_summary(report: &JanitorReport) -> String {
@@ -344,6 +433,12 @@ fn report_summary(report: &JanitorReport) -> String {
         parts.push(format!(
             "Vec: {} missing, {} embedded",
             report.vec_missing, report.vec_embedded
+        ));
+    }
+    if report.mutations_purged > 0 || report.health_checks_purged > 0 {
+        parts.push(format!(
+            "Purged: {} mutations, {} health_checks",
+            report.mutations_purged, report.health_checks_purged
         ));
     }
     if parts.is_empty() {
