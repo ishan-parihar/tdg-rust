@@ -44,12 +44,14 @@ pub enum JobType {
     LesserTick,
     /// Inject catalyst into a holon and tick if threshold crossed.
     CatalystInjection,
-    /// Recompute the attractor field for a holon (Phase 3 — stub for now).
+    /// Recompute the attractor field for a holon (Phase 3).
     RecomputeAttractor,
-    /// Recompute health metrics (Phase 3 — stub for now).
+    /// Recompute health metrics (Phase 3).
     RecomputeHealth,
-    /// Update resonance graph for a holon (Phase 3 — stub for now).
+    /// Update resonance graph for a holon (Phase 3).
     ResonanceUpdate,
+    /// Run a greater-cycle tick on a holon (Phase 4 — check for transformation).
+    GreaterTick,
 }
 
 impl JobType {
@@ -60,6 +62,7 @@ impl JobType {
             Self::RecomputeAttractor => "recompute_attractor",
             Self::RecomputeHealth => "recompute_health",
             Self::ResonanceUpdate => "resonance_update",
+            Self::GreaterTick => "greater_tick",
         }
     }
 
@@ -70,6 +73,7 @@ impl JobType {
             "recompute_attractor" => Some(Self::RecomputeAttractor),
             "recompute_health" => Some(Self::RecomputeHealth),
             "resonance_update" => Some(Self::ResonanceUpdate),
+            "greater_tick" => Some(Self::GreaterTick),
             _ => None,
         }
     }
@@ -242,7 +246,128 @@ fn execute_job(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
         JobType::RecomputeAttractor => execute_recompute_attractor(conn, job),
         JobType::RecomputeHealth => execute_recompute_health(conn, job),
         JobType::ResonanceUpdate => execute_resonance_update(conn, job),
+        JobType::GreaterTick => execute_greater_tick(conn, job),
     }
+}
+
+/// Execute a greater-cycle tick job (Phase 4).
+///
+/// Loads the holon's greater cycle state + lesser cycle state, runs the
+/// greater tick, saves the state, and handles:
+/// - Transformation events → log + mark attractor dirty
+/// - Choice locked → enqueue downward pressure to children
+/// - Octave ascended → trigger stage advancement via telearchy
+fn execute_greater_tick(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
+    let mut greater = crate::metabolism::greater_cycle::load_state(conn, &job.holon_id)?;
+    let lesser = crate::metabolism::lesser_cycle::load_state(conn, &job.holon_id)?;
+
+    let thresholds = crate::metabolism::greater_cycle::GreaterThresholds::default();
+    let result = crate::metabolism::greater_cycle::tick(&mut greater, &lesser, &thresholds);
+
+    // Save the updated greater cycle state
+    crate::metabolism::greater_cycle::save_state(conn, &job.holon_id, &greater)?;
+
+    // Log transformation events
+    if result.transformation_fired {
+        tracing::info!(
+            "Holon {} TRANSFORMATION fired: crucible={:?}, significator={:.2}, pressure={:.2}",
+            job.holon_id,
+            greater.crucible_intensity,
+            greater.significator,
+            greater.transformation_pressure
+        );
+
+        // Transformation restructures the Significator → attractor field is stale
+        let _ = crate::metabolism::attractor::mark_dirty(conn, &job.holon_id);
+        let _ = enqueue_job(
+            conn,
+            &job.holon_id,
+            JobType::RecomputeAttractor,
+            serde_json::json!({"trigger": "greater_cycle_transformation"}),
+            PRIORITY_HIGH,
+        );
+    }
+
+    // Log phase transitions
+    if result.transitioned {
+        if let (Some(from), Some(to)) = (result.from_phase.as_ref(), result.to_phase.as_ref()) {
+            tracing::debug!(
+                "Holon {} greater cycle: {} → {}",
+                job.holon_id,
+                from,
+                to
+            );
+        }
+    }
+
+    // Handle octave ascended → stage advancement + downward pressure
+    if result.octave_ascended {
+        tracing::info!(
+            "Holon {} OCTAVE ASCENDED: octave_count={}, triggering stage advancement",
+            job.holon_id,
+            greater.octave_count
+        );
+
+        // Trigger stage advancement via telearchy (if the holon has a developmental_stage)
+        if let Some(node) = crate::db::crud::get_node(conn, &job.holon_id)? {
+            if node.developmental_stage.is_some() {
+                let telearchy = crate::telearchy::TelearchyEngine::new(conn);
+                match telearchy.advance_stage(&job.holon_id) {
+                    Ok(Some(new_stage)) => {
+                        tracing::info!(
+                            "Holon {} stage advanced to {:?} via Transformation event",
+                            job.holon_id,
+                            new_stage
+                        );
+                    }
+                    Ok(None) => {
+                        // Stage didn't advance (evidence/age gates not met) — that's fine
+                        tracing::debug!(
+                            "Holon {} stage not advanced (gates not met) despite Transformation",
+                            job.holon_id
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Holon {} stage advancement failed after Transformation: {}",
+                            job.holon_id,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        // Send downward pressure to children
+        if result.downward_pressure > 0.0 {
+            // Get children via DECOMPOSES_TO edges
+            let children = crate::db::crud::get_edges(
+                conn,
+                Some(&job.holon_id),
+                None,
+                Some("DECOMPOSES_TO"),
+                None,
+                100,
+            )?;
+
+            for edge in children {
+                let payload = serde_json::json!({
+                    "catalyst_amount": result.downward_pressure,
+                    "source": "greater_cycle_downward",
+                    "source_holon": job.holon_id,
+                });
+                let _ = enqueue_job(
+                    conn,
+                    &edge.target_id,
+                    JobType::CatalystInjection,
+                    payload,
+                    PRIORITY_NORMAL,
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Execute a RecomputeAttractor job (Phase 3).

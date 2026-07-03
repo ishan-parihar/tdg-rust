@@ -151,9 +151,6 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     conn.execute_batch(MIGRATE_METABOLISM)?;
 
     // Phase 11: Attractor field + health metrics (Phase 3 of refactor).
-    // - attractor_field_json, health_json columns on nodes
-    // - attractor_dirty, health_dirty flag columns
-    // - resonance_graph table (materialized top-K partners per holon)
     for (table, column, typedef) in &[
         ("nodes", "attractor_field_json", "TEXT"),
         ("nodes", "health_json", "TEXT"),
@@ -169,6 +166,13 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     }
 
     conn.execute_batch(MIGRATE_RESONANCE_GRAPH)?;
+
+    // Phase 12: Greater cycle state (Phase 4 of refactor).
+    // - greater_cycle_json column on nodes (stores S·T·G·Ch state)
+    conn.execute_batch(
+        "ALTER TABLE nodes ADD COLUMN greater_cycle_json TEXT",
+    )
+    .ok();
 
     Ok(())
 }
@@ -231,7 +235,9 @@ CREATE TABLE IF NOT EXISTS nodes (
     attractor_field_json TEXT,
     health_json TEXT,
     attractor_dirty INTEGER DEFAULT 0,
-    health_dirty INTEGER DEFAULT 0
+    health_dirty INTEGER DEFAULT 0,
+    -- Phase 4: Greater cycle state (S·T·G·Ch)
+    greater_cycle_json TEXT
 );
 
 -- Edges table

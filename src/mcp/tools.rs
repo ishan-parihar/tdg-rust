@@ -1426,6 +1426,126 @@ impl TdgServer {
         .await
     }
 
+    /// Query or manually tick a holon's greater cycle (Phase 4).
+    ///
+    /// Returns the greater cycle state: phase (9-phase S·T·G·Ch cycle),
+    /// significator magnitude, transformation pressure, choice committed,
+    /// crucible intensity, crystallization ratio, octave count.
+    ///
+    /// If `tick` is true, manually runs one greater-cycle tick (for testing).
+    /// If `include_readiness` is true (default), includes the 4-pillar
+    /// phase-transition readiness assessment.
+    #[tool(description = "Query or tick a holon's greater cycle (S·T·G·Ch, phase transitions)")]
+    pub(crate) async fn tdg_greater_cycle(
+        &self,
+        Parameters(params): Parameters<crate::mcp::params::GreaterCycleParams>,
+    ) -> Result<String, McpError> {
+        let pool = self.pool.clone();
+        let node_id = params.node_id.clone();
+        let do_tick = params.tick.unwrap_or(false);
+        let include_readiness = params.include_readiness.unwrap_or(true);
+
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+
+            // Load current state
+            let mut state = crate::metabolism::greater_cycle::load_state(&conn, &node_id)
+                .map_err(mcp_err)?;
+            let lesser = crate::metabolism::lesser_cycle::load_state(&conn, &node_id)
+                .map_err(mcp_err)?;
+
+            let previous_phase = state.phase.clone();
+            let mut tick_result = None;
+
+            if do_tick {
+                let thresholds = crate::metabolism::greater_cycle::GreaterThresholds::default();
+                let result = crate::metabolism::greater_cycle::tick(
+                    &mut state,
+                    &lesser,
+                    &thresholds,
+                );
+                crate::metabolism::greater_cycle::save_state(&conn, &node_id, &state)
+                    .map_err(mcp_err)?;
+                tick_result = Some(result);
+            }
+
+            // Compute readiness if requested
+            let readiness = if include_readiness {
+                // Get edge count and node diversity for the readiness assessment
+                let edge_count: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM edges WHERE (source_id = ?1 OR target_id = ?1) AND valid_to IS NULL",
+                    rusqlite::params![node_id],
+                    |row| row.get(0),
+                ).unwrap_or(0);
+
+                let node_diversity: i64 = conn.query_row(
+                    "SELECT COUNT(DISTINCT node_type) FROM edges e
+                     JOIN nodes n ON n.id = e.target_id
+                     WHERE e.source_id = ?1 AND e.valid_to IS NULL",
+                    rusqlite::params![node_id],
+                    |row| row.get(0),
+                ).unwrap_or(0);
+
+                // Get G_z from health if available
+                let g_z = crate::metabolism::health::load(&conn, &node_id)
+                    .map_err(mcp_err)?
+                    .map(|h| h.g_z)
+                    .unwrap_or(50.0);
+
+                let readiness = crate::metabolism::greater_cycle::assess_readiness(
+                    &lesser,
+                    &state,
+                    edge_count,
+                    node_diversity,
+                    g_z,
+                );
+
+                Some(json!({
+                    "prigogine": readiness.prigogine,
+                    "chaisson": readiness.chaisson,
+                    "kauffman": readiness.kauffman,
+                    "landauer": readiness.landauer,
+                    "total": readiness.total,
+                    "at_bifurcation": readiness.at_bifurcation,
+                }))
+            } else {
+                None
+            };
+
+            let tick_info = tick_result.map(|r| json!({
+                "transitioned": r.transitioned,
+                "from_phase": r.from_phase.map(|p| p.as_str()),
+                "to_phase": r.to_phase.map(|p| p.as_str()),
+                "transformation_fired": r.transformation_fired,
+                "choice_locked": r.choice_locked,
+                "octave_ascended": r.octave_ascended,
+                "stage_advancement_triggered": r.stage_advancement_triggered,
+                "downward_pressure": r.downward_pressure,
+            }));
+
+            Ok(serde_json::to_string(&json!({
+                "node_id": node_id,
+                "previous_phase": previous_phase.as_str(),
+                "current_phase": state.phase.as_str(),
+                "significator": state.significator,
+                "great_way": state.great_way,
+                "transformation_pressure": state.transformation_pressure,
+                "choice_committed": state.choice_committed,
+                "crucible_intensity": state.crucible_intensity.as_str(),
+                "crystallization_ratio": state.crystallization_ratio,
+                "octave_count": state.octave_count,
+                "in_crucible": state.in_crucible(),
+                "choice_complete": state.choice_complete(),
+                "transformation_threshold": state.transformation_threshold(),
+                "last_transition_at": state.last_transition_at,
+                "tick_result": tick_info,
+                "readiness": readiness,
+            }))
+            .unwrap_or_default())
+        })
+        .await
+    }
+
     #[tool(description = "Connect two nodes with an edge")]
     pub(crate) async fn tdg_connect(
         &self,

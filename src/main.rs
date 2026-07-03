@@ -514,6 +514,12 @@ fn main() -> anyhow::Result<()> {
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(5 * 60);
+            // Phase 4: Greater-cycle sweep interval (default 10 min).
+            // Enqueues GreaterTick jobs for holons with accumulated pressure.
+            let greater_cycle_interval_secs = std::env::var("TDG_GREATER_CYCLE_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(10 * 60);
 
             // Clone the pool Arc for the metabolism worker (before moving into maintenance spawn)
             let metabolism_pool = maintenance_pool.clone();
@@ -521,16 +527,68 @@ fn main() -> anyhow::Result<()> {
             let maintenance_handle = rt.spawn(async move {
                 let self_manager_interval = std::time::Duration::from_secs(self_manager_interval_secs);
                 let health_check_interval = std::time::Duration::from_secs(health_check_interval_secs);
+                let greater_cycle_interval = std::time::Duration::from_secs(greater_cycle_interval_secs);
                 let mut self_manager_ticker =
                     tokio::time::interval(self_manager_interval);
                 let mut health_check_ticker =
                     tokio::time::interval(health_check_interval);
+                let mut greater_cycle_ticker =
+                    tokio::time::interval(greater_cycle_interval);
                 // Skip the first immediate tick (we don't want to run maintenance
                 // during startup — let the server stabilize first).
                 self_manager_ticker.tick().await;
                 health_check_ticker.tick().await;
+                greater_cycle_ticker.tick().await;
                 loop {
                     tokio::select! {
+                        _ = greater_cycle_ticker.tick() => {
+                            // Phase 4: Greater-cycle sweep.
+                            // Enqueue GreaterTick jobs for holons that have
+                            // accumulated transformation pressure in their lesser
+                            // cycle state. This is the Tier 3 scheduled integration
+                            // that fires the discontinuous/ratcheting greater cycle.
+                            let pool = maintenance_pool.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if let Ok(conn) = pool.get_connection() {
+                                    // Find holons with transformation_pressure > 0
+                                    // (they have lesser cycle state that needs to feed upward)
+                                    if let Ok(mut stmt) = conn.prepare(
+                                        "SELECT id FROM nodes
+                                         WHERE valid_to IS NULL
+                                           AND lesser_cycle_json IS NOT NULL
+                                           AND lesser_cycle_json LIKE '%transformation_pressure%'
+                                         ORDER BY updated_at DESC
+                                         LIMIT 200",
+                                    ) {
+                                        let holon_ids: Vec<String> = stmt
+                                            .query_map([], |row| row.get(0))
+                                            .ok()
+                                            .map(|iter| iter.filter_map(|r| r.ok()).collect())
+                                            .unwrap_or_default();
+
+                                        let mut enqueued = 0;
+                                        for holon_id in &holon_ids {
+                                            let _ = tdg_rust::metabolism::worker::enqueue_job(
+                                                &conn,
+                                                holon_id,
+                                                tdg_rust::metabolism::worker::JobType::GreaterTick,
+                                                serde_json::json!({"trigger": "tier3_sweep"}),
+                                                tdg_rust::metabolism::worker::PRIORITY_LOW,
+                                            );
+                                            enqueued += 1;
+                                        }
+
+                                        if enqueued > 0 {
+                                            tracing::info!(
+                                                "Greater-cycle sweep: enqueued {} GreaterTick jobs",
+                                                enqueued
+                                            );
+                                        }
+                                    }
+                                    pool.release_connection(conn);
+                                }
+                            }).await.ok();
+                        }
                         _ = self_manager_ticker.tick() => {
                             tracing::info!("Scheduled maintenance: running SelfManager cycle");
                             let pool = maintenance_pool.clone();

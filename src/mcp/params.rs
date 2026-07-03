@@ -454,3 +454,14 @@ pub struct ResonancePartnersParams {
     #[schemars(description = "Max number of partners to return (default: 10)")]
     pub limit: Option<i64>,
 }
+
+/// Parameters for querying/manually ticking a holon's greater cycle (Phase 4).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GreaterCycleParams {
+    #[schemars(description = "Node ID to query")]
+    pub node_id: String,
+    #[schemars(description = "Manually tick the greater cycle (default: false — just query)")]
+    pub tick: Option<bool>,
+    #[schemars(description = "Include phase-transition readiness assessment (default: true)")]
+    pub include_readiness: Option<bool>,
+}
