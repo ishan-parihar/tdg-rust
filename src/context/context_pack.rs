@@ -48,6 +48,12 @@ pub struct ContextPack {
     pub scale_code: Option<String>,
     pub type_class: String,
     pub synthesis_status: String,
+    /// Phase 13: Realm placement ("gross" | "subtle" | "causal").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realm_placement: Option<String>,
+    /// Phase 13: Collectivity ("individual" | "collective" | "universal").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collectivity: Option<String>,
 
     // ─── Intra-holonic (interior state) ─────────────────────────────────────
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -214,6 +220,11 @@ pub fn build(
     depth: u8,
     token_budget: Option<usize>,
 ) -> TdgResult<ContextPack> {
+    // Phase 13: Check cache first (5-min TTL)
+    if let Some(cached) = check_cache(conn, holon_id, scope, depth, token_budget) {
+        return Ok(cached);
+    }
+
     // Load the node
     let node = crate::db::crud::get_node(conn, holon_id)?
         .ok_or_else(|| crate::error::TdgError::NotFound(holon_id.to_string()))?;
@@ -227,7 +238,7 @@ pub fn build(
         .map(|f| f.type_class.clone())
         .unwrap_or_else(|| "uncomputed".to_string());
 
-    // Build identity
+    // Build identity (Phase 13: now includes realm_placement)
     let mut pack = ContextPack {
         holon_id: node.id.clone(),
         node_type: node.node_type.clone(),
@@ -235,6 +246,8 @@ pub fn build(
         scale_code: node.scale_code.clone(),
         type_class: type_class.clone(),
         synthesis_status: node.synthesis_status.clone(),
+        realm_placement: node.realm_placement.clone(),
+        collectivity: node.collectivity.clone(),
         grounding: Grounding {
             synthesis_status: node.synthesis_status.clone(),
             is_stable: af.as_ref().map(|f| f.is_stable()).unwrap_or(false),
@@ -298,6 +311,9 @@ pub fn build(
     if let Some(budget) = token_budget {
         apply_token_budget(&mut pack, budget);
     }
+
+    // Phase 13: Save to cache
+    save_cache(conn, holon_id, scope, depth, token_budget, &pack);
 
     Ok(pack)
 }
@@ -606,6 +622,12 @@ impl ContextPack {
         if let Some(scale) = &self.scale_code {
             md.push_str(&format!("- **Scale**: {}\n", scale));
         }
+        if let Some(realm) = &self.realm_placement {
+            md.push_str(&format!("- **Realm**: {}\n", realm));
+        }
+        if let Some(coll) = &self.collectivity {
+            md.push_str(&format!("- **Collectivity**: {}\n", coll));
+        }
         md.push_str(&format!(
             "- **Type class**: {} [status: hypothesis-graded]\n",
             self.type_class
@@ -739,6 +761,87 @@ impl ContextPack {
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string())
     }
+}
+
+// ─── Phase 13: ContextPack Caching ───────────────────────────────────────────
+
+const CACHE_TTL_SECS: i64 = 300; // 5 minutes
+
+/// Check the context_cache table for a fresh entry.
+/// Returns Some(ContextPack) if cached and fresh, None otherwise.
+fn check_cache(
+    conn: &rusqlite::Connection,
+    holon_id: &str,
+    scope: &str,
+    depth: u8,
+    token_budget: Option<usize>,
+) -> Option<ContextPack> {
+    let cache_key = format!(
+        "{}:{}:{}:{}",
+        holon_id,
+        scope,
+        depth,
+        token_budget.unwrap_or(0)
+    );
+
+    let now_secs = chrono::Utc::now().timestamp();
+    let cutoff = now_secs - CACHE_TTL_SECS;
+
+    let json: Option<String> = conn
+        .query_row(
+            "SELECT context_json FROM context_cache
+             WHERE cache_key = ?1 AND computed_at_secs > ?2",
+            rusqlite::params![cache_key, cutoff],
+            |row| row.get(0),
+        )
+        .ok();
+
+    json.and_then(|s| serde_json::from_str(&s).ok())
+}
+
+/// Save a ContextPack to the cache.
+fn save_cache(
+    conn: &rusqlite::Connection,
+    holon_id: &str,
+    scope: &str,
+    depth: u8,
+    token_budget: Option<usize>,
+    pack: &ContextPack,
+) {
+    let cache_key = format!(
+        "{}:{}:{}:{}",
+        holon_id,
+        scope,
+        depth,
+        token_budget.unwrap_or(0)
+    );
+
+    let now_secs = chrono::Utc::now().timestamp();
+    let json = serde_json::to_string(pack).unwrap_or_default();
+
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS context_cache (
+            cache_key TEXT PRIMARY KEY,
+            holon_id TEXT NOT NULL,
+            context_json TEXT NOT NULL,
+            computed_at_secs INTEGER NOT NULL
+        )",
+        [],
+    );
+
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO context_cache (cache_key, holon_id, context_json, computed_at_secs)
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![cache_key, holon_id, json, now_secs],
+    );
+}
+
+/// Invalidate cache entries for a holon (called on writes).
+pub fn invalidate_cache(conn: &rusqlite::Connection, holon_id: &str) {
+    let _ = conn.execute(
+        "DELETE FROM context_cache WHERE holon_id = ?1",
+        rusqlite::params![holon_id],
+    );
 }
 
 #[cfg(test)]

@@ -515,11 +515,23 @@ fn main() -> anyhow::Result<()> {
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(5 * 60);
             // Phase 4: Greater-cycle sweep interval (default 10 min).
-            // Enqueues GreaterTick jobs for holons with accumulated pressure.
             let greater_cycle_interval_secs = std::env::var("TDG_GREATER_CYCLE_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(10 * 60);
+
+            // Phase 12: Graph-level mind integration interval (default 15 min).
+            let mind_integration_interval_secs = std::env::var("TDG_MIND_INTEGRATION_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(15 * 60);
+
+            // Phase 15: Resonance graph full rebuild interval (default 4 hours).
+            // Corrects incremental drift in the resonance_graph table.
+            let resonance_rebuild_interval_secs = std::env::var("TDG_RESONANCE_REBUILD_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(4 * 60 * 60);
 
             // Clone the pool Arc for the metabolism worker (before moving into maintenance spawn)
             let metabolism_pool = maintenance_pool.clone();
@@ -528,19 +540,54 @@ fn main() -> anyhow::Result<()> {
                 let self_manager_interval = std::time::Duration::from_secs(self_manager_interval_secs);
                 let health_check_interval = std::time::Duration::from_secs(health_check_interval_secs);
                 let greater_cycle_interval = std::time::Duration::from_secs(greater_cycle_interval_secs);
+                let mind_integration_interval = std::time::Duration::from_secs(mind_integration_interval_secs);
                 let mut self_manager_ticker =
                     tokio::time::interval(self_manager_interval);
                 let mut health_check_ticker =
                     tokio::time::interval(health_check_interval);
                 let mut greater_cycle_ticker =
                     tokio::time::interval(greater_cycle_interval);
+                let mut mind_integration_ticker =
+                    tokio::time::interval(mind_integration_interval);
+                let mut resonance_rebuild_ticker =
+                    tokio::time::interval(std::time::Duration::from_secs(resonance_rebuild_interval_secs));
                 // Skip the first immediate tick (we don't want to run maintenance
                 // during startup — let the server stabilize first).
                 self_manager_ticker.tick().await;
                 health_check_ticker.tick().await;
                 greater_cycle_ticker.tick().await;
+                mind_integration_ticker.tick().await;
+                resonance_rebuild_ticker.tick().await;
                 loop {
                     tokio::select! {
+                        _ = mind_integration_ticker.tick() => {
+                            // Phase 12: Graph-level mind integration — the closed loop.
+                            // Diagnoses graph-level patterns and injects catalyst
+                            // to force integration. This is what turns TDG from a
+                            // dashboard into a mind.
+                            let pool = maintenance_pool.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if let Ok(conn) = pool.get_connection() {
+                                    match tdg_rust::mind::graph_mind::run_integration(&conn) {
+                                        Ok(report) => {
+                                            if !report.diagnoses.is_empty() {
+                                                tracing::info!(
+                                                    "Graph mind integration: {} diagnoses, {} injections (mean_g_z={:.1}, mean_p_z={:.1})",
+                                                    report.diagnoses.len(),
+                                                    report.injections_enqueued,
+                                                    report.mean_g_z,
+                                                    report.mean_p_z
+                                                );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("Graph mind integration failed: {}", e);
+                                        }
+                                    }
+                                    pool.release_connection(conn);
+                                }
+                            }).await.ok();
+                        }
                         _ = greater_cycle_ticker.tick() => {
                             // Phase 4: Greater-cycle sweep.
                             // Enqueue GreaterTick jobs for holons that have
@@ -626,6 +673,78 @@ fn main() -> anyhow::Result<()> {
                                         latency,
                                         success,
                                         if success { None } else { Some("SELECT 1 health probe failed".to_string()) }.as_deref(),
+                                    );
+                                    pool.release_connection(conn);
+                                }
+                            }).await.ok();
+                        }
+                        _ = resonance_rebuild_ticker.tick() => {
+                            // Phase 15: Resonance graph full rebuild.
+                            // Corrects incremental drift by recomputing all
+                            // resonance entries from scratch.
+                            let pool = maintenance_pool.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if let Ok(conn) = pool.get_connection() {
+                                    // Clear and rebuild resonance_graph for all stable holons
+                                    let _ = conn.execute("DELETE FROM resonance_graph", []);
+
+                                    // Load all holons with attractor fields
+                                    let holons: Vec<(String, String)> = {
+                                        let stmt_result = conn.prepare(
+                                            "SELECT id, attractor_field_json FROM nodes
+                                             WHERE valid_to IS NULL
+                                               AND attractor_field_json IS NOT NULL
+                                               AND attractor_field_json != ''",
+                                        );
+
+                                        match stmt_result {
+                                            Ok(mut stmt) => {
+                                                let collected: Vec<(String, String)> = stmt
+                                                    .query_map([], |row| {
+                                                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                                                    })
+                                                    .ok()
+                                                    .map(|iter| iter.filter_map(|r| r.ok()).collect())
+                                                    .unwrap_or_default();
+                                                collected
+                                            }
+                                            Err(_) => {
+                                                // Can't release conn here (still borrowed by stmt_result).
+                                                // Just return — conn will be dropped (acceptable for background task).
+                                                return;
+                                            }
+                                        }
+                                    };
+
+                                    // Now conn is no longer borrowed — we can use it for inserts
+                                    let mut rebuilt = 0;
+                                    for (holon_id, af_json) in &holons {
+                                        if let Some(af1) = tdg_rust::metabolism::attractor::AttractorField::from_json(af_json) {
+                                            if !af1.is_stable() { continue; }
+                                            for (partner_id, partner_json) in &holons {
+                                                if holon_id == partner_id { continue; }
+                                                if let Some(af2) = tdg_rust::metabolism::attractor::AttractorField::from_json(partner_json) {
+                                                    if !af2.is_stable() { continue; }
+                                                    let r = tdg_rust::metabolism::health::resonance(&af1, &af2);
+                                                    if r > 0.0 {
+                                                        let now = chrono::Utc::now().to_rfc3339();
+                                                        let _ = conn.execute(
+                                                            "INSERT OR REPLACE INTO resonance_graph
+                                                                (holon_id, partner_id, resonance_score,
+                                                                 complementarity, gamma_compat, great_way_intersect, computed_at)
+                                                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                                                            rusqlite::params![holon_id, partner_id, r, r, r, r, now],
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            rebuilt += 1;
+                                        }
+                                    }
+
+                                    tracing::info!(
+                                        "Resonance graph rebuilt: {} holons processed",
+                                        rebuilt
                                     );
                                     pool.release_connection(conn);
                                 }

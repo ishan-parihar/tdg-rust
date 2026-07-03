@@ -150,6 +150,11 @@ pub struct GreaterCycleState {
     pub crucible_intensity: CrucibleIntensity,
     /// Crystallization ratio ∈ [0, 1] — how close Choice is to locking.
     pub crystallization_ratio: f64,
+    /// Phase 15: Dissolution ratio ∈ [0, 1] — how much of the old Significator
+    /// has dissolved during the crucible. 0 = no dissolution, 1 = complete dissolution.
+    /// Tracks the Significator-Liminality state per HoloOS 08.8.14.
+    #[serde(default)]
+    pub dissolution_ratio: f64,
     /// Number of greater cycles completed (octaves ascended).
     pub octave_count: u64,
     /// Timestamp of last phase transition.
@@ -168,6 +173,7 @@ impl GreaterCycleState {
             choice_committed: 0.0,
             crucible_intensity: CrucibleIntensity::None,
             crystallization_ratio: 0.0,
+            dissolution_ratio: 0.0,
             octave_count: 0,
             last_transition_at: None,
         }
@@ -183,6 +189,7 @@ impl GreaterCycleState {
             choice_committed: 0.0,
             crucible_intensity: CrucibleIntensity::None,
             crystallization_ratio: 0.0,
+            dissolution_ratio: 0.0,
             octave_count: 0,
             last_transition_at: None,
         }
@@ -353,6 +360,9 @@ pub fn tick(
             let consumed = state.transformation_pressure * 0.5; // consume 50%
             state.transformation_pressure -= consumed;
 
+            // Phase 15: Track dissolution ratio — how much of the old Significator dissolved
+            let old_significator = state.significator;
+
             // Significator is restructured (magnitude shifts)
             // Acute crucibles cause larger shifts
             let shift = match state.crucible_intensity {
@@ -361,6 +371,11 @@ pub fn tick(
                 _ => 0.0,
             };
             state.significator = (state.significator + shift).min(1.0);
+
+            // Phase 15: dissolution_ratio = how much the Significator changed
+            state.dissolution_ratio = ((state.significator - old_significator).abs()
+                / (old_significator + 0.01))
+                .min(1.0);
 
             // Move to reintegration
             transition(
@@ -817,6 +832,7 @@ mod tests {
             choice_committed: 0.0,
             crucible_intensity: CrucibleIntensity::Acute,
             crystallization_ratio: 0.0,
+            dissolution_ratio: 0.0,
             octave_count: 2,
             last_transition_at: Some("2026-07-03T12:00:00Z".to_string()),
         };

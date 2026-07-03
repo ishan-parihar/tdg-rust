@@ -8,12 +8,14 @@
 //! - PulseEngine: structural gap detection per node type
 //! - DataLoader: filesystem + DB state loading
 //! - MindInjector: full prompt assembly for LLM context
+//! - GraphMind: graph-level mind integration pass (Phase 12 — the closed loop)
 
 pub mod consolidation_engine;
 pub mod data_loader;
 pub mod diagnostic;
 pub mod embedding;
 pub mod feeling;
+pub mod graph_mind;
 pub mod injector;
 
 pub mod pulse;

@@ -296,6 +296,151 @@ impl<'a> ReflectEngine<'a> {
 
         Ok(detail)
     }
+
+    /// Phase 14: Run resonance-based reflection.
+    ///
+    /// Instead of clustering by shared MENTIONS entities (the default `run()`),
+    /// this method clusters by attractor-field type_class complementarity.
+    /// Donor observations cluster with acceptor observations; sharers cluster
+    /// with sharers. This produces structurally-grounded skills, not just
+    /// entity-co-occurrence skills.
+    pub fn run_by_resonance(&self) -> TdgResult<ReflectResult> {
+        let mut result = ReflectResult {
+            skip_reason: "resonance-based reflection".to_string(),
+            ..Default::default()
+        };
+
+        // Load recent observations that have attractor fields
+        let observations: Vec<(String, String)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, attractor_field_json FROM nodes
+                 WHERE node_type = 'observation'
+                   AND valid_to IS NULL
+                   AND attractor_field_json IS NOT NULL
+                   AND attractor_field_json != ''
+                 ORDER BY created_at DESC
+                 LIMIT 100",
+            )?;
+
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        if observations.is_empty() {
+            result.skipped = true;
+            result.skip_reason = "No observations with attractor fields".to_string();
+            return Ok(result);
+        }
+
+        result.observations_analyzed = observations.len();
+
+        // Group by type_class
+        let mut by_type_class: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+
+        for (obs_id, af_json) in &observations {
+            if let Some(af) =
+                crate::metabolism::attractor::AttractorField::from_json(af_json)
+            {
+                by_type_class
+                    .entry(af.type_class.clone())
+                    .or_default()
+                    .push(obs_id.clone());
+            }
+        }
+
+        // Process each type_class group as a cluster
+        for (type_class, obs_ids) in &by_type_class {
+            if obs_ids.len() >= self.config.min_cluster_size {
+                let cluster_detail = self.process_resonance_cluster(type_class, obs_ids)?;
+                if cluster_detail.skill_created {
+                    result.skills_created += 1;
+                }
+                result.clusters_processed += 1;
+            }
+            result.clusters_found += 1;
+        }
+
+        Ok(result)
+    }
+
+    /// Process a resonance cluster (observations with the same type_class).
+    fn process_resonance_cluster(
+        &self,
+        type_class: &str,
+        obs_ids: &[String],
+    ) -> TdgResult<ClusterDetail> {
+        let mut detail = ClusterDetail::default();
+
+        if obs_ids.len() < self.config.min_cluster_size {
+            return Ok(detail);
+        }
+
+        // Create a skill node from this resonance cluster
+        let fingerprint = {
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(type_class);
+            let mut sorted_ids = obs_ids.to_vec();
+            sorted_ids.sort();
+            hasher.update(sorted_ids.join("|"));
+            format!("{:x}", hasher.finalize())[..16].to_string()
+        };
+
+        let skill_id = format!("skill:resonance_{}", fingerprint);
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM nodes WHERE id = ?1 AND valid_to IS NULL",
+                rusqlite::params![skill_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if !exists {
+            let name = format!("Resonance pattern: {} ({} obs)", type_class, obs_ids.len());
+            let description = format!(
+                "Auto-discovered resonance cluster from {} observations sharing type_class={}.",
+                obs_ids.len(),
+                type_class
+            );
+            let properties = serde_json::json!({
+                "source_observations": obs_ids.iter().take(10).cloned().collect::<Vec<_>>(),
+                "fingerprint": fingerprint,
+                "type_class": type_class,
+                "method": "resonance_clustering",
+                "version": 1,
+            });
+            let now = crate::db::crud::now_iso();
+
+            let _ = self.conn.execute(
+                "INSERT INTO nodes (id, node_type, name, description, properties_json, lifecycle_state, confidence, created_at, updated_at, source)
+                 VALUES (?1, 'skill', ?2, ?3, ?4, 'active', 0.7, ?5, ?5, 'reflect_resonance')",
+                rusqlite::params![skill_id, name, description, properties.to_string(), now],
+            );
+
+            detail.skill_created = true;
+
+            // Create ENABLES edges from skill to each observation
+            for oid in obs_ids {
+                let _ = crate::db::crud::add_edge(
+                    self.conn,
+                    &crate::models::NewEdge {
+                        source_id: skill_id.clone(),
+                        target_id: oid.clone(),
+                        edge_type: "ENABLES".to_string(),
+                        weight: Some(0.5),
+                        agent_id: Some("reflect_resonance".to_string()),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+
+        Ok(detail)
+    }
 }
 
 #[derive(Debug, Default)]

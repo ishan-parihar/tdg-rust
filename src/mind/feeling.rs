@@ -55,19 +55,19 @@ impl FeelingEngine {
             match state.diagnose() {
                 DriveDiagnosis::Addiction => {
                     pathological_drives.push(name.clone());
-                    feelings.push(format!("{}: compulsive expression detected", name));
+                    feelings.push(format!("{}: hyper-ingestion pattern detected", name));
                 }
                 DriveDiagnosis::Allergy => {
                     pathological_drives.push(name.clone());
-                    feelings.push(format!("{}: compulsive avoidance detected", name));
+                    feelings.push(format!("{}: hypo-ingestion pattern detected", name));
                 }
                 DriveDiagnosis::BlindSpot => {
                     blind_drives.push(name.clone());
-                    feelings.push(format!("{}: dormant — needs attention", name));
+                    feelings.push(format!("{}: dormant — awaiting catalyst", name));
                 }
                 DriveDiagnosis::TensionPair => {
                     pathological_drives.push(name.clone());
-                    feelings.push(format!("{}: internal conflict detected", name));
+                    feelings.push(format!("{}: tension-pair pattern detected", name));
                 }
                 DriveDiagnosis::Integrated => {
                     let net = state.net();
@@ -92,13 +92,13 @@ impl FeelingEngine {
             .filter(|d| d.diagnose() == DriveDiagnosis::Integrated)
             .count();
         if integrated_count == 4 {
-            feelings.insert(0, "All drives integrated — system in harmony".to_string());
+            feelings.insert(0, "All drives integrated — metabolic equilibrium".to_string());
         }
 
         // Energy-based feelings
         match energy_level.as_str() {
             "exhausted" => {
-                feelings.push("System resources critically low — exhaustion".to_string())
+                feelings.push("System resources critically low — resource depletion".to_string())
             }
             "low" => feelings.push("Energy reserves depleted — proceed carefully".to_string()),
             "moderate" => feelings.push("Operating at moderate capacity".to_string()),
