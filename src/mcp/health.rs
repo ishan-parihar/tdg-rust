@@ -62,24 +62,19 @@ impl HealthMonitor {
             }
         }
 
-        // Persist to DB — surface errors via tracing instead of silently swallowing
-        // (the previous `let _ = …` masked real DB failures, leaving health_checks empty).
-        match self.pool.get_connection() {
-            Ok(conn) => {
-                if let Err(e) = crate::db::crud::record_health_check(
-                    &conn,
-                    service,
-                    latency_ms,
-                    success,
-                    error_message.as_deref(),
-                ) {
-                    tracing::warn!("Failed to persist health check for {}: {}", service, e);
-                }
-                self.pool.release_connection(conn);
-            }
-            Err(e) => {
-                tracing::warn!("Failed to get DB connection for health check ({}): {}", service, e);
-            }
+        // Persist to DB using with_connection (panic-safe).
+        // Previously used manual get_connection/release_connection which leaked
+        // the connection on panic.
+        if let Err(e) = self.pool.with_connection(|conn| {
+            crate::db::crud::record_health_check(
+                conn,
+                service,
+                latency_ms,
+                success,
+                error_message.as_deref(),
+            )
+        }) {
+            tracing::warn!("Failed to persist health check for {}: {}", service, e);
         }
 
         if let Ok(mut breakers) = self.breakers.lock() {
@@ -96,10 +91,11 @@ impl HealthMonitor {
     }
 
     pub fn get_health_summary(&self) -> Result<Value, McpError> {
-        if let Ok(conn) = self.pool.get_connection() {
-            if let Ok(summary) = crate::db::crud::get_health_summary(&conn) {
-                return Ok(summary);
-            }
+        // Use with_connection for panic safety.
+        if let Ok(summary) = self.pool.with_connection(|conn| {
+            crate::db::crud::get_health_summary(conn)
+        }) {
+            return Ok(summary);
         }
         let checks = self
             .checks
@@ -125,12 +121,13 @@ impl HealthMonitor {
     // ponytail: infrastructure for future health query tools
     #[allow(dead_code)]
     pub fn get_recent_health_checks(&self, service: Option<&str>, limit: i64) -> Value {
-        if let Ok(conn) = self.pool.get_connection() {
-            if let Ok(checks) = crate::db::crud::get_recent_health_checks(&conn, service, limit) {
-                return json!({"checks": checks, "total": checks.len()});
-            }
+        // Use with_connection for panic safety.
+        match self.pool.with_connection(|conn| {
+            crate::db::crud::get_recent_health_checks(conn, service, limit)
+        }) {
+            Ok(checks) => json!({"checks": checks, "total": checks.len()}),
+            Err(_) => json!({"checks": [], "total": 0}),
         }
-        json!({"checks": [], "total": 0})
     }
 
     pub fn get_circuit_breaker_status(&self) -> Result<Value, McpError> {

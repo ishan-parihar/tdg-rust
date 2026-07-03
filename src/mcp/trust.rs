@@ -37,15 +37,17 @@ impl TrustStore {
         let score = score.clamp(0.0, 1.0);
         let now = crate::db::crud::now_iso();
 
-        // Persist to DB first. Surface errors instead of silently swallowing them
-        // (the previous `let _ = …` masked real DB failures, leaving trust_scores empty).
-        let conn = self
-            .pool
-            .get_connection()
-            .map_err(|e| McpError::internal_error(format!("Failed to get DB connection: {}", e), None))?;
-        crate::db::crud::set_trust(&conn, agent_name, score, reason.as_deref())
-            .map_err(|e| McpError::internal_error(format!("Failed to persist trust: {}", e), None))?;
-        self.pool.release_connection(conn);
+        // Persist to DB using with_connection (panic-safe — always releases
+        // the connection back to the pool, even if set_trust panics).
+        // Previously used manual get_connection/release_connection which leaked
+        // the connection on panic.
+        self.pool
+            .with_connection(|conn| {
+                crate::db::crud::set_trust(conn, agent_name, score, reason.as_deref())
+            })
+            .map_err(|e| {
+                McpError::internal_error(format!("Failed to persist trust: {}", e), None)
+            })?;
 
         let mut entries = self
             .entries
@@ -74,36 +76,29 @@ impl TrustStore {
             }
         }
 
-        match self.pool.get_connection() {
-            Ok(conn) => {
-                // Both lookups must share the same connection — keep them in scope.
-                let score_result = crate::db::crud::get_trust(&conn, agent_name);
-                let has_record = has_trust_record(&conn, agent_name);
-                self.pool.release_connection(conn);
-                match score_result {
-                    Ok(score) => {
-                        if (score - 0.5).abs() > f64::EPSILON || has_record {
-                            let entry = TrustEntry {
-                                score,
-                                updated_at: crate::db::crud::now_iso(),
-                                source: None,
-                                reason: None,
-                            };
-                            let mut entries = self.entries.lock().map_err(|e| {
-                                McpError::internal_error(format!("Lock poisoned: {}", e), None)
-                            })?;
-                            entries.insert(agent_name.to_string(), entry.clone());
-                            return Ok(Some(entry));
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to read trust for {}: {}", agent_name, e);
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to get DB connection for trust read ({}): {}", agent_name, e);
-            }
+        // Use with_connection for panic safety.
+        let result = self
+            .pool
+            .with_connection(|conn| {
+                let score = crate::db::crud::get_trust(conn, agent_name)?;
+                let has_record = has_trust_record(conn, agent_name);
+                Ok((score, has_record))
+            })
+            .map_err(|e| McpError::internal_error(format!("DB error: {}", e), None))?;
+
+        let (score, has_record) = result;
+        if (score - 0.5).abs() > f64::EPSILON || has_record {
+            let entry = TrustEntry {
+                score,
+                updated_at: crate::db::crud::now_iso(),
+                source: None,
+                reason: None,
+            };
+            let mut entries = self.entries.lock().map_err(|e| {
+                McpError::internal_error(format!("Lock poisoned: {}", e), None)
+            })?;
+            entries.insert(agent_name.to_string(), entry.clone());
+            return Ok(Some(entry));
         }
 
         Ok(None)
@@ -120,14 +115,12 @@ impl TrustStore {
         let new_score = (current + delta).clamp(0.0, 1.0);
         let now = crate::db::crud::now_iso();
 
-        // Persist to DB first — surface errors instead of silently swallowing them.
-        let conn = self
-            .pool
-            .get_connection()
-            .map_err(|e| McpError::internal_error(format!("Failed to get DB connection: {}", e), None))?;
-        crate::db::crud::set_trust(&conn, agent_name, new_score, reason.as_deref())
+        // Persist using with_connection for panic safety.
+        self.pool
+            .with_connection(|conn| {
+                crate::db::crud::set_trust(conn, agent_name, new_score, reason.as_deref())
+            })
             .map_err(|e| McpError::internal_error(format!("Failed to persist trust: {}", e), None))?;
-        self.pool.release_connection(conn);
 
         let mut entries = self
             .entries

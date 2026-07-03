@@ -98,17 +98,52 @@ impl<'a> Archiver<'a> {
                 return Ok(count);
             }
 
-            self.conn.execute(
-                "DELETE FROM edges
+            // Soft-delete (set valid_to) instead of hard-delete.
+            //
+            // Previously this used `DELETE FROM edges` which is irreversible
+            // and inconsistent with the Janitor (which soft-deletes). The
+            // mutation_log table exists for audit but was never written to
+            // from the archiver. Now we soft-delete AND record the mutation
+            // so the audit trail is complete.
+            let now = crate::db::crud::now_iso();
+            let affected = self.conn.execute(
+                "UPDATE edges SET valid_to = ?1
                  WHERE valid_to IS NULL
                  AND (
                      NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = edges.source_id AND n.valid_to IS NULL)
                      OR NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = edges.target_id AND n.valid_to IS NULL)
                  )",
-                [],
+                rusqlite::params![&now],
             )?;
-            info!("Edges: {} dead edges pruned", count);
-            Ok(count)
+
+            // Record mutations for audit trail (best-effort)
+            let dead_edge_ids: Vec<String> = {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id FROM edges WHERE valid_to = ?1 AND id IN (
+                         SELECT id FROM edges WHERE valid_to = ?1
+                         AND (
+                             NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = edges.source_id AND n.valid_to IS NULL)
+                             OR NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = edges.target_id AND n.valid_to IS NULL)
+                         )
+                     )",
+                )?;
+                let rows = stmt.query_map(rusqlite::params![&now], |r| r.get::<_, String>(0))?;
+                rows.filter_map(|r| r.ok()).collect()
+            };
+            for eid in &dead_edge_ids {
+                crate::db::crud::record_mutation(
+                    self.conn,
+                    "delete",
+                    "edge",
+                    eid,
+                    None,
+                    Some(&format!("{{\"valid_to\": \"{}\", \"reason\": \"dead_edge_prune\"}}", now)),
+                    Some("archiver"),
+                );
+            }
+
+            info!("Edges: {} dead edges soft-pruned", affected);
+            Ok(affected as i64)
         })();
 
         result.unwrap_or_else(|e| {
@@ -143,8 +178,10 @@ impl<'a> Archiver<'a> {
                 return Ok(count);
             }
 
+            // Soft-delete for consistency with Janitor and prune_dead_edges.
+            let now = crate::db::crud::now_iso();
             self.conn.execute(
-                "DELETE FROM edges
+                "UPDATE edges SET valid_to = ?1
                  WHERE edge_type = 'MENTIONS'
                  AND valid_to IS NULL
                  AND EXISTS (
@@ -153,9 +190,9 @@ impl<'a> Archiver<'a> {
                  AND EXISTS (
                      SELECT 1 FROM nodes nt WHERE nt.id = edges.target_id AND nt.lifecycle_state = 'archived'
                  )",
-                [],
+                rusqlite::params![&now],
             )?;
-            info!("Mentions: {} edges compressed", count);
+            info!("Mentions: {} edges compressed (soft-deleted)", count);
             Ok(count)
         })();
 

@@ -248,6 +248,10 @@ pub struct TdgServer {
     pub(crate) trust_store: Arc<TrustStore>,
     pub(crate) health_monitor: Arc<HealthMonitor>,
     pub mind_state_manager: Arc<MindStateManager>,
+    /// Cache for GraphProjection + PageRank results (TTL: 60 seconds).
+    /// Previously, tdg_graph_stats rebuilt the entire in-memory graph and
+    /// recomputed 100 PageRank iterations on every call — O(N²) per request.
+    pub(crate) graph_stats_cache: Arc<std::sync::Mutex<Option<(std::time::Instant, Value)>>>,
     pub lean: bool,
 }
 
@@ -269,6 +273,7 @@ impl TdgServer {
             trust_store: Arc::new(TrustStore::new(pool.clone())),
             health_monitor: Arc::new(HealthMonitor::new(pool)),
             mind_state_manager,
+            graph_stats_cache: Arc::new(std::sync::Mutex::new(None)),
             lean,
         }
     }
@@ -2573,8 +2578,28 @@ Do NOT include any text outside the JSON block."#
                 json!({"skipped": true, "reason": "Lean mode active — skipped"}).to_string(),
             );
         }
+
+        // Check the TTL cache first (60-second window).
+        // Previously, every tdg_graph_stats call rebuilt the entire in-memory
+        // graph (up to 100K nodes + 100K edges) and recomputed 100 PageRank
+        // iterations — O(N²) per request. For a 5000-node graph that's ~25s
+        // of CPU per call. Now we cache the result for 60 seconds.
+        const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+        {
+            let cache = self.graph_stats_cache.lock().map_err(|e| {
+                McpError::internal_error(format!("Cache lock poisoned: {}", e), None)
+            })?;
+            if let Some((timestamp, ref cached_value)) = *cache {
+                if timestamp.elapsed() < CACHE_TTL {
+                    tracing::debug!("graph_stats cache hit (age={:?})", timestamp.elapsed());
+                    return Ok(serde_json::to_string(cached_value).unwrap_or_default());
+                }
+            }
+        }
+
         let pool = self.pool.clone();
-        run_blocking(move || {
+        let cache = self.graph_stats_cache.clone();
+        let result = run_blocking(move || {
             let conn = get_conn(&pool)?;
             let node_count = crate::db::crud::count_nodes(&conn, None).map_err(mcp_err)?;
             let edge_count = crate::db::crud::count_edges(&conn, None).map_err(mcp_err)?;
@@ -2611,15 +2636,21 @@ Do NOT include any text outside the JSON block."#
             } else {
                 vec![]
             };
-            Ok(serde_json::to_string(&json!({
+            Ok(json!({
                 "node_count": node_count,
                 "edge_count": edge_count,
                 "average_degree": avg_degree,
                 "density": density,
                 "top_hubs": top_hubs,
             }))
-            .unwrap_or_default())
-        }).await
+        }).await?;
+
+        // Store in cache
+        if let Ok(mut cache_guard) = cache.lock() {
+            *cache_guard = Some((std::time::Instant::now(), result.clone()));
+        }
+
+        Ok(serde_json::to_string(&result).unwrap_or_default())
     }
 
     // ─── Mind State Persistence Tools ──────────────────────────────────────────
