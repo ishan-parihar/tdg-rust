@@ -1,278 +1,168 @@
 # tdg-rust
 
-Rust implementation of the **Teleological Developmental Graph (TDG)** — a memory infrastructure for AI agents.
+> **Teleological Developmental Graph** — a self-structuring neural memory infrastructure for AI agents. Not a database. A brain.
 
-> **v0.4.0** | EmbeddingGemma ONNX backend | Configurable Q4/Q8 | Non-destructive migration
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
+[![Tests](https://img.shields.io/badge/tests-509%20passing-brightgreen.svg)](#testing)
+[![MCP](https://img.shields.io/badge/MCP-50%20tools-blue.svg)](#mcp-tools)
+[![ONNX](https://img.shields.io/badge/embeddings-EmbeddingGemma%20768d-purple.svg)](#embeddings)
 
-## Quick Install
+TDG-rust is a memory infrastructure that gives AI agents **persistent, structured, self-organizing knowledge**. It implements the [HoloOS](https://github.com/ishanparihar/HoloOS) holonic-science ontology: every memory (holon) runs a metabolic cycle, computes its own health, forms connections through resonance, and adapts through experience — like neurons in a biological brain.
+
+## Why TDG?
+
+Standard vector databases store embeddings and retrieve by similarity. TDG does more:
+
+| Feature | Vector DB | TDG |
+|---------|-----------|-----|
+| **Storage** | Embeddings | Graph + embeddings + metabolic state + attractor fields |
+| **Retrieval** | Cosine similarity | Hybrid FTS5 + embedding + graph + resonance |
+| **Health** | None | G_z (integrative efficiency) + P_z (transcendental tension) |
+| **Self-organization** | None | Synaptogenesis (grows new edges from resonance) |
+| **Learning** | None | Hebbian LTP/LTD (edges strengthen with co-activation) |
+| **Consolidation** | None | Sleep replay + value-based forgetting |
+| **Epistemics** | None | Status ladder (ai-draft → canonical) + 5-Gate validation |
+| **Drive adaptation** | None | Drives learn from experience (not hardcoded) |
+
+## Quick Start
 
 ```bash
+# Install
 curl -fsSL https://raw.githubusercontent.com/ishan-parihar/tdg-rust/main/install.sh | bash
-```
 
-This downloads the pre-built binary (no compilation needed) and configures the Hermes agent.
-
-<details>
-<summary>Manual install</summary>
-
-```bash
-# Download binary
-curl -LO https://github.com/ishan-parihar/tdg-rust/releases/latest/download/tdg-rust
-chmod +x tdg-rust
-
-# Move to Hermes
-mkdir -p ~/.hermes/tdg-rust
-mv tdg-rust ~/.hermes/tdg-rust/
-
-# Install adapter
-mkdir -p ~/.hermes/plugins/tdg
-curl -fsSL https://raw.githubusercontent.com/ishan-parihar/tdg-rust/main/plugins/tdg/__init__.py -o ~/.hermes/plugins/tdg/__init__.py
-curl -fsSL https://raw.githubusercontent.com/ishan-parihar/tdg-rust/main/plugins/tdg/plugin.yaml -o ~/.hermes/plugins/tdg/plugin.yaml
-
-# Initialize database
-~/.hermes/tdg-rust/tdg-rust init
-```
-
-</details>
-
-## What is TDG?
-
-TDG is a graph-based memory system that gives AI agents persistent, structured knowledge. Nodes represent concepts (observations, hypotheses, skills, capabilities, projects), edges represent relationships, and a drive-based propagation engine models how ideas evolve through developmental stages.
-
-### Core Concepts
-
-| Concept | Description |
-|---------|-------------|
-| **21 Node Types** | observation, telos, skill, capability, action, people, artifact, hypothesis, constraint, discovery, project, trajectory, synthesis, being, communication, event, insight, question, value, bond, narrative |
-| **35 Edge Types** | DECOMPOSES_TO, ENABLES, CONTEXT, BLOCKS, SUPPORTS, CONTRADICTS, EVIDENCES, RELATES_TO, and 27 more |
-| **4 Dual-Pole Drives** | eros, agape, agency, communion — each with positive/negative poles |
-| **8 Developmental Stages** | Evidence-gated stage progression with age requirements |
-| **7 Telos Levels** | T0 (root mission) → T6 (transcendent) hierarchy |
-| **10 Catalyst Types** | External/internal event classification for graph digestion |
-
-## Features
-
-### Graph Engine
-- SQLite WAL backend with connection pooling
-- Full-text search (FTS5) with hybrid ranking
-- Cosine similarity search
-- Pathfinding (BFS/DFS)
-- Temporal queries (valid_from/valid_to)
-- Soft delete with archival
-- Event-sourced temporal reconstruction (JSONL journal)
-
-### Drive Propagation
-- 3-phase pipeline: emission → stabilization → aggregation
-- Quadrant modulators (UL/UR/LL/LR)
-- Diagnosis: addiction, allergy, blind spot, tension
-- Shannon entropy computation
-
-### Mind Pipeline
-- Consolidation engine (daily deep synthesis)
-- Reflect engine (cluster → skill/discovery creation)
-- Terrain context (skill discovery from graph density)
-- Diagnostic engine (behavioral pattern analysis)
-- Feeling engine (drive state → experiential statements)
-- Pulse engine (structural gap detection)
-- ONNX embeddings (EmbeddingGemma-300M, 768-dim, Q4/Q8 configurable)
-- Non-destructive embedding migration (mixed dimensions supported)
-
-### MCP Server
-- 26 tools via rmcp SDK with auto schema generation
-- Transports: stdio (default) + HTTP/SSE
-- Lean mode (skip expensive operations)
-- Trust store with SQLite persistence
-- Health monitor with circuit breakers
-
-### Safety
-- Circuit breaker (Closed/Open/HalfOpen states)
-- PreWriteSnapshot for transaction rollback
-- Node/edge size limits (100K nodes, 500K edges)
-- Type-safe error handling (TdgResult<T>)
-
-## Installation
-
-### From Release (Recommended)
-
-Download the pre-built musl binary for Linux:
-
-```bash
-# Download latest release
-curl -L https://github.com/ishan-parihar/tdg-rust/releases/latest/download/tdg-rust-x86_64-unknown-linux-musl -o tdg-rust
-chmod +x tdg-rust
-sudo mv tdg-rust /usr/local/bin/
-```
-
-### From Source
-
-```bash
-# Prerequisites: Rust 1.70+, cargo-zigbuild, zig
+# Or build from source
 git clone https://github.com/ishan-parihar/tdg-rust.git
 cd tdg-rust
-
-# Standard build (no ONNX)
-cargo build --release
-
-# Build with ONNX embedding support
 cargo build --release --features onnx
-```
 
-### VPS Deployment (glibc 2.36)
-
-```bash
-# Build for VPS (Debian 12, glibc 2.36)
-export ORT_LIB_LOCATION=/tmp/onnxruntime-linux-x64-1.20.1/lib
-cargo zigbuild --release --features onnx --target x86_64-unknown-linux-gnu.2.36
-
-# Deploy binary and ORT library
-scp target/x86_64-unknown-linux-gnu.2.36/release/tdg-rust nerd@racknerd:~/tdg-rust
-scp /tmp/onnxruntime-linux-x64-1.20.1/lib/libonnxruntime.so.1.20.1 nerd@racknerd:~/libonnxruntime.so.1.20.1
-```
-
-## Usage
-
-### CLI Commands
-
-```bash
-# Initialize database
+# Initialize
 tdg-rust init
 
-# Start MCP server (stdio)
+# Start MCP server (for Hermes/Claude/Cursor)
 tdg-rust serve
 
-# Start MCP server (HTTP on port 3001)
+# Or start HTTP server on port 3001
 tdg-rust serve --port 3001
-
-# Run audit
-tdg-rust audit
-
-# Show database stats
-tdg-rust stats
-
-# Create a node
-tdg-rust create -n observation -N "Key insight" -d "Description"
-
-# Backup database
-tdg-rust backup -o backup.db
-```
-
-### Available Commands
-
-| Command | Description |
-|---------|-------------|
-| `serve [--port]` | Start MCP server (stdio on 3000, HTTP on other ports) |
-| `init` | Initialize database schema |
-| `migrate` | Run database migrations |
-| `backup -o <path>` | Backup database |
-| `stats` | Show database statistics |
-| `audit` | Graph integrity audit |
-| `check` | Constraint vitality check |
-| `unify` | Unify persistence across data sources |
-| `reconcile-constraints` | Dedup constraints, repair BLOCKS edges |
-| `sync-skills [-d <dir>]` | Sync skills directory to graph |
-| `auto-capture -d <desc>` | Auto-capture observation |
-| `create -n <type> -N <name>` | Create node from CLI |
-| `maintenance-check` | Orphan + stale node detection |
-| `repair-orphans` | Link or archive orphan nodes |
-| `embed [--rebuild]` | Generate/update embeddings for all nodes |
-
-### MCP Tools (26)
-
-| Category | Tools |
-|----------|-------|
-| **Search** | `tdg_search` (hybrid FTS5 search) |
-| **CRUD** | `tdg_create`, `tdg_update`, `tdg_get_node`, `tdg_bulk_create`, `tdg_observe`, `tdg_record_exec` |
-| **Edges** | `tdg_connect`, `tdg_get_related` |
-| **Events** | `tdg_query_events` |
-| **Rating** | `tdg_rate_memory` |
-| **Mind** | `tdg_mind_state` (stats/health/verify/detail) |
-| **Synthesis** | `tdg_reflect` (LLM-powered) |
-| **Trust** | `tdg_get_trust`, `tdg_adjust_trust` |
-| **Health** | `tdg_health_check`, `tdg_system_health`, `tdg_graph_stats` |
-| **Schema** | `tdg_get_schema` |
-| **Multi-agent** | `tdg_bank` |
-| **Entities** | `tdg_entity` |
-| **Maintenance** | `tdg_maintenance` |
-| **Persistence** | `tdg_save_mind_state`, `tdg_load_mind_state`, `tdg_get_project_context`, `tdg_set_project_context` |
-
-## Configuration
-
-TDG uses hierarchical configuration loading:
-
-1. Defaults → `tdg.yaml` → `tdg.json` → `TDG_*` environment variables
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TDG_HOME` | `~/.hermes` | Base home directory |
-| `TDG_DB_PATH` | `{home}/tdg/graph.db` | SQLite database path |
-| `TDG_STATE_DIR` | `{home}/state` | State files directory |
-| `TDG_SKILLS_DIR` | `~/.hermes/skills` | Skills directory |
-| `TDG_LEAN` | `false` | Reduced memory mode |
-
-### Embedding Configuration
-
-Configure the embedding system in `tdg.yaml`:
-
-```yaml
-embedding:
-  model: gemma  # or minilm
-  quantization: q4  # q4 or q8
-  dimension: 768  # 768 for gemma, 384 for minilm
-```
-
-### Diagnostic Thresholds
-
-Edit `config/diagnostic_thresholds.yaml` to tune behavioral analysis:
-
-```yaml
-addiction_positive_min: 7.0
-allergy_negative_min: 5.0
-blind_spot_pct: 10.0
-drive_persistence_soft: 3
-drive_persistence_strong: 5
-drive_persistence_mandatory: 8
-quadrant_imbalance_pct: 40.0
-quadrant_persistence_cycles: 4
 ```
 
 ## Architecture
 
 ```
-src/
-├── main.rs              CLI entry point (12 subcommands)
-├── lib.rs               Library root, 28 modules
-├── models.rs            Core types: Node, Edge, Event, Embedding
-├── db/                  SQLite persistence (pool, CRUD, schema, events, write_guard)
-├── mcp/                 MCP server (stdio + HTTP), 26 tools
-├── flow.rs              Dual-pole drive propagation engine
-├── knowledge.rs         Catalyst lifecycle + graph hygiene
-├── graph_projection.rs  SQLite → petgraph in-memory projection
-├── telearchy.rs         Stage-gated telos hierarchy
-├── audit.rs             5-report audit engine + Markdown export
-├── circuit_breaker.rs   State machine + pre-write snapshots
-├── grammar/             Node blueprints + auto-wiring
-├── validation.rs        Edge validation contracts
-├── plugins/             Entity extractor, hybrid retriever, preference extractor
-├── llm/                 LLM trait + OpenAI/Anthropic/Ollama providers
-├── mind/                Consolidation, reflection, terrain, injection, diagnostics
-└── scripts/             CLI script implementations
+┌─────────────────────────────────────────────────────────┐
+│                    MCP Transport                         │
+│              (stdio / HTTP-SSE via rmcp)                 │
+├─────────────────────────────────────────────────────────┤
+│                    Agent API (50 tools)                  │
+│  ContextPack · 5-Gate Validation · Synthesis Submission  │
+├─────────────────────────────────────────────────────────┤
+│                  Mind Pipeline                           │
+│  Graph Mind · Metabolic Summary · Reflect · Consolidation│
+├─────────────────────────────────────────────────────────┤
+│                Neural Plasticity Engine                  │
+│  Hebbian LTP/LTD · Synaptogenesis · Replay · Forgetting   │
+├─────────────────────────────────────────────────────────┤
+│              Metabolic Engine (Tier 2)                   │
+│  Lesser Cycle (M·P·C·E) · Greater Cycle (S·T·G·Ch)     │
+│  Attractor Field A(H) · Health (G_z, P_z) · Resonance    │
+├─────────────────────────────────────────────────────────┤
+│                Persistence (SQLite WAL)                  │
+│  Nodes · Edges · Embeddings · Events · Metabolism Queue  │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## Dependencies
+### Brain-like Capabilities
 
-| Category | Crates |
-|----------|--------|
-| **Core** | tokio, serde/serde_json, anyhow, thiserror, tracing |
-| **Database** | rusqlite (bundled, WAL mode) |
-| **HTTP** | axum, tokio-stream |
-| **Graph** | petgraph |
-| **MCP** | rmcp (server, schemars, transport-io) |
-| **LLM** | reqwest (json) |
-| **CLI** | clap (derive) |
-| **Config** | figment (yaml/json/env) |
-| **Optional** | ort (ONNX Runtime), tokenizers (feature: onnx) |
+| Brain function | TDG implementation | Phase |
+|---|---|---|
+| **Hebbian learning** (LTP) | Edge `co_activation_count` increments on co-firing; flow rate = `base + 0.1·ln(1+count)` | 16 |
+| **Synaptic decay** (LTD) | Tier 3 schedule decays `co_activation_count` by 50% for inactive edges; prunes `weight < 0.3` | 16 |
+| **Synaptogenesis** | Tier 3 schedule creates `RESONATES_WITH` edges for R > 0.7 pairs | 17 |
+| **Sleep replay** | Tier 3 schedule re-activates recent memories (catalyst injection) | 18 |
+| **Forgetting** | Archives nodes with `retrieval_count=0`, `confidence < 0.3`, `age > 30d` | 18 |
+| **Drive adaptation** | `drives_json` adapts after each cycle — positive_pole strengthens with use | 19 |
+| **Graph-level mind** | Diagnoses graph patterns (GoldenAllergy, depolarization, collapse) → injects catalyst | 12 |
+
+### Holonic-Science Primitives
+
+| Primitive | Source | Implementation |
+|---|---|---|
+| Lesser cycle (M·P·C·E) | HoloOS Doc 02.1 (canonical) | `src/metabolism/lesser_cycle.rs` |
+| Greater cycle (S·T·G·Ch) | HoloOS Doc 02.2 (canonical) | `src/metabolism/greater_cycle.rs` |
+| Attractor field A(H) = ⟨A_M, A_P, A_G, Γ⟩ | HoloOS Doc 08.1 | `src/metabolism/attractor.rs` |
+| G_z / P_z health metrics | HoloOS Doc 02.1 §6.2 | `src/metabolism/health.rs` |
+| Resonance R(H1, H2) | HoloOS Doc 08.1 §8 | `src/metabolism/health.rs` |
+| 22 named archetypes | HoloOS Doc 03.2 | `src/holonic_types/archetypes.rs` |
+| 5-Gate Validation | HoloOS Epistemology docs 0-4 | `src/context/validation.rs` |
+| ContextPack | HoloOS AGENTS.md | `src/context/context_pack.rs` |
+| V/C/R/N coordinate system | HoloOS Doc 08.8.x | `src/models.rs` + `src/holon.rs` |
+
+## MCP Tools (50)
+
+<details>
+<summary><b>Click to expand full tool list</b></summary>
+
+| Category | Tools |
+|---|---|
+| **Search** | `tdg_search`, `tdg_prefetch` |
+| **CRUD** | `tdg_create`, `tdg_update`, `tdg_get_node`, `tdg_bulk_create`, `tdg_observe`, `tdg_record_exec` |
+| **Edges** | `tdg_connect`, `tdg_get_related` |
+| **Events** | `tdg_query_events` |
+| **Rating** | `tdg_rate_memory` |
+| **Mind** | `tdg_mind_state`, `tdg_context`, `tdg_consolidate` |
+| **Synthesis** | `tdg_reflect`, `tdg_reflect_run` |
+| **Trust** | `tdg_get_trust`, `tdg_adjust_trust`, `tdg_health_check` |
+| **Health** | `tdg_system_health`, `tdg_graph_health`, `tdg_graph_stats` |
+| **Schema** | `tdg_get_schema` |
+| **Maintenance** | `tdg_maintenance`, `tdg_enrich`, `tdg_self_manage`, `tdg_renormalize` |
+| **Audit** | `tdg_audit` |
+| **Persistence** | `tdg_save_mind_state`, `tdg_load_mind_state`, `tdg_get_project_context`, `tdg_set_project_context` |
+| **Import/Export** | `tdg_export`, `tdg_import` |
+| **Status ladder** | `tdg_elevate` (human-only) |
+| **Metabolism** | `tdg_tick`, `tdg_metabolism_status` |
+| **Attractor** | `tdg_attractor`, `tdg_health`, `tdg_resonance`, `tdg_resonance_partners` |
+| **Greater cycle** | `tdg_greater_cycle` |
+| **ContextPack** | `tdg_fetch_context` |
+| **Validation** | `tdg_submit_synthesis`, `tdg_validate_synthesis` |
+| **Type system** | `tdg_archetypes`, `tdg_validate_type` |
+
+</details>
+
+## Configuration
+
+```bash
+# Environment variables
+TDG_HOME=~/.hermes              # Base directory
+TDG_DB_PATH=$TDG_HOME/tdg/graph.db  # SQLite database path
+TDG_LEAN=false                  # Reduced memory mode
+TDG_AGENT_NAME=tdg-agent        # Agent name for provenance
+
+# Metabolism
+TDG_METABOLISM_WORKERS=1        # Worker count (default 1 for 2GB VPS)
+TDG_GREATER_CYCLE_INTERVAL_SECS=600   # Greater cycle sweep (10 min)
+TDG_MIND_INTEGRATION_INTERVAL_SECS=900  # Graph mind (15 min)
+TDG_SYNAPTIC_DECAY_INTERVAL_SECS=3600  # LTD decay (1 hour)
+TDG_SYNAPTOGENESIS_INTERVAL_SECS=1800  # Edge growth (30 min)
+TDG_MEMORY_REPLAY_INTERVAL_SECS=21600  # Sleep replay (6 hours)
+TDG_RESONANCE_REBUILD_INTERVAL_SECS=14400  # Full rebuild (4 hours)
+```
+
+```yaml
+# tdg.yaml
+embedding:
+  model: gemma          # or minilm
+  quantization: q4      # q4 or q8
+  dimension: 768        # 768 for gemma, 384 for minilm
+```
+
+## Embeddings
+
+| Model | Dimensions | Quantization | Features |
+|-------|-----------|-------------|----------|
+| EmbeddingGemma-300M | 768 | Q4 / Q8 | `--features onnx` |
+| all-MiniLM-L6-v2 | 384 | quantized | Fallback |
+
+Embeddings are generated inline on node creation (when ONNX is enabled) and backfilled by the enricher/janitor. The embedding text includes the node name, description, and top-3 edge relationships for contextual representation.
 
 ## Testing
 
@@ -280,78 +170,20 @@ src/
 # Run all tests
 cargo test
 
-# Run with output
-cargo test -- --nocapture
+# Run specific test suites
+cargo test --lib                    # 430 unit tests
+cargo test --test integration       # 8 integration tests
+cargo test --test mcp_e2e           # 66 MCP end-to-end tests
+cargo test --test e2e_mind_simulation  # 5 full mind-flow simulations
 
-# Run specific test
-cargo test test_circuit_breaker
+# With ONNX features
+cargo test --features onnx
 
-# Run benchmarks
+# Benchmarks
 cargo bench
 ```
 
-### Test Coverage
-
-- 511+ tests (unit + integration)
-- Property-based tests (proptest) for graph operations
-- Snapshot tests (insta) for output verification
-- Criterion benchmarks for performance regression
-
-## Deployment
-
-### Hermes Agent (Recommended)
-
-```bash
-# One-command install
-curl -fsSL https://raw.githubusercontent.com/ishan-parihar/tdg-rust/main/install.sh | bash
-
-# Or uninstall
-TDG_UNINSTALL=1 bash install.sh
-```
-
-### Pre-built Binary
-
-Download from [GitHub Releases](https://github.com/ishan-parihar/tdg-rust/releases):
-
-```bash
-# Linux x86_64
-curl -LO https://github.com/ishan-parihar/tdg-rust/releases/latest/download/tdg-rust
-chmod +x tdg-rust
-./tdg-rust --version
-```
-
-### Docker
-
-```bash
-docker-compose up -d
-```
-
-### Build from Source (Development Only)
-
-```bash
-# Standard build
-cargo build --release
-
-# With ONNX embeddings
-cargo build --release --features onnx
-
-# For VPS deployment (glibc 2.36)
-export ORT_LIB_LOCATION=/tmp/onnxruntime-linux-x64-1.20.1/lib
-cargo zigbuild --release --features onnx --target x86_64-unknown-linux-gnu.2.36
-```
-
-### Render.com
-
-```yaml
-# render.yaml
-services:
-  - type: web
-    name: tdg-mcp
-    env: docker
-    dockerfilePath: Dockerfile
-    ports:
-      - port: 3001
-```
+**509 tests total. Zero warnings. Zero regressions.**
 
 ## Performance
 
@@ -361,21 +193,99 @@ services:
 | Turn overhead | <1ms |
 | Binary size | ~12MB (ONNX-enabled) |
 | Memory (lean mode) | <50MB RSS |
-| Concurrent writes | Serialized via WriteGuard |
+| Memory (full mode) | <100MB RSS |
 | Embedding speed | ~8-10 nodes/min (VPS) |
+| ContextPack (cached) | <5ms |
+| ContextPack (cold) | <100ms |
 
-## Comparison with Python
+## Deployment
 
-| Metric | Python | Rust |
-|--------|--------|------|
-| Total lines | 29,000+ | 28,000+ |
-| Tests | 576 | 511+ |
-| MCP tools | 16 | 26 |
-| Startup time | ~200ms | ~10ms |
-| Memory usage | ~200MB | ~50MB |
-| Binary size | N/A | ~12MB |
-| Embeddings | MiniLM | EmbeddingGemma |
+### VPS (Debian 12, glibc 2.36)
+
+```bash
+# Build (never build on VPS — cross-compile)
+export ORT_LIB_LOCATION=/tmp/onnxruntime-linux-x64-1.20.1/lib
+export ORT_PREFER_DYNAMIC_LINK=1
+cargo zigbuild --release --features onnx --target x86_64-unknown-linux-gnu.2.36
+
+# Deploy
+scp target/x86_64-unknown-linux-gnu/release/tdg-rust nerd@vps:~/.hermes/tdg-rust/
+ssh nerd@vps "TDG_HOME=~/.hermes ~/.hermes/tdg-rust/tdg-rust migrate"
+```
+
+### Docker
+
+```bash
+docker-compose up -d
+```
+
+### Hermes Agent Integration
+
+The `plugins/tdg/` directory contains a Python adapter for the [Hermes Agent](https://github.com/nousresearch/hermes-agent) framework:
+
+```bash
+# Install adapter
+mkdir -p ~/.hermes/plugins/tdg
+cp plugins/tdg/__init__.py ~/.hermes/plugins/tdg/
+cp plugins/tdg/plugin.yaml ~/.hermes/plugins/tdg/
+
+# The adapter exposes 3 LLM-facing tools:
+# - tdg_memory_search: hybrid FTS5 + embedding + graph search
+# - tdg_memory_record: create observation nodes
+# - tdg_memory_status: graph stats + metabolism queue depth
+```
+
+## Project Structure
+
+```
+src/
+├── main.rs                    CLI + background schedulers (7 Tier 3 schedules)
+├── models.rs                  Core types: Node, Edge, SynthesisStatus
+├── holon.rs                   Holon newtype (compositional algebra)
+├── scale_codes.rs             17 organisational scale codes (S00-S80)
+├── metabolism/                The metabolic engine (Phases 2-4, 16-19)
+│   ├── lesser_cycle.rs        M·P·C·E state machine (trusted anchor)
+│   ├── greater_cycle.rs       S·T·G·Ch state machine (vertical ascent)
+│   ├── attractor.rs           A(H) = ⟨A_M, A_P, A_G, Γ⟩
+│   ├── health.rs              G_z, P_z, Resonance R(H1, H2)
+│   └── worker.rs              Tier 2 async job pool + Hebbian tracking
+├── context/                   Agent API (Phase 5)
+│   ├── context_pack.rs        ContextPack (single-call context aggregation)
+│   └── validation.rs          5-Gate Validation (epistemic enforcement)
+├── holonic_types/             Type system (Phase 6)
+│   ├── archetypes.rs          22 named archetypes
+│   └── type_validation.rs     T1/T2/T3 type validation
+├── mind/                      Mind pipeline
+│   ├── graph_mind.rs          Graph-level mind integration (closed loop)
+│   ├── injector.rs            Prompt assembly + metabolic summary
+│   ├── reflect_engine.rs      Skill discovery (entity + resonance clustering)
+│   ├── feeling.rs             Drive state → experiential statements
+│   └── ...
+├── mcp/                       MCP server (50 tools)
+├── db/                        SQLite persistence (WAL, FTS5, pool)
+├── flow.rs                    Drive propagation + Hebbian learned rates
+└── ...
+```
+
+## Background Schedules
+
+TDG runs 7 background schedules that keep the mind alive:
+
+| Schedule | Default | What it does |
+|----------|---------|-------------|
+| SelfManager | 6h | Janitor + Enricher + Archiver + Telearchy |
+| Health check | 5m | Internal DB health probe |
+| Greater cycle sweep | 10m | Enqueue GreaterTick for holons with pressure |
+| Graph mind integration | 15m | Diagnose graph patterns → inject catalyst |
+| Synaptic decay (LTD) | 1h | Decay co_activation_count; prune dead edges |
+| Synaptogenesis | 30m | Create RESONATES_WITH edges for R > 0.7 |
+| Memory replay | 6h | Re-activate recent memories; forget low-value |
+| Resonance rebuild | 4h | Full resonance_graph recomputation |
 
 ## License
 
 MIT
+
+---
+
+*TDG-rust: The structure is the graph. The metabolism is the mind. The plasticity is the brain.*
