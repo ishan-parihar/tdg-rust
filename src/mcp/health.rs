@@ -8,12 +8,8 @@ use crate::db::pool::ConnectionPool;
 
 #[derive(Debug, Clone)]
 pub(crate) struct HealthCheckRecord {
-    pub service: String,
     pub latency_ms: f64,
     pub success: bool,
-    pub error_message: Option<String>,
-    metadata: Option<Value>,
-    pub timestamp: String,
 }
 
 pub(crate) struct HealthMonitor {
@@ -40,7 +36,7 @@ impl HealthMonitor {
         latency_ms: f64,
         success: bool,
         error_message: Option<String>,
-        metadata: Option<Value>,
+        _metadata: Option<Value>,
     ) -> Result<(), McpError> {
         {
             let mut checks = self
@@ -48,12 +44,8 @@ impl HealthMonitor {
                 .lock()
                 .map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
             checks.push(HealthCheckRecord {
-                service: service.to_string(),
                 latency_ms,
                 success,
-                error_message: error_message.clone(),
-                metadata: metadata.clone(),
-                timestamp: crate::db::crud::now_iso(),
             });
             // Prune oldest records if exceeding capacity (ring buffer behavior)
             if checks.len() > Self::MAX_IN_MEMORY_CHECKS {

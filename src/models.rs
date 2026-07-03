@@ -267,20 +267,6 @@ pub struct Embedding {
     pub updated_at: String,
 }
 
-/// Drive state for a single drive dimension.
-///
-/// NOTE: This struct is retained for backward compatibility but is NOT used
-/// in production. The canonical drive representation is `flow::DualPoleDrive`
-/// (with `positive_pole`, `negative_pole`, `availability`, `blind_spot` fields)
-/// and `flow::FlowDriveState` (the 4-drive aggregate). See `src/flow.rs`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DriveState {
-    pub name: String,
-    pub value: f64,
-    #[serde(default)]
-    pub polarity: f64,
-}
-
 /// Node creation parameters (what the caller provides).
 #[derive(Debug, Clone, Default)]
 pub struct NewNode {

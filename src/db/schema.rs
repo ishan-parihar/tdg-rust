@@ -63,7 +63,7 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
 
     conn.execute_batch(MIGRATE_TRIGGERS)?;
 
-    // Phase 5: New tables (mutation_log, schema_meta, leases)
+    // Phase 5: New tables (mutation_log, schema_meta)
     conn.execute_batch(MIGRATE_NEW_TABLES)?;
 
     // Phase 6: Embedding dimension column (for mixed-size vector storage)
@@ -466,17 +466,6 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 );
 
 INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('version', '1');
-
--- Lease management (domain-based locking)
-CREATE TABLE IF NOT EXISTS leases (
-    domain TEXT PRIMARY KEY,
-    holder_id TEXT NOT NULL,
-    acquired_at REAL NOT NULL,
-    expires_at REAL NOT NULL,
-    renewal_count INTEGER DEFAULT 0
-);
-
-CREATE INDEX IF NOT EXISTS idx_leases_expires ON leases(expires_at);
 "#;
 
 const MIGRATE_GRAPH_HISTORY: &str = r#"
@@ -673,7 +662,8 @@ mod tests {
         assert!(tables.contains(&"health_checks".to_string()));
         assert!(tables.contains(&"mutation_log".to_string()));
         assert!(tables.contains(&"schema_meta".to_string()));
-        assert!(tables.contains(&"leases".to_string()));
+        // leases table removed (yagni — WriteGuard uses file locks)
+        assert!(!tables.contains(&"leases".to_string()));
     }
 
     #[test]
