@@ -18,3 +18,7 @@ Cargo.lock
 # already existing elements were commented out
 
 #/target
+graphify-out/
+*.db
+*.db-wal
+*.db-shm
