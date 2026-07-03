@@ -58,6 +58,7 @@ impl<'a> DigestionEngine<'a> {
                 source: Some("digestion".to_string()),
                 parent_ids: None,
                 agent_id: None,
+                ..Default::default()
             },
         )?;
 
@@ -172,6 +173,7 @@ impl<'a> DigestionEngine<'a> {
                         source: Some("digestion_cascade".to_string()),
                         parent_ids: Some(parent_ids),
                         agent_id: None,
+                        ..Default::default()
                     },
                 )?;
 
@@ -226,6 +228,7 @@ impl<'a> DigestionEngine<'a> {
                 source: Some("digestion_promotion".to_string()),
                 parent_ids: Some(vec![hypothesis_id.to_string()]),
                 agent_id: None,
+                ..Default::default()
             },
         )?;
 
@@ -290,6 +293,7 @@ impl<'a> DigestionEngine<'a> {
                         source: Some("digestion_cycle".to_string()),
                         parent_ids: Some(parent_ids),
                         agent_id: None,
+                        ..Default::default()
                     },
                 )?;
 
@@ -360,6 +364,7 @@ mod tests {
                 source: None,
                 parent_ids: None,
                 agent_id: None,
+                ..Default::default()
             },
         )
         .unwrap()

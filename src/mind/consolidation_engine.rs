@@ -393,6 +393,7 @@ mod tests {
                     source: None,
                     parent_ids: None,
                     agent_id: None,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -422,6 +423,7 @@ mod tests {
                 source: None,
                 parent_ids: None,
                 agent_id: None,
+                ..Default::default()
             },
         )
         .unwrap();

@@ -37,7 +37,7 @@
 //! | Module | Description |
 //! |--------|-------------|
 //! | [`db`] | SQLite connection pooling, CRUD, schema migrations, FTS5 |
-//! | [`mcp`] | MCP server (stdio + HTTP) with 17 tools for AI agents |
+//! | [`mcp`] | MCP server (stdio + HTTP) with 36 tools for AI agents |
 //! | [`plugins`] | Entity extraction, hybrid retrieval, turn capture |
 //! | [`grammar`] | Node blueprint mapping and auto-wired edge creation |
 //! | [`mind`] | Consolidation, reflection, terrain context, mind injection |
@@ -109,6 +109,7 @@ pub mod error;
 pub mod flow;
 pub mod grammar;
 pub mod graph_projection;
+pub mod holon;
 pub mod knowledge;
 pub mod llm;
 pub mod maintenance;
@@ -116,6 +117,7 @@ pub mod mcp;
 pub mod mind;
 pub mod models;
 pub mod plugins;
+pub mod scale_codes;
 pub mod schema;
 pub mod scripts;
 pub mod telearchy;
@@ -138,6 +140,7 @@ pub use mind::sections::{
     query_sqlite_skills,
 };
 pub use mind::terrain::{discover_skills_for_terrain, generate_terrain_context};
-pub use models::{Edge, NewEdge, NewNode, Node, NodeQuery};
+pub use models::{Edge, NewEdge, NewNode, Node, NodeQuery, SynthesisStatus};
+pub use scale_codes::{is_valid_scale, scale_name, SCALE_CODES};
 pub use schema::{CatalystType, DigestionStatus, Quadrant, Stage, TelosLevel};
 pub use telearchy::{EvidenceCollector, TelearchyEngine, TelearchyReport};

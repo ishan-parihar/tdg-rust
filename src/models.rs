@@ -1,5 +1,74 @@
 use serde::{Deserialize, Serialize};
 
+// ─── Phase 1.1: Synthesis Status Ladder ─────────────────────────────────────
+//
+// The epistemic status ladder from TDG theory (HoloOS _THEORY/01_Epistemology/
+// 0_Method_of_Holonic_Inquiry.md §5). Every artifact carries a synthesis_status.
+// All agent outputs start at AiDraft; elevation above AiDraft is human-only.
+//
+//   ai-draft → canonical-hypothesis → canonical → superseded
+
+/// Epistemic status of a node (how much trust it has earned).
+///
+/// Enforces the TDG status ladder: all AI-produced content starts at
+/// `AiDraft` and can only be elevated by human authorization.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum SynthesisStatus {
+    /// Constructed but not red-teamed. All agent outputs start here.
+    #[default]
+    AiDraft,
+    /// Derived from anchor, internally consistent, key joints unvalidated.
+    CanonicalHypothesis,
+    /// Derived, red-teamed, load-bearing joints validated. Human-only elevation.
+    Canonical,
+    /// Retired; kept as a tombstone for provenance.
+    Superseded,
+}
+
+impl SynthesisStatus {
+    /// Convert to the string stored in the `synthesis_status` column.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::AiDraft => "ai-draft",
+            Self::CanonicalHypothesis => "canonical-hypothesis",
+            Self::Canonical => "canonical",
+            Self::Superseded => "superseded",
+        }
+    }
+
+    /// Parse from a string (case-insensitive, accepts kebab-case and snake_case).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().trim_end_matches('_') {
+            "ai-draft" | "ai_draft" | "draft" => Some(Self::AiDraft),
+            "canonical-hypothesis" | "canonical_hypothesis" | "hypothesis" => {
+                Some(Self::CanonicalHypothesis)
+            }
+            "canonical" => Some(Self::Canonical),
+            "superseded" | "retired" => Some(Self::Superseded),
+            _ => None,
+        }
+    }
+
+    /// Check if elevation from `self` to `target` is a valid ladder transition.
+    pub fn can_elevate_to(&self, target: &Self) -> bool {
+        matches!(
+            (self, target),
+            (Self::AiDraft, Self::CanonicalHypothesis)
+                | (Self::CanonicalHypothesis, Self::Canonical)
+                | (Self::Canonical, Self::Superseded)
+                | (Self::AiDraft, Self::Superseded)
+                | (Self::CanonicalHypothesis, Self::Superseded)
+        )
+    }
+}
+
+impl std::fmt::Display for SynthesisStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 /// Node types allowed in the graph.
 pub const NODE_TYPES: &[&str] = &[
     "observation",
@@ -69,7 +138,7 @@ pub const EDGE_TYPES: &[&str] = &[
 ];
 
 /// A graph node, matching Python wire format exactly.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Node {
     pub id: String,
     pub node_type: String,
@@ -108,6 +177,29 @@ pub struct Node {
     pub retrieval_count: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    // ─── Phase 1.2: Holonic scaffolding fields ───────────────────────────────
+    /// Epistemic status on the TDG ladder. Default: "ai-draft".
+    #[serde(default = "default_synthesis_status")]
+    pub synthesis_status: String,
+    /// Organisational scale code (e.g. "S11"). None = unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_code: Option<String>,
+    /// Tetra-Axes UL coordinate (1-19). None = unassigned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tetra_ul: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tetra_ur: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tetra_ll: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tetra_lr: Option<i32>,
+    /// Octave identifier ("N", "N-1", ...). None = current octave.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub octave_id: Option<String>,
+}
+
+fn default_synthesis_status() -> String {
+    "ai-draft".to_string()
 }
 
 fn default_properties() -> serde_json::Value {
@@ -205,6 +297,14 @@ pub struct NewNode {
     pub source: Option<String>,
     pub parent_ids: Option<Vec<String>>,
     pub agent_id: Option<String>,
+    // ─── Phase 1.2: Holonic scaffolding fields (all optional, backward-compatible) ───
+    pub synthesis_status: Option<String>,
+    pub scale_code: Option<String>,
+    pub tetra_ul: Option<i32>,
+    pub tetra_ur: Option<i32>,
+    pub tetra_ll: Option<i32>,
+    pub tetra_lr: Option<i32>,
+    pub octave_id: Option<String>,
 }
 
 /// Edge creation parameters.
@@ -261,6 +361,7 @@ mod tests {
             helpful_count: 0,
             retrieval_count: 0,
             agent_id: None,
+            ..Default::default()
         };
 
         let json = serde_json::to_string(&node).unwrap();

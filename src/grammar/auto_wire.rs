@@ -163,6 +163,7 @@ mod tests {
             source: None,
             parent_ids: None,
             agent_id: None,
+            ..Default::default()
         };
         crud::add_node(conn, &new).unwrap()
     }

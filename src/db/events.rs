@@ -115,7 +115,8 @@ pub fn list_by_trust(
             "SELECT id, node_type, name, description, properties_json, quadrants_json,
              drives_json, lifecycle_state, teleological_level, developmental_stage,
              confidence, source, parent_ids, agent_path, created_at, updated_at,
-             valid_from, valid_to, helpful_count, retrieval_count, agent_id
+             valid_from, valid_to, helpful_count, retrieval_count, agent_id,
+             synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id
              FROM nodes WHERE valid_to IS NULL AND node_type = ?1
              ORDER BY confidence DESC, helpful_count DESC, retrieval_count DESC
              LIMIT ?2"
@@ -126,7 +127,8 @@ pub fn list_by_trust(
             "SELECT id, node_type, name, description, properties_json, quadrants_json,
              drives_json, lifecycle_state, teleological_level, developmental_stage,
              confidence, source, parent_ids, agent_path, created_at, updated_at,
-             valid_from, valid_to, helpful_count, retrieval_count, agent_id
+             valid_from, valid_to, helpful_count, retrieval_count, agent_id,
+             synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id
              FROM nodes WHERE valid_to IS NULL
              ORDER BY confidence DESC, helpful_count DESC, retrieval_count DESC
              LIMIT ?1"

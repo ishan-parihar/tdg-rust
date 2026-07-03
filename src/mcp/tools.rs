@@ -932,6 +932,98 @@ impl TdgServer {
         }).await
     }
 
+    /// Elevate a node's synthesis status on the TDG epistemic ladder.
+    ///
+    /// Phase 1.6: Human-only elevation. All AI-produced content starts at
+    /// `ai-draft`. This tool allows a human to elevate a node to
+    /// `canonical-hypothesis`, `canonical`, or `superseded`.
+    ///
+    /// The `human_authorization` parameter is required — AI agents cannot
+    /// self-elevate. In Phase 5, this will be replaced with real authentication.
+    #[tool(description = "Elevate a node's synthesis status (human-only, requires authorization token)")]
+    pub(crate) async fn tdg_elevate(
+        &self,
+        Parameters(params): Parameters<crate::mcp::params::ElevateParams>,
+    ) -> Result<String, McpError> {
+        // Enforce human authorization — AI agents cannot self-elevate.
+        if params.human_authorization.trim().is_empty() {
+            return Err(McpError::invalid_params(
+                "human_authorization is required for synthesis status elevation. AI agents cannot self-elevate.",
+                None,
+            ));
+        }
+
+        let pool = self.pool.clone();
+        let node_id = params.node_id.clone();
+        let target_status = params.target_status.clone();
+        let reason = params.reason.clone();
+        let auth = params.human_authorization.clone();
+
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+
+            // Parse the target status
+            let target = crate::models::SynthesisStatus::from_str(&target_status).ok_or_else(|| {
+                McpError::invalid_params(
+                    format!(
+                        "Invalid target_status '{}'. Must be one of: canonical-hypothesis, canonical, superseded",
+                        target_status
+                    ),
+                    None,
+                )
+            })?;
+
+            // Load the current node to get its current status
+            let node = crate::db::crud::get_node(&conn, &node_id).map_err(mcp_err)?
+                .ok_or_else(|| McpError::invalid_params(format!("Node {} not found", node_id), None))?;
+
+            let current = crate::models::SynthesisStatus::from_str(&node.synthesis_status)
+                .unwrap_or(crate::models::SynthesisStatus::AiDraft);
+
+            // Validate the ladder transition
+            if !current.can_elevate_to(&target) {
+                return Err(McpError::invalid_params(
+                    format!(
+                        "Invalid elevation: {} -> {}. Valid transitions: ai-draft -> canonical-hypothesis -> canonical -> superseded",
+                        current, target
+                    ),
+                    None,
+                ));
+            }
+
+            // Perform the elevation
+            let mut updates = std::collections::HashMap::new();
+            updates.insert("synthesis_status".to_string(), serde_json::json!(target.as_str()));
+            let updated = crate::db::crud::update_node(&conn, &node_id, &updates).map_err(mcp_err)?;
+
+            // Record the elevation in the mutation log with provenance
+            let _ = crate::db::crud::record_mutation(
+                &conn,
+                "elevate",
+                "node",
+                &node_id,
+                Some(&serde_json::json!({"synthesis_status": current.as_str()}).to_string()),
+                Some(&serde_json::json!({
+                    "synthesis_status": target.as_str(),
+                    "elevated_by": auth,
+                    "reason": reason,
+                }).to_string()),
+                Some("human_elevation"),
+            );
+
+            Ok(serde_json::to_string(&json!({
+                "node_id": node_id,
+                "previous_status": current.as_str(),
+                "new_status": target.as_str(),
+                "elevated_by": auth,
+                "reason": reason,
+                "node": updated,
+            }))
+            .unwrap_or_default())
+        })
+        .await
+    }
+
     #[tool(description = "Connect two nodes with an edge")]
     pub(crate) async fn tdg_connect(
         &self,

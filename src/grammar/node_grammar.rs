@@ -193,6 +193,7 @@ impl NodeGrammar {
             source: source_node_id.map(|s| s.to_string()),
             parent_ids: parent_ids.clone(),
             agent_id: None,
+            ..Default::default()
         };
 
         let node = crud::add_node(conn, &new_node)?;
@@ -249,6 +250,7 @@ impl NodeGrammar {
                     helpful_count: row.get(18)?,
                     retrieval_count: row.get(19)?,
                     agent_id: row.get(20)?,
+                    ..Default::default()
                 })
             })?;
 
@@ -348,6 +350,7 @@ mod tests {
                 source: None,
                 parent_ids: None,
                 agent_id: None,
+                ..Default::default()
             },
         )
         .unwrap();

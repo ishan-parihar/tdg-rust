@@ -381,3 +381,20 @@ pub struct RenormalizeParams {
     // Currently no parameters — renormalization runs with default settings.
     // Reserved for future options (e.g. force_intrinsic, max_depth).
 }
+
+/// Parameters for elevating a node's synthesis status (Phase 1.6).
+///
+/// Elevation above `ai-draft` is human-only. The `human_authorization`
+/// parameter is a string token (for now, any non-empty string suffices;
+/// in Phase 5 this will be replaced with real authentication).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ElevateParams {
+    #[schemars(description = "Node ID to elevate")]
+    pub node_id: String,
+    #[schemars(description = "Target synthesis status: 'canonical-hypothesis', 'canonical', or 'superseded'")]
+    pub target_status: String,
+    #[schemars(description = "Human authorization token (required for elevation above ai-draft)")]
+    pub human_authorization: String,
+    #[schemars(description = "Optional reason for the elevation (recorded in provenance)")]
+    pub reason: Option<String>,
+}

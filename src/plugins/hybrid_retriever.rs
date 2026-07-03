@@ -347,7 +347,8 @@ impl HybridRetriever {
                    n.drives_json, n.lifecycle_state, n.teleological_level, n.developmental_stage,
                    n.confidence, n.source, n.parent_ids, n.agent_path, n.created_at, n.updated_at,
                    n.valid_from, n.valid_to, n.helpful_count, n.retrieval_count, n.agent_id,
-                   fts.rank
+                   n.synthesis_status, n.scale_code, n.tetra_ul, n.tetra_ur, n.tetra_ll,
+                   n.tetra_lr, n.octave_id, fts.rank
             FROM nodes_fts fts
             JOIN nodes n ON fts.rowid = n.rowid
             WHERE nodes_fts MATCH ?1 AND n.valid_to IS NULL
@@ -362,7 +363,7 @@ impl HybridRetriever {
 
         let rows = stmt.query_map(params![query, limit], |row| {
             let node = crate::db::crud::row_to_node(row)?;
-            let rank: f64 = row.get(21)?;
+            let rank: f64 = row.get(28)?;
             Ok((node, rank))
         })?;
         let results: Vec<(Node, f64)> = rows.flatten().collect();
@@ -395,7 +396,8 @@ impl HybridRetriever {
             "SELECT id, node_type, name, description, properties_json, quadrants_json,
                    drives_json, lifecycle_state, teleological_level, developmental_stage,
                    confidence, source, parent_ids, agent_path, created_at, updated_at,
-                   valid_from, valid_to, helpful_count, retrieval_count, agent_id
+                   valid_from, valid_to, helpful_count, retrieval_count, agent_id,
+                   synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id
             FROM nodes
             WHERE valid_to IS NULL AND ({})
             ORDER BY confidence DESC, created_at DESC
@@ -422,7 +424,8 @@ impl HybridRetriever {
                 "SELECT id, node_type, name, description, properties_json, quadrants_json,
                  drives_json, lifecycle_state, teleological_level, developmental_stage,
                  confidence, source, parent_ids, agent_path, created_at, updated_at,
-                 valid_from, valid_to, helpful_count, retrieval_count, agent_id
+                 valid_from, valid_to, helpful_count, retrieval_count, agent_id,
+                 synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id
                  FROM nodes WHERE valid_to IS NULL AND node_type = ?1
                  ORDER BY confidence DESC LIMIT ?2"
                     .to_string(),
@@ -432,7 +435,8 @@ impl HybridRetriever {
                 "SELECT id, node_type, name, description, properties_json, quadrants_json,
                  drives_json, lifecycle_state, teleological_level, developmental_stage,
                  confidence, source, parent_ids, agent_path, created_at, updated_at,
-                 valid_from, valid_to, helpful_count, retrieval_count, agent_id
+                 valid_from, valid_to, helpful_count, retrieval_count, agent_id,
+                 synthesis_status, scale_code, tetra_ul, tetra_ur, tetra_ll, tetra_lr, octave_id
                  FROM nodes WHERE valid_to IS NULL
                  ORDER BY confidence DESC LIMIT ?1"
                     .to_string(),

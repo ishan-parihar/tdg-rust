@@ -84,12 +84,63 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     rebuild_fts(conn)?;
 
     // Phase 8: Graph-level diagnostic history (Phase 0.3 of refactor).
-    // The DiagnosticEngine and FeelingEngine accept drive_history and
-    // quadrant_history parameters, but the injector was passing &[] —
-    // leaving persistence-warning and stuck-pattern features as dead code.
-    // This table stores per-cycle snapshots of the dominant drive label
-    // and dominant quadrant so the engines can detect patterns over time.
     conn.execute_batch(MIGRATE_GRAPH_HISTORY)?;
+
+    // Phase 9: Holonic scaffolding columns (Phase 1.2 of refactor).
+    // Adds synthesis_status, scale_code, tetra_ul/ur/ll/lr, octave_id to nodes.
+    // All nullable with defaults — backward-compatible with existing data.
+    for (table, column, typedef) in &[
+        ("nodes", "synthesis_status", "TEXT DEFAULT 'ai-draft'"),
+        ("nodes", "scale_code", "TEXT"),
+        ("nodes", "tetra_ul", "INTEGER"),
+        ("nodes", "tetra_ur", "INTEGER"),
+        ("nodes", "tetra_ll", "INTEGER"),
+        ("nodes", "tetra_lr", "INTEGER"),
+        ("nodes", "octave_id", "TEXT"),
+    ] {
+        let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {typedef}");
+        match conn.execute_batch(&sql) {
+            Ok(()) => {}
+            Err(rusqlite::Error::ExecuteReturnedResults) => {}
+            Err(_) => { /* column already exists */ }
+        }
+    }
+
+    // Backfill synthesis_status for existing nodes (default to 'ai-draft').
+    conn.execute_batch(
+        "UPDATE nodes SET synthesis_status = 'ai-draft' WHERE synthesis_status IS NULL OR synthesis_status = ''",
+    )
+    .ok();
+
+    // Backfill scale_code for existing nodes based on node_type inference.
+    for (node_type, scale_code) in &[
+        ("observation", "S40"),
+        ("insight", "S40"),
+        ("question", "S40"),
+        ("people", "S40"),
+        ("being", "S40"),
+        ("skill", "S40"),
+        ("capability", "S40"),
+        ("action", "S40"),
+        ("event", "S40"),
+        ("communication", "S40"),
+        ("project", "S30"),
+        ("trajectory", "S30"),
+        ("telos", "S30"),
+        ("value", "S30"),
+        ("bond", "S31"),
+        ("hypothesis", "S70"),
+        ("synthesis", "S70"),
+        ("discovery", "S70"),
+        ("constraint", "S70"),
+        ("narrative", "S70"),
+        ("artifact", "S50"),
+    ] {
+        let sql = format!(
+            "UPDATE nodes SET scale_code = '{scale_code}' WHERE node_type = '{node_type}' AND scale_code IS NULL"
+        );
+        conn.execute_batch(&sql).ok();
+    }
 
     Ok(())
 }
@@ -137,7 +188,15 @@ CREATE TABLE IF NOT EXISTS nodes (
     valid_to TEXT,
     helpful_count INTEGER DEFAULT 0,
     retrieval_count INTEGER DEFAULT 0,
-    agent_id TEXT
+    agent_id TEXT,
+    -- Phase 1.2: Holonic scaffolding fields
+    synthesis_status TEXT DEFAULT 'ai-draft',
+    scale_code TEXT,
+    tetra_ul INTEGER,
+    tetra_ur INTEGER,
+    tetra_ll INTEGER,
+    tetra_lr INTEGER,
+    octave_id TEXT
 );
 
 -- Edges table
