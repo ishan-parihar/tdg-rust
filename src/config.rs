@@ -118,6 +118,9 @@ pub struct Config {
     pub skills_dir: PathBuf,
     /// Lean mode flag. Override with `TDG_LEAN`.
     pub lean: bool,
+    /// Agent name for mind-state attribution. Override with `TDG_AGENT_NAME`.
+    /// Default: `"tdg-agent"`.
+    pub agent_name: String,
     /// Embedding configuration section.
     #[serde(default)]
     pub embedding: EmbeddingSection,
@@ -140,6 +143,7 @@ impl Config {
             state_dir: home.join("state"),
             skills_dir: home.join("skills"),
             lean: false,
+            agent_name: String::from("tdg-agent"),
             embedding: EmbeddingSection::default(),
         }
     }

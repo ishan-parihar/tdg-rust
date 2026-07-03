@@ -1,7 +1,8 @@
 //! Mind State — the agent's working memory and operational status.
 //!
-//! Provides [`MindStateManager`] with dual persistence (JSON file + SQLite WAL)
-//! for resilient agent state management across restarts.
+//! Provides [`MindStateManager`] with JSON-file persistence for resilient
+//! agent state management across restarts. SQLite WAL recovery is a planned
+//! future addition (see Phase 0.5 of the refactor plan).
 //!
 //! Port of the Hermes `MemoryProvider` pattern from `plugins/tdg/__init__.py`.
 
@@ -24,7 +25,7 @@ use crate::error::TdgResult;
 pub struct MindState {
     /// Current session identifier.
     pub session_id: String,
-    /// Agent name (e.g., "Sisyphus", "Hermes").
+    /// Agent name (read from `TDG_AGENT_NAME` config; default `"tdg-agent"`).
     pub agent_name: String,
     /// Name or description of the currently active plan or task.
     pub active_plan: Option<String>,
@@ -44,7 +45,7 @@ impl Default for MindState {
     fn default() -> Self {
         Self {
             session_id: String::new(),
-            agent_name: String::from("Sisyphus"),
+            agent_name: String::from("tdg-agent"),
             active_plan: None,
             working_memory: Vec::new(),
             trust_score: 0.5,
@@ -85,13 +86,14 @@ pub struct MindMetrics {
 
 // ─── Manager ──────────────────────────────────────────────────────────────────
 
-/// Thread-safe manager for the agent's mind state with dual persistence.
+/// Thread-safe manager for the agent's mind state with JSON-file persistence.
 ///
 /// # Persistence strategy
 ///
 /// 1. **JSON file** (`{state_dir}/tdg-mind-state.json`) — primary human-readable snapshot.
 ///    Written atomically (temp-file + rename) on every mutation.
-/// 2. **SQLite WAL** — recovery layer (future: eventsourcing).
+/// 2. **SQLite WAL** — recovery layer (planned: Phase 0.5 of refactor; not yet
+///    implemented despite prior docstring claiming "dual persistence").
 ///
 /// # Thread safety
 ///
@@ -108,7 +110,12 @@ impl MindStateManager {
     /// Create a new manager, loading state from disk or initialising a default.
     pub fn new(config: Config) -> Self {
         let state_path = config.state_dir.join("tdg-mind-state.json");
-        let state = Self::load_or_default(&state_path);
+        let mut state = Self::load_or_default(&state_path);
+        // Phase 0.5: Use configured agent_name instead of hardcoded "Sisyphus".
+        // Only override if the loaded state still has the legacy default.
+        if state.agent_name == "Sisyphus" || state.agent_name.is_empty() {
+            state.agent_name = config.agent_name.clone();
+        }
 
         Self {
             state: Arc::new(Mutex::new(state)),
@@ -270,7 +277,7 @@ mod tests {
         let (cfg, _dir) = temp_config();
         let mgr = MindStateManager::new(cfg);
         let state = mgr.get_state();
-        assert_eq!(state.agent_name, "Sisyphus");
+        assert_eq!(state.agent_name, "tdg-agent");
         assert!((state.trust_score - 0.5).abs() < 1e-9);
         assert_eq!(state.version, 1);
     }
