@@ -103,6 +103,7 @@
 pub mod audit;
 pub mod circuit_breaker;
 pub mod config;
+pub mod context;
 pub mod db;
 pub mod digestion;
 pub mod error;

@@ -1546,6 +1546,218 @@ impl TdgServer {
         .await
     }
 
+    /// Fetch a ContextPack — single-call structured context aggregation (Phase 5).
+    ///
+    /// THE CAPSTONE AGENT API. Aggregates intra/inter/extra-holonic context
+    /// into a single structured object with [status: {synthesis_status}] tags
+    /// on every claim. Replaces 6+ CLI calls with 1.
+    ///
+    /// Returns JSON by default, or markdown prompt block if format="markdown".
+    #[tool(description = "Fetch ContextPack — structured intra+inter+extra context with status tags")]
+    pub(crate) async fn tdg_fetch_context(
+        &self,
+        Parameters(params): Parameters<crate::mcp::params::FetchContextParams>,
+    ) -> Result<String, McpError> {
+        let pool = self.pool.clone();
+        let node_id = params.node_id.clone();
+        let scope = params.scope.unwrap_or_else(|| "intra+inter+extra".to_string());
+        let depth = params.depth.unwrap_or(2);
+        let token_budget = params.token_budget;
+        let format = params.format.unwrap_or_else(|| "json".to_string());
+
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+
+            let pack = crate::context::build_context_pack(
+                &conn,
+                &node_id,
+                &scope,
+                depth,
+                token_budget,
+            )
+            .map_err(mcp_err)?;
+
+            if format == "markdown" {
+                Ok(pack.to_prompt_block())
+            } else {
+                Ok(pack.to_json())
+            }
+        })
+        .await
+    }
+
+    /// Submit a synthesis for validation (Phase 5).
+    ///
+    /// Creates a synthesis node with synthesis_status = "ai-draft" (ALWAYS —
+    /// AI cannot self-elevate), creates EVIDENCES edges to cited nodes, runs
+    /// the 5-gate validation, and returns the validation report.
+    ///
+    /// The synthesis can only be elevated above ai-draft by a human calling
+    /// tdg_elevate with a human_authorization token.
+    #[tool(description = "Submit a synthesis for 5-gate validation (always starts at ai-draft)")]
+    pub(crate) async fn tdg_submit_synthesis(
+        &self,
+        Parameters(params): Parameters<crate::mcp::params::SubmitSynthesisParams>,
+    ) -> Result<String, McpError> {
+        if params.content.is_empty() {
+            return Err(McpError::invalid_params("content is required", None));
+        }
+        if params.name.is_empty() {
+            return Err(McpError::invalid_params("name is required", None));
+        }
+        if params.agent_name.is_empty() {
+            return Err(McpError::invalid_params("agent_name is required", None));
+        }
+
+        let pool = self.pool.clone();
+
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+
+            // Create the synthesis node — ALWAYS ai-draft
+            let synthesis = crate::db::crud::add_node(
+                &conn,
+                &crate::models::NewNode {
+                    node_type: "synthesis".to_string(),
+                    name: params.name.clone(),
+                    description: Some(params.content.clone()),
+                    source: Some(format!("tdg_submit_synthesis/{}", params.agent_name)),
+                    synthesis_status: Some("ai-draft".to_string()), // ALWAYS ai-draft
+                    ..Default::default()
+                },
+            )
+            .map_err(mcp_err)?;
+
+            // Create EVIDENCES edges to cited nodes
+            let mut evidence_created = 0;
+            for evidence_id in &params.evidence_ids {
+                if crate::db::crud::get_node(&conn, evidence_id)
+                    .map_err(mcp_err)?
+                    .is_some()
+                {
+                    if crate::db::crud::add_edge(
+                        &conn,
+                        &crate::models::NewEdge {
+                            source_id: synthesis.id.clone(),
+                            target_id: evidence_id.clone(),
+                            edge_type: "EVIDENCES".to_string(),
+                            ..Default::default()
+                        },
+                    )
+                    .is_ok()
+                    {
+                        evidence_created += 1;
+                    }
+                }
+            }
+
+            // Build provenance for validation
+            let provenance = crate::context::SynthesisProvenance {
+                agent_name: params.agent_name.clone(),
+                source: "tdg_submit_synthesis".to_string(),
+                derivation_pattern: params.derivation_pattern.clone().unwrap_or_else(|| "none".to_string()),
+                invariant_claimed: params.invariant_claimed.unwrap_or(false),
+                decorations_acknowledged: true,
+                has_open_joints: params.has_open_joints.unwrap_or(false),
+                target_status: "ai-draft".to_string(), // always ai-draft
+            };
+
+            // Run 5-gate validation
+            let report = crate::context::validate_synthesis(
+                &conn,
+                &synthesis.id,
+                &provenance,
+                &params.content,
+            )
+            .map_err(mcp_err)?;
+
+            // Save the validation report
+            let _ = crate::context::save_report(&conn, &report);
+
+            Ok(serde_json::to_string(&json!({
+                "synthesis_id": synthesis.id,
+                "synthesis_status": "ai-draft",
+                "evidence_edges_created": evidence_created,
+                "validation": {
+                    "overall_status": report.overall_status,
+                    "can_elevate_to": report.can_elevate_to,
+                    "gates": report.gates.iter().map(|g| json!({
+                        "gate": g.gate,
+                        "passed": g.passed,
+                        "blocked": g.blocked,
+                        "message": g.message,
+                    })).collect::<Vec<_>>(),
+                    "validated_at": report.validated_at,
+                },
+                "message": "Synthesis submitted at ai-draft. Use tdg_elevate with human_authorization to elevate.",
+            }))
+            .unwrap_or_default())
+        })
+        .await
+    }
+
+    /// Validate an existing synthesis (Phase 5).
+    ///
+    /// Re-runs the 5-gate validation on an existing synthesis node.
+    /// Useful after adding/removing evidence edges or changing provenance.
+    #[tool(description = "Re-run 5-gate validation on an existing synthesis")]
+    pub(crate) async fn tdg_validate_synthesis(
+        &self,
+        Parameters(params): Parameters<crate::mcp::params::ValidateSynthesisParams>,
+    ) -> Result<String, McpError> {
+        let pool = self.pool.clone();
+        let synthesis_id = params.synthesis_id.clone();
+
+        run_blocking(move || {
+            let conn = get_conn(&pool)?;
+
+            // Load the synthesis node
+            let node = crate::db::crud::get_node(&conn, &synthesis_id)
+                .map_err(mcp_err)?
+                .ok_or_else(|| McpError::invalid_params(format!("Synthesis {} not found", synthesis_id), None))?;
+
+            // Build provenance
+            let provenance = crate::context::SynthesisProvenance {
+                agent_name: params.agent_name.unwrap_or_else(|| "unknown".to_string()),
+                source: node.source.clone(),
+                derivation_pattern: params.derivation_pattern.unwrap_or_else(|| "none".to_string()),
+                invariant_claimed: params.invariant_claimed.unwrap_or(false),
+                decorations_acknowledged: true,
+                has_open_joints: params.has_open_joints.unwrap_or(false),
+                target_status: params.target_status.unwrap_or_else(|| "ai-draft".to_string()),
+            };
+
+            // Run validation
+            let report = crate::context::validate_synthesis(
+                &conn,
+                &synthesis_id,
+                &provenance,
+                &node.description,
+            )
+            .map_err(mcp_err)?;
+
+            // Save the report
+            let _ = crate::context::save_report(&conn, &report);
+
+            Ok(serde_json::to_string(&json!({
+                "synthesis_id": synthesis_id,
+                "validation": {
+                    "overall_status": report.overall_status,
+                    "can_elevate_to": report.can_elevate_to,
+                    "gates": report.gates.iter().map(|g| json!({
+                        "gate": g.gate,
+                        "passed": g.passed,
+                        "blocked": g.blocked,
+                        "message": g.message,
+                    })).collect::<Vec<_>>(),
+                    "validated_at": report.validated_at,
+                },
+            }))
+            .unwrap_or_default())
+        })
+        .await
+    }
+
     #[tool(description = "Connect two nodes with an edge")]
     pub(crate) async fn tdg_connect(
         &self,

@@ -465,3 +465,54 @@ pub struct GreaterCycleParams {
     #[schemars(description = "Include phase-transition readiness assessment (default: true)")]
     pub include_readiness: Option<bool>,
 }
+
+/// Parameters for fetching a ContextPack (Phase 5).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FetchContextParams {
+    #[schemars(description = "Node ID to fetch context for")]
+    pub node_id: String,
+    #[schemars(description = "Scope: 'intra', 'inter', 'extra', 'intra+inter+extra', or 'all' (default: 'intra+inter+extra')")]
+    pub scope: Option<String>,
+    #[schemars(description = "Depth: 0=identity, 1=+intra, 2=+inter+extra, 3=+analogues+provenance (default: 2)")]
+    pub depth: Option<u8>,
+    #[schemars(description = "Token budget for truncation (optional — drops cheapest-to-lose first)")]
+    pub token_budget: Option<usize>,
+    #[schemars(description = "Return format: 'json' or 'markdown' (default: 'json')")]
+    pub format: Option<String>,
+}
+
+/// Parameters for submitting a synthesis (Phase 5).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SubmitSynthesisParams {
+    #[schemars(description = "The synthesis text content")]
+    pub content: String,
+    #[schemars(description = "Synthesis name/title")]
+    pub name: String,
+    #[schemars(description = "Node IDs that this synthesis cites as evidence (EVIDENCES edges will be created)")]
+    pub evidence_ids: Vec<String>,
+    #[schemars(description = "Agent name (for provenance)")]
+    pub agent_name: String,
+    #[schemars(description = "Derivation pattern: 'structural-mirroring', 'fractal-recursion', 'invariant-vs-decoration', 'witness-corroboration', or 'none'")]
+    pub derivation_pattern: Option<String>,
+    #[schemars(description = "Whether the synthesis claims to be a scale-free invariant")]
+    pub invariant_claimed: Option<bool>,
+    #[schemars(description = "Whether the synthesis has open (unvalidated) joints")]
+    pub has_open_joints: Option<bool>,
+}
+
+/// Parameters for validating a synthesis (Phase 5).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ValidateSynthesisParams {
+    #[schemars(description = "Node ID of the synthesis to validate")]
+    pub synthesis_id: String,
+    #[schemars(description = "Agent name (for provenance)")]
+    pub agent_name: Option<String>,
+    #[schemars(description = "Derivation pattern")]
+    pub derivation_pattern: Option<String>,
+    #[schemars(description = "Whether the synthesis claims to be a scale-free invariant")]
+    pub invariant_claimed: Option<bool>,
+    #[schemars(description = "Whether the synthesis has open joints")]
+    pub has_open_joints: Option<bool>,
+    #[schemars(description = "Target status the synthesis claims (default: 'ai-draft')")]
+    pub target_status: Option<String>,
+}
