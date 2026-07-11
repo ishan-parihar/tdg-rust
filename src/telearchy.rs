@@ -97,25 +97,16 @@ impl<'a> EvidenceCollector<'a> {
                 .ok()
                 .map(|dt| dt.with_timezone(&chrono::Utc).naive_utc())
                 .or_else(|| {
-                    chrono::NaiveDateTime::parse_from_str(
-                        &node.created_at,
-                        "%Y-%m-%dT%H:%M:%SZ",
-                    )
-                    .ok()
+                    chrono::NaiveDateTime::parse_from_str(&node.created_at, "%Y-%m-%dT%H:%M:%SZ")
+                        .ok()
                 })
                 .or_else(|| {
-                    chrono::NaiveDateTime::parse_from_str(
-                        &node.created_at,
-                        "%Y-%m-%dT%H:%M:%S%.fZ",
-                    )
-                    .ok()
+                    chrono::NaiveDateTime::parse_from_str(&node.created_at, "%Y-%m-%dT%H:%M:%S%.fZ")
+                        .ok()
                 })
                 .or_else(|| {
-                    chrono::NaiveDateTime::parse_from_str(
-                        &node.created_at,
-                        "%Y-%m-%d %H:%M:%S",
-                    )
-                    .ok()
+                    chrono::NaiveDateTime::parse_from_str(&node.created_at, "%Y-%m-%d %H:%M:%S")
+                        .ok()
                 });
             if let Some(created) = parsed {
                 let now = chrono::Utc::now().naive_utc();

@@ -126,10 +126,7 @@ impl MindStateManager {
 
     /// Return a snapshot of the current mind state.
     pub fn get_state(&self) -> MindState {
-        self.state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Mutate the mind state inside a lock, then persist automatically.

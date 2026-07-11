@@ -279,7 +279,7 @@ pub fn reconcile_constraints(conn: &Connection) -> TdgResult<Value> {
     let dangling_blocks: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM edges e
-         LEFT JOIN nodes n ON e.target_id = n.id
+         LEFT JOIN nodes n ON e.target_id = n.id AND n.valid_to IS NULL
          WHERE e.edge_type = 'BLOCKS' AND e.valid_to IS NULL AND n.id IS NULL",
             [],
             |r| r.get(0),

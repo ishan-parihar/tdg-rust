@@ -90,8 +90,14 @@ impl GreaterPhase {
             (self, target),
             (Self::SignificatorForming, Self::SignificatorStable)
                 | (Self::SignificatorStable, Self::TransformationPreCrucible)
-                | (Self::TransformationPreCrucible, Self::TransformationCrucible)
-                | (Self::TransformationCrucible, Self::TransformationReintegration)
+                | (
+                    Self::TransformationPreCrucible,
+                    Self::TransformationCrucible
+                )
+                | (
+                    Self::TransformationCrucible,
+                    Self::TransformationReintegration
+                )
                 | (Self::TransformationReintegration, Self::GreatWayAligned)
                 | (Self::TransformationReintegration, Self::GreatWayFriction)
                 | (Self::GreatWayAligned, Self::ChoicePolarizing)
@@ -312,8 +318,8 @@ pub fn tick(
     match state.phase {
         GreaterPhase::SignificatorForming => {
             // Accumulate identity from lesser cycle
-            state.significator = (state.significator + thresholds.significator_formation_rate)
-                .min(1.0);
+            state.significator =
+                (state.significator + thresholds.significator_formation_rate).min(1.0);
 
             // Once significator is sufficiently formed, stabilize
             if state.significator >= 0.5 {
@@ -755,7 +761,11 @@ mod tests {
 
         // With friction, rate = 0.15 * 0.5 = 0.075
         let gain = state.choice_committed - initial_choice;
-        assert!((gain - 0.075).abs() < 0.01, "Expected gain ~0.075, got {}", gain);
+        assert!(
+            (gain - 0.075).abs() < 0.01,
+            "Expected gain ~0.075, got {}",
+            gain
+        );
     }
 
     #[test]
@@ -783,12 +793,19 @@ mod tests {
     #[test]
     fn phase_transition_validity() {
         // Test all valid transitions
-        assert!(GreaterPhase::SignificatorForming.can_transition_to(&GreaterPhase::SignificatorStable));
-        assert!(GreaterPhase::SignificatorStable.can_transition_to(&GreaterPhase::TransformationPreCrucible));
-        assert!(GreaterPhase::TransformationPreCrucible.can_transition_to(&GreaterPhase::TransformationCrucible));
-        assert!(GreaterPhase::TransformationCrucible.can_transition_to(&GreaterPhase::TransformationReintegration));
-        assert!(GreaterPhase::TransformationReintegration.can_transition_to(&GreaterPhase::GreatWayAligned));
-        assert!(GreaterPhase::TransformationReintegration.can_transition_to(&GreaterPhase::GreatWayFriction));
+        assert!(
+            GreaterPhase::SignificatorForming.can_transition_to(&GreaterPhase::SignificatorStable)
+        );
+        assert!(GreaterPhase::SignificatorStable
+            .can_transition_to(&GreaterPhase::TransformationPreCrucible));
+        assert!(GreaterPhase::TransformationPreCrucible
+            .can_transition_to(&GreaterPhase::TransformationCrucible));
+        assert!(GreaterPhase::TransformationCrucible
+            .can_transition_to(&GreaterPhase::TransformationReintegration));
+        assert!(GreaterPhase::TransformationReintegration
+            .can_transition_to(&GreaterPhase::GreatWayAligned));
+        assert!(GreaterPhase::TransformationReintegration
+            .can_transition_to(&GreaterPhase::GreatWayFriction));
         assert!(GreaterPhase::GreatWayAligned.can_transition_to(&GreaterPhase::ChoicePolarizing));
         assert!(GreaterPhase::GreatWayFriction.can_transition_to(&GreaterPhase::ChoicePolarizing));
         assert!(GreaterPhase::ChoicePolarizing.can_transition_to(&GreaterPhase::ChoiceLocked));
@@ -796,7 +813,9 @@ mod tests {
 
         // Invalid transitions
         assert!(!GreaterPhase::SignificatorForming.can_transition_to(&GreaterPhase::ChoiceLocked));
-        assert!(!GreaterPhase::ChoiceLocked.can_transition_to(&GreaterPhase::TransformationCrucible));
+        assert!(
+            !GreaterPhase::ChoiceLocked.can_transition_to(&GreaterPhase::TransformationCrucible)
+        );
     }
 
     #[test]
@@ -842,7 +861,10 @@ mod tests {
 
         assert_eq!(restored.phase, state.phase);
         assert_eq!(restored.significator, state.significator);
-        assert_eq!(restored.transformation_pressure, state.transformation_pressure);
+        assert_eq!(
+            restored.transformation_pressure,
+            state.transformation_pressure
+        );
         assert_eq!(restored.crucible_intensity, state.crucible_intensity);
         assert_eq!(restored.octave_count, state.octave_count);
     }

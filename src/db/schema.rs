@@ -67,9 +67,8 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     conn.execute_batch(MIGRATE_NEW_TABLES)?;
 
     // Phase 6: Embedding dimension column (for mixed-size vector storage)
-    conn.execute_batch(
-        "ALTER TABLE embeddings ADD COLUMN dimension INTEGER DEFAULT 384"
-    ).ok();
+    conn.execute_batch("ALTER TABLE embeddings ADD COLUMN dimension INTEGER DEFAULT 384")
+        .ok();
 
     // Phase 7: Fix FTS5 schema column name mismatch (P0 critical fix)
     // Drop stale triggers first — CREATE TRIGGER IF NOT EXISTS won't replace old node_id triggers.
@@ -143,10 +142,8 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     }
 
     // Phase 10: Lesser cycle + metabolism infrastructure (Phase 2 of refactor).
-    conn.execute_batch(
-        "ALTER TABLE nodes ADD COLUMN lesser_cycle_json TEXT",
-    )
-    .ok();
+    conn.execute_batch("ALTER TABLE nodes ADD COLUMN lesser_cycle_json TEXT")
+        .ok();
 
     conn.execute_batch(MIGRATE_METABOLISM)?;
 
@@ -168,10 +165,8 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     conn.execute_batch(MIGRATE_RESONANCE_GRAPH)?;
 
     // Phase 12: Greater cycle state (Phase 4 of refactor).
-    conn.execute_batch(
-        "ALTER TABLE nodes ADD COLUMN greater_cycle_json TEXT",
-    )
-    .ok();
+    conn.execute_batch("ALTER TABLE nodes ADD COLUMN greater_cycle_json TEXT")
+        .ok();
 
     // Phase 13: V/C/R/N coordinate system (audit Phase 7).
     // - realm_placement: "gross" | "subtle" | "causal"
@@ -982,9 +977,11 @@ mod tests {
         .unwrap();
 
         let fts_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM nodes_fts WHERE id = 'n_fts_legacy'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM nodes_fts WHERE id = 'n_fts_legacy'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(fts_count, 1);
 

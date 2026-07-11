@@ -50,7 +50,11 @@ pub fn load_working_memory(cfg: &Config) -> Value {
 
     // Bridge: if the legacy file doesn't have project context, check MindStateManager's file
     let has_project = wm.get("current_project").is_some()
-        || wm.get("working_memory").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false);
+        || wm
+            .get("working_memory")
+            .and_then(|v| v.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(false);
 
     if !has_project {
         let mind_state_path = cfg.state_dir.join("tdg-mind-state.json");

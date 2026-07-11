@@ -113,10 +113,16 @@ impl FailureMode {
         match self {
             Self::BorrowedRigor => "Math/formalism symbols present without derivation pattern",
             Self::OrthogonalityViolation => "Type derived from Stage (Type⊥Stage violated)",
-            Self::NumerologyNotIsomorphism => "Cardinality matching without structure-preserving map",
+            Self::NumerologyNotIsomorphism => {
+                "Cardinality matching without structure-preserving map"
+            }
             Self::MisplacedInvariant => "Invariant attached to wrong feature of the witness",
-            Self::UnexaminedFlagshipAnalogy => "Central analogy assumed rather than tested at breaking points",
-            Self::HumanisticReduction => "Cosmological function collapsed to human-psychological feature",
+            Self::UnexaminedFlagshipAnalogy => {
+                "Central analogy assumed rather than tested at breaking points"
+            }
+            Self::HumanisticReduction => {
+                "Cosmological function collapsed to human-psychological feature"
+            }
         }
     }
 }
@@ -264,9 +270,14 @@ fn detect_failure_modes(provenance: &SynthesisProvenance, text: &str) -> Vec<Fai
     let lower = text.to_lowercase();
 
     // 1. Borrowed rigor: math symbols present but derivation_pattern is "none"
-    let has_math = lower.contains("∫") || lower.contains("∑") || lower.contains("∇")
-        || lower.contains("∂") || lower.contains("α") || lower.contains("β")
-        || lower.contains("→") || lower.contains("⇒");
+    let has_math = lower.contains("∫")
+        || lower.contains("∑")
+        || lower.contains("∇")
+        || lower.contains("∂")
+        || lower.contains("α")
+        || lower.contains("β")
+        || lower.contains("→")
+        || lower.contains("⇒");
     if has_math && provenance.derivation_pattern == "none" {
         modes.push(FailureMode::BorrowedRigor);
     }
@@ -281,7 +292,9 @@ fn detect_failure_modes(provenance: &SynthesisProvenance, text: &str) -> Vec<Fai
 
     // 3. Numerology: "matches" or "equals" with cardinality but no isomorphism
     if (lower.contains("matches") || lower.contains("equals"))
-        && (lower.contains("elements") || lower.contains("orbitals") || lower.contains("archetypes"))
+        && (lower.contains("elements")
+            || lower.contains("orbitals")
+            || lower.contains("archetypes"))
         && !lower.contains("isomorphism")
         && !lower.contains("structure-preserving")
     {
@@ -300,17 +313,24 @@ fn detect_failure_modes(provenance: &SynthesisProvenance, text: &str) -> Vec<Fai
     }
 
     // 5. Unexamined flagship analogy: (heuristic — check if "like" or "analogous" used without "test")
-    if (lower.contains("just like") || lower.contains("analogous to") || lower.contains("similar to"))
-        && !lower.contains("test") && !lower.contains("breaking point")
+    if (lower.contains("just like")
+        || lower.contains("analogous to")
+        || lower.contains("similar to"))
+        && !lower.contains("test")
+        && !lower.contains("breaking point")
     {
         modes.push(FailureMode::UnexaminedFlagshipAnalogy);
     }
 
     // 6. Humanistic reduction: cosmological terms reduced to psychology
-    let cosmological_terms = lower.contains("cosmic") || lower.contains("universal")
-        || lower.contains("cosmological") || lower.contains("galactic");
-    let psychological_terms = lower.contains("ego") || lower.contains("trauma")
-        || lower.contains("psychotherapy") || lower.contains("rumination");
+    let cosmological_terms = lower.contains("cosmic")
+        || lower.contains("universal")
+        || lower.contains("cosmological")
+        || lower.contains("galactic");
+    let psychological_terms = lower.contains("ego")
+        || lower.contains("trauma")
+        || lower.contains("psychotherapy")
+        || lower.contains("rumination");
     if cosmological_terms && psychological_terms && provenance.invariant_claimed {
         modes.push(FailureMode::HumanisticReduction);
     }
@@ -450,10 +470,7 @@ fn gate5_provenance_completeness(provenance: &SynthesisProvenance) -> GateResult
 /// Save a validation report to the DB.
 ///
 /// Stores the report as JSON in the synthesis_provenance table.
-pub fn save_report(
-    conn: &rusqlite::Connection,
-    report: &ValidationReport,
-) -> TdgResult<()> {
+pub fn save_report(conn: &rusqlite::Connection, report: &ValidationReport) -> TdgResult<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS synthesis_validation (
             synthesis_id TEXT PRIMARY KEY,
@@ -498,8 +515,7 @@ pub fn load_report(
             let gates_json: String = row.get(3)?;
             let validated_at: String = row.get(4)?;
 
-            let gates: Vec<GateResult> =
-                serde_json::from_str(&gates_json).unwrap_or_default();
+            let gates: Vec<GateResult> = serde_json::from_str(&gates_json).unwrap_or_default();
 
             Ok(ValidationReport {
                 synthesis_id,
@@ -653,10 +669,20 @@ mod tests {
         let mut provenance = make_provenance();
         provenance.derivation_pattern = "none".to_string();
 
-        let report = validate(&conn, &synthesis.id, &provenance, "The integral ∫ of the field").unwrap();
+        let report = validate(
+            &conn,
+            &synthesis.id,
+            &provenance,
+            "The integral ∫ of the field",
+        )
+        .unwrap();
 
         assert_eq!(report.overall_status, "blocked");
-        let fm_gate = report.gates.iter().find(|g| g.gate == "failure_mode").unwrap();
+        let fm_gate = report
+            .gates
+            .iter()
+            .find(|g| g.gate == "failure_mode")
+            .unwrap();
         assert!(fm_gate.blocked);
         assert!(fm_gate.message.contains("borrowed_rigor"));
     }
@@ -705,7 +731,11 @@ mod tests {
         )
         .unwrap();
 
-        let fm_gate = report.gates.iter().find(|g| g.gate == "failure_mode").unwrap();
+        let fm_gate = report
+            .gates
+            .iter()
+            .find(|g| g.gate == "failure_mode")
+            .unwrap();
         assert!(fm_gate.blocked);
         assert!(fm_gate.message.contains("orthogonality_violation"));
     }
@@ -756,7 +786,11 @@ mod tests {
         )
         .unwrap();
 
-        let fm_gate = report.gates.iter().find(|g| g.gate == "failure_mode").unwrap();
+        let fm_gate = report
+            .gates
+            .iter()
+            .find(|g| g.gate == "failure_mode")
+            .unwrap();
         assert!(fm_gate.blocked);
         assert!(fm_gate.message.contains("humanistic_reduction"));
     }
@@ -800,9 +834,19 @@ mod tests {
         provenance.has_open_joints = true;
         provenance.target_status = "canonical".to_string();
 
-        let report = validate(&conn, &synthesis.id, &provenance, "Synthesis with open joints").unwrap();
+        let report = validate(
+            &conn,
+            &synthesis.id,
+            &provenance,
+            "Synthesis with open joints",
+        )
+        .unwrap();
 
-        let joint_gate = report.gates.iter().find(|g| g.gate == "joint_validation").unwrap();
+        let joint_gate = report
+            .gates
+            .iter()
+            .find(|g| g.gate == "joint_validation")
+            .unwrap();
         assert!(joint_gate.blocked);
     }
 
@@ -848,7 +892,11 @@ mod tests {
 
         let report = validate(&conn, &synthesis.id, &provenance, "A scale-free invariant").unwrap();
 
-        let scope_gate = report.gates.iter().find(|g| g.gate == "cosmological_scope").unwrap();
+        let scope_gate = report
+            .gates
+            .iter()
+            .find(|g| g.gate == "cosmological_scope")
+            .unwrap();
         assert!(scope_gate.blocked);
     }
 
@@ -916,7 +964,11 @@ mod tests {
 
         let report = validate(&conn, &synthesis.id, &provenance, "A scale-free invariant").unwrap();
 
-        let scope_gate = report.gates.iter().find(|g| g.gate == "cosmological_scope").unwrap();
+        let scope_gate = report
+            .gates
+            .iter()
+            .find(|g| g.gate == "cosmological_scope")
+            .unwrap();
         assert!(scope_gate.passed);
     }
 

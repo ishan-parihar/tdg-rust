@@ -471,16 +471,16 @@ fn diagnose_shadows(
     };
 
     // Potentiator shadows (based on experience)
-    state.potentiator.shadow = if state.experience_accumulated > thresholds.golden_addiction_threshold
-    {
-        Some(Shadow::PotentiatorHyperIngestion)
-    } else if state.experience_accumulated < thresholds.golden_allergy_threshold
-        && state.cycle_count > 0
-    {
-        Some(Shadow::PotentiatorHypoIngestion)
-    } else {
-        None
-    };
+    state.potentiator.shadow =
+        if state.experience_accumulated > thresholds.golden_addiction_threshold {
+            Some(Shadow::PotentiatorHyperIngestion)
+        } else if state.experience_accumulated < thresholds.golden_allergy_threshold
+            && state.cycle_count > 0
+        {
+            Some(Shadow::PotentiatorHypoIngestion)
+        } else {
+            None
+        };
 
     // Check if shadows changed
     if state.matrix.shadow != old_matrix_shadow || state.potentiator.shadow != old_pot_shadow {
@@ -558,7 +558,7 @@ pub fn generate_catalyst_realm_aware(
 /// Compute the realm distance multiplier for catalyst generation.
 pub fn realm_distance_multiplier(source: Option<&str>, target: Option<&str>) -> f64 {
     match (source, target) {
-        (None, _) | (_, None) => 1.0, // no realm info → normal catalyst
+        (None, _) | (_, None) => 1.0,        // no realm info → normal catalyst
         (Some(s), Some(t)) if s == t => 1.0, // same realm → normal
         (Some("gross"), Some("subtle")) | (Some("subtle"), Some("gross")) => 1.5,
         (Some("subtle"), Some("causal")) | (Some("causal"), Some("subtle")) => 1.5,
@@ -803,8 +803,8 @@ mod tests {
         // With 10.0 catalyst and matrix.magnitude=0.5, experience should
         // accumulate enough to cross the 1.0 upward_pressure_threshold.
         let r = tick(&mut state, 0.0, &thresholds); // → Quiescent
-        // The upward_pressure flag is set during Integrating phase
-        // if experience_accumulated >= upward_pressure_threshold
+                                                    // The upward_pressure flag is set during Integrating phase
+                                                    // if experience_accumulated >= upward_pressure_threshold
         assert!(
             r.upward_pressure || state.experience_accumulated > 0.0,
             "Expected upward pressure or accumulated experience. experience={:.3}, threshold={}",
@@ -895,7 +895,10 @@ mod tests {
         assert_eq!(restored.matrix.magnitude, state.matrix.magnitude);
         assert_eq!(restored.matrix.shadow, state.matrix.shadow);
         assert_eq!(restored.catalyst_pending, state.catalyst_pending);
-        assert_eq!(restored.experience_accumulated, state.experience_accumulated);
+        assert_eq!(
+            restored.experience_accumulated,
+            state.experience_accumulated
+        );
         assert_eq!(restored.cycle_count, state.cycle_count);
     }
 

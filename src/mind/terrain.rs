@@ -138,7 +138,9 @@ pub fn generate_terrain_context(conn: &Connection, loop_state: &Value) -> TdgRes
     top_nodes.sort_by(|a, b| {
         let score_a = a.confidence * (1.0 + (a.retrieval_count + a.helpful_count) as f64);
         let score_b = b.confidence * (1.0 + (b.retrieval_count + b.helpful_count) as f64);
-        score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+        score_b
+            .partial_cmp(&score_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     let top_nodes: Vec<_> = top_nodes.into_iter().take(10).collect();
 

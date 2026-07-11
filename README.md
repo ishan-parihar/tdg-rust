@@ -25,25 +25,79 @@ Standard vector databases store embeddings and retrieve by similarity. TDG does 
 | **Epistemics** | None | Status ladder (ai-draft → canonical) + 5-Gate validation |
 | **Drive adaptation** | None | Drives learn from experience (not hardcoded) |
 
-## Quick Start
+## Installation & Setup Guide
+
+TDG-rust can be installed automatically via our script, or built manually from source.
+
+### Method 1: Automatic Installation (Recommended for Hermes Agent integration)
+
+This script installs the pre-compiled binary, sets up the ONNX Runtime library, configures the database, and patches `config.yaml` for Hermes Agent:
 
 ```bash
-# Install
 curl -fsSL https://raw.githubusercontent.com/ishan-parihar/tdg-rust/main/install.sh | bash
+```
 
-# Or build from source
+The installer configures a directory structure at `~/.hermes/tdg-rust` and creates a **wrapper script** at `~/.hermes/tdg-rust/tdg` which automatically injects the correct `LD_LIBRARY_PATH` so you don't encounter ONNX shared library runtime errors.
+
+### Method 2: Manual Setup & Building from Source
+
+For local development or custom systems, build TDG-rust from source:
+
+#### 1. Clone the repository
+```bash
 git clone https://github.com/ishan-parihar/tdg-rust.git
 cd tdg-rust
+```
+
+#### 2. Compile with ONNX support
+To enable the inline embedding engine, compile with the `onnx` feature:
+```bash
 cargo build --release --features onnx
+```
+> [!NOTE]
+> The build script automatically downloads the target-specific ONNX Runtime libraries and stores them in the build target directory. 
 
-# Initialize
-tdg-rust init
+#### 3. Resolve ONNX Runtime library at Runtime
+Since `ort` links dynamically, you must instruct your OS loader where to find `libonnxruntime.so.1` (Linux) or `libonnxruntime.dylib` (macOS).
 
-# Start MCP server (for Hermes/Claude/Cursor)
-tdg-rust serve
+**Linux (Bash):**
+```bash
+# Point to the compiled library directory in your target output
+export LD_LIBRARY_PATH="$(pwd)/target/release/build/$(ls target/release/build | grep -E '^ort-[0-9a-f]+$')/out:$LD_LIBRARY_PATH"
+```
 
-# Or start HTTP server on port 3001
-tdg-rust serve --port 3001
+**macOS:**
+```bash
+export DYLD_LIBRARY_PATH="$(pwd)/target/release/build/$(ls target/release/build | grep -E '^ort-[0-9a-f]+$')/out:$DYLD_LIBRARY_PATH"
+```
+
+Alternatively, you can copy the libraries into a system folder (like `/usr/local/lib`) or create a launcher script:
+```bash
+mkdir -p ~/.local/bin
+cat << 'EOF' > ~/.local/bin/tdg
+#!/usr/bin/env bash
+export LD_LIBRARY_PATH="/path/to/tdg-rust/target/release/build/ort-xyz/out:$LD_LIBRARY_PATH"
+exec "/path/to/tdg-rust/target/release/tdg-rust" "$@"
+EOF
+chmod +x ~/.local/bin/tdg
+```
+
+#### 4. Initialize Database
+Initialize the schema and Full-Text Search (FTS5) indexes:
+```bash
+./target/release/tdg-rust init
+```
+
+#### 5. Verify & Run
+```bash
+# Check system stats
+./target/release/tdg-rust stats
+
+# Start the MCP server (for Cursor, Claude Desktop, or Hermes Gateway)
+./target/release/tdg-rust serve
+
+# Or start the HTTP server on a custom port
+./target/release/tdg-rust serve --port 3001
 ```
 
 ## Architecture

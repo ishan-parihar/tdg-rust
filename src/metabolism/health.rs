@@ -136,11 +136,7 @@ impl Health {
         };
 
         // ─── B_H: horizontal balance (A_z ↔ C_z) ───────────────────────────
-        let b_h = if a_z > c_z {
-            c_z / a_z
-        } else {
-            a_z / c_z
-        };
+        let b_h = if a_z > c_z { c_z / a_z } else { a_z / c_z };
 
         // ─── B_V: vertical balance (Eros ↔ Agape) ──────────────────────────
         let eros = af.gamma.er;
@@ -306,7 +302,10 @@ fn register_complementarity(pi1: &Option<f64>, pi2: &Option<f64>) -> f64 {
 }
 
 /// Factor 2: Coupling-tensor compatibility (cosine similarity, clamped ≥ 0).
-fn coupling_tensor_compatibility(g1: &crate::metabolism::attractor::CouplingTensor, g2: &crate::metabolism::attractor::CouplingTensor) -> f64 {
+fn coupling_tensor_compatibility(
+    g1: &crate::metabolism::attractor::CouplingTensor,
+    g2: &crate::metabolism::attractor::CouplingTensor,
+) -> f64 {
     let v1 = g1.as_vec();
     let v2 = g2.as_vec();
     let dot = v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2] + v1[3] * v2[3];
@@ -449,7 +448,11 @@ mod tests {
         let health = Health::compute(&lesser, &af);
 
         // With balanced reservoirs and drives, G_z should be moderate-high
-        assert!(health.g_z > 30.0, "G_z should be > 30 for balanced state, got {}", health.g_z);
+        assert!(
+            health.g_z > 30.0,
+            "G_z should be > 30 for balanced state, got {}",
+            health.g_z
+        );
     }
 
     #[test]
@@ -483,8 +486,16 @@ mod tests {
         let health = Health::compute(&lesser, &af);
 
         // grad_psi = |0.9 - 0.1| / (0.9 + 0.1) = 0.8
-        assert!(health.grad_psi > 0.7, "grad_psi should be high, got {}", health.grad_psi);
-        assert!(health.p_z > 10.0, "P_z should be > 10 with high tension + alignment, got {}", health.p_z);
+        assert!(
+            health.grad_psi > 0.7,
+            "grad_psi should be high, got {}",
+            health.grad_psi
+        );
+        assert!(
+            health.p_z > 10.0,
+            "P_z should be > 10 with high tension + alignment, got {}",
+            health.p_z
+        );
     }
 
     #[test]
@@ -497,7 +508,11 @@ mod tests {
         let health = Health::compute(&lesser, &af);
 
         // Neutral → θ = π/2 → cos = 0 → P_z = 0 (sinkhole)
-        assert!(health.p_z < 1.0, "P_z should be ~0 (sinkhole), got {}", health.p_z);
+        assert!(
+            health.p_z < 1.0,
+            "P_z should be ~0 (sinkhole), got {}",
+            health.p_z
+        );
         assert_eq!(health.state, HealthState::Depolarized);
     }
 
@@ -576,8 +591,16 @@ mod tests {
         // Donor-acceptor complementarity = min(0.8, 0.7) = 0.7
         // But GW intersection: STO-STS = 0.2
         // So R = 0.7 * gamma_compat * 0.2
-        assert!(r > 0.0, "Resonance should be > 0 for donor-acceptor, got {}", r);
-        assert!(r < 0.7, "STO-STS pair should have reduced resonance, got {}", r);
+        assert!(
+            r > 0.0,
+            "Resonance should be > 0 for donor-acceptor, got {}",
+            r
+        );
+        assert!(
+            r < 0.7,
+            "STO-STS pair should have reduced resonance, got {}",
+            r
+        );
     }
 
     #[test]
@@ -609,7 +632,11 @@ mod tests {
 
         let r = resonance(&af1, &af2);
         // Sharer-sharer, same polarity (STO-STO = 1.0), close values
-        assert!(r > 0.3, "Same-polarity sharers should have moderate+ resonance, got {}", r);
+        assert!(
+            r > 0.3,
+            "Same-polarity sharers should have moderate+ resonance, got {}",
+            r
+        );
     }
 
     #[test]

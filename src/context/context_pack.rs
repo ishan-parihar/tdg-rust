@@ -362,10 +362,7 @@ fn build_resonances(
     )?;
 
     let rows = stmt.query_map(rusqlite::params![holon_id, limit], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, f64>(1)?,
-        ))
+        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
     })?;
 
     let mut resonances = Vec::new();
@@ -412,15 +409,12 @@ fn build_parent_chain(
 }
 
 /// Build sub-holon summaries (children via DECOMPOSES_TO).
-fn build_sub_holons(conn: &rusqlite::Connection, holon_id: &str) -> TdgResult<Vec<SubHolonSummary>> {
-    let edges = crate::db::crud::get_edges(
-        conn,
-        Some(holon_id),
-        None,
-        Some("DECOMPOSES_TO"),
-        None,
-        20,
-    )?;
+fn build_sub_holons(
+    conn: &rusqlite::Connection,
+    holon_id: &str,
+) -> TdgResult<Vec<SubHolonSummary>> {
+    let edges =
+        crate::db::crud::get_edges(conn, Some(holon_id), None, Some("DECOMPOSES_TO"), None, 20)?;
 
     let mut subs = Vec::new();
     for edge in edges {
@@ -520,10 +514,7 @@ fn build_analogues(
 }
 
 /// Build provenance summary (last 5 events + evidence count).
-fn build_provenance(
-    conn: &rusqlite::Connection,
-    holon_id: &str,
-) -> TdgResult<ProvenanceSummary> {
+fn build_provenance(conn: &rusqlite::Connection, holon_id: &str) -> TdgResult<ProvenanceSummary> {
     // Get recent events
     let mut stmt = conn.prepare(
         "SELECT event_action, timestamp, agent_id
@@ -645,7 +636,9 @@ impl ContextPack {
             if let Some(health) = &intra.health {
                 md.push_str(&format!(
                     "- **Health**: G_z={:.1}, P_z={:.1}, state={} [status: hypothesis-graded]\n",
-                    health.g_z, health.p_z, health.state.as_str()
+                    health.g_z,
+                    health.p_z,
+                    health.state.as_str()
                 ));
             }
 
@@ -669,7 +662,8 @@ impl ContextPack {
             if let Some(af) = &intra.attractor_field {
                 md.push_str(&format!(
                     "- **Attractor**: π={:?}, noble={}\n",
-                    af.pi, af.is_noble()
+                    af.pi,
+                    af.is_noble()
                 ));
             }
 
@@ -748,7 +742,10 @@ impl ContextPack {
             if !prov.recent_events.is_empty() {
                 md.push_str("- Recent events:\n");
                 for event in prov.recent_events.iter().take(3) {
-                    md.push_str(&format!("  - {} ({})\n", event.event_action, event.timestamp));
+                    md.push_str(&format!(
+                        "  - {} ({})\n",
+                        event.event_action, event.timestamp
+                    ));
                 }
             }
             md.push('\n');
@@ -982,7 +979,10 @@ mod tests {
     #[test]
     fn epistemology_status_mapping() {
         assert_eq!(epistemology_status("canonical"), "grounded");
-        assert_eq!(epistemology_status("canonical-hypothesis"), "hypothesis-graded");
+        assert_eq!(
+            epistemology_status("canonical-hypothesis"),
+            "hypothesis-graded"
+        );
         assert_eq!(epistemology_status("ai-draft"), "speculative");
         assert_eq!(epistemology_status("superseded"), "superseded");
     }

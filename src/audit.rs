@@ -113,10 +113,7 @@ impl AnomalyRegistry {
 
         if existing_count + 1 >= 3 {
             // P0 fix: use if-let instead of unwrap() to prevent server crash
-            if let Some(chronic) = reg
-                .get_mut("chronic")
-                .and_then(|v| v.as_array_mut())
-            {
+            if let Some(chronic) = reg.get_mut("chronic").and_then(|v| v.as_array_mut()) {
                 if !chronic
                     .iter()
                     .any(|c| c.get("key").and_then(|k| k.as_str()) == Some(&key))
@@ -651,7 +648,6 @@ impl<'a> AuditEngine<'a> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -741,7 +737,6 @@ mod tests {
         assert!(bundle.reports.contains_key("capability"));
         assert_eq!(bundle.overall_health.status, "healthy");
     }
-
 
     #[test]
     fn anomaly_registry_chronic_tracking() {

@@ -217,7 +217,9 @@ pub struct GetRelatedParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MaintenanceParams {
-    #[schemars(description = "Action: rebuild_fts, rebuild_embeddings, gc_nodes, gc_edges, gc_all, health, enrich, align_data")]
+    #[schemars(
+        description = "Action: rebuild_fts, rebuild_embeddings, gc_nodes, gc_edges, gc_all, health, enrich, align_data"
+    )]
     pub action: Option<String>,
     #[schemars(description = "Batch size for operations (default 500)")]
     pub batch_size: Option<i64>,
@@ -277,7 +279,9 @@ pub struct ReflectParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReflectRunParams {
-    #[schemars(description = "Number of recent turns to consider (unused, engine uses internal config)")]
+    #[schemars(
+        description = "Number of recent turns to consider (unused, engine uses internal config)"
+    )]
     pub turns: Option<i64>,
     #[schemars(description = "Dry run mode (unused, engine uses internal config)")]
     pub dry_run: Option<bool>,
@@ -391,7 +395,9 @@ pub struct RenormalizeParams {
 pub struct ElevateParams {
     #[schemars(description = "Node ID to elevate")]
     pub node_id: String,
-    #[schemars(description = "Target synthesis status: 'canonical-hypothesis', 'canonical', or 'superseded'")]
+    #[schemars(
+        description = "Target synthesis status: 'canonical-hypothesis', 'canonical', or 'superseded'"
+    )]
     pub target_status: String,
     #[schemars(description = "Human authorization token (required for elevation above ai-draft)")]
     pub human_authorization: String,
@@ -471,11 +477,17 @@ pub struct GreaterCycleParams {
 pub struct FetchContextParams {
     #[schemars(description = "Node ID to fetch context for")]
     pub node_id: String,
-    #[schemars(description = "Scope: 'intra', 'inter', 'extra', 'intra+inter+extra', or 'all' (default: 'intra+inter+extra')")]
+    #[schemars(
+        description = "Scope: 'intra', 'inter', 'extra', 'intra+inter+extra', or 'all' (default: 'intra+inter+extra')"
+    )]
     pub scope: Option<String>,
-    #[schemars(description = "Depth: 0=identity, 1=+intra, 2=+inter+extra, 3=+analogues+provenance (default: 2)")]
+    #[schemars(
+        description = "Depth: 0=identity, 1=+intra, 2=+inter+extra, 3=+analogues+provenance (default: 2)"
+    )]
     pub depth: Option<u8>,
-    #[schemars(description = "Token budget for truncation (optional — drops cheapest-to-lose first)")]
+    #[schemars(
+        description = "Token budget for truncation (optional — drops cheapest-to-lose first)"
+    )]
     pub token_budget: Option<usize>,
     #[schemars(description = "Return format: 'json' or 'markdown' (default: 'json')")]
     pub format: Option<String>,
@@ -488,11 +500,15 @@ pub struct SubmitSynthesisParams {
     pub content: String,
     #[schemars(description = "Synthesis name/title")]
     pub name: String,
-    #[schemars(description = "Node IDs that this synthesis cites as evidence (EVIDENCES edges will be created)")]
+    #[schemars(
+        description = "Node IDs that this synthesis cites as evidence (EVIDENCES edges will be created)"
+    )]
     pub evidence_ids: Vec<String>,
     #[schemars(description = "Agent name (for provenance)")]
     pub agent_name: String,
-    #[schemars(description = "Derivation pattern: 'structural-mirroring', 'fractal-recursion', 'invariant-vs-decoration', 'witness-corroboration', or 'none'")]
+    #[schemars(
+        description = "Derivation pattern: 'structural-mirroring', 'fractal-recursion', 'invariant-vs-decoration', 'witness-corroboration', or 'none'"
+    )]
     pub derivation_pattern: Option<String>,
     #[schemars(description = "Whether the synthesis claims to be a scale-free invariant")]
     pub invariant_claimed: Option<bool>,

@@ -569,6 +569,9 @@ fn hybrid_retriever_method_field_indicates_search_type() {
         let retriever = HybridRetriever::new();
         let results = retriever.search(conn, "Rust", 10, None)?;
         assert!(!results.is_empty());
+        #[cfg(feature = "onnx")]
+        assert_eq!(results[0].method, "hybrid+embedding");
+        #[cfg(not(feature = "onnx"))]
         assert_eq!(results[0].method, "hybrid");
 
         Ok(())

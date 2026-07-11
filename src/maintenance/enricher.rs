@@ -6,64 +6,33 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use tracing::{info, warn};
 
-
 fn drives_by_type() -> &'static HashMap<&'static str, HashMap<&'static str, i64>> {
     static MAP: OnceLock<HashMap<&str, HashMap<&str, i64>>> = OnceLock::new();
     MAP.get_or_init(|| {
         let mut m = HashMap::new();
         m.insert(
             "observation",
-            HashMap::from([
-                ("eros", 3),
-                ("agency", 5),
-                ("communion", 2),
-                ("agape", 1),
-            ]),
+            HashMap::from([("eros", 3), ("agency", 5), ("communion", 2), ("agape", 1)]),
         );
         m.insert(
             "capability",
-            HashMap::from([
-                ("eros", 5),
-                ("agency", 7),
-                ("communion", 3),
-                ("agape", 2),
-            ]),
+            HashMap::from([("eros", 5), ("agency", 7), ("communion", 3), ("agape", 2)]),
         );
         m.insert(
             "telos",
-            HashMap::from([
-                ("eros", 7),
-                ("agency", 8),
-                ("communion", 4),
-                ("agape", 5),
-            ]),
+            HashMap::from([("eros", 7), ("agency", 8), ("communion", 4), ("agape", 5)]),
         );
         m.insert(
             "action",
-            HashMap::from([
-                ("eros", 4),
-                ("agency", 6),
-                ("communion", 3),
-                ("agape", 2),
-            ]),
+            HashMap::from([("eros", 4), ("agency", 6), ("communion", 3), ("agape", 2)]),
         );
         m.insert(
             "being",
-            HashMap::from([
-                ("eros", 6),
-                ("agency", 5),
-                ("communion", 6),
-                ("agape", 4),
-            ]),
+            HashMap::from([("eros", 6), ("agency", 5), ("communion", 6), ("agape", 4)]),
         );
         m.insert(
             "constraint",
-            HashMap::from([
-                ("eros", 2),
-                ("agency", 4),
-                ("communion", 2),
-                ("agape", 1),
-            ]),
+            HashMap::from([("eros", 2), ("agency", 4), ("communion", 2), ("agape", 1)]),
         );
         m
     })
@@ -73,12 +42,12 @@ fn stage_by_type() -> &'static HashMap<&'static str, i32> {
     static MAP: OnceLock<HashMap<&str, i32>> = OnceLock::new();
     MAP.get_or_init(|| {
         let mut m = HashMap::new();
-        m.insert("observation", 2);  // T2
-        m.insert("capability", 3);   // T3
-        m.insert("telos", 1);        // T1
-        m.insert("action", 4);       // T4
-        m.insert("being", 0);        // T0
-        m.insert("constraint", 2);   // T2
+        m.insert("observation", 2); // T2
+        m.insert("capability", 3); // T3
+        m.insert("telos", 1); // T1
+        m.insert("action", 4); // T4
+        m.insert("being", 0); // T0
+        m.insert("constraint", 2); // T2
         m
     })
 }
@@ -333,11 +302,7 @@ fn report_summary(report: &EnricherReport) -> String {
     if report.embeddings_failed > 0 {
         parts.push(format!("embeddings_failed: {}", report.embeddings_failed));
     }
-    let mode = if report.dry_run {
-        "DRY RUN"
-    } else {
-        "APPLIED"
-    };
+    let mode = if report.dry_run { "DRY RUN" } else { "APPLIED" };
     if parts.is_empty() {
         return format!("Enricher [{}] nothing to do", mode);
     }

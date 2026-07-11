@@ -456,7 +456,10 @@ fn main() -> anyhow::Result<()> {
                     .unwrap_or_else(|| config.tdg_dir.join("lib"));
                 let lib_path = lib_dir.join("libonnxruntime.so.1");
                 if !lib_path.exists() {
-                    eprintln!("ERROR: libonnxruntime.so.1 not found at {}", lib_path.display());
+                    eprintln!(
+                        "ERROR: libonnxruntime.so.1 not found at {}",
+                        lib_path.display()
+                    );
                     eprintln!("       Required for ONNX embedding support.");
                     eprintln!("       Fix: run install.sh or set LD_LIBRARY_PATH to include the directory containing libonnxruntime.so.1");
                     std::process::exit(1);
@@ -493,14 +496,14 @@ fn main() -> anyhow::Result<()> {
             // at the same DB file for the background scheduler. Both pools
             // share the same SQLite database (WAL mode allows concurrent readers
             // and a single writer across processes/connections).
-            let maintenance_pool = std::sync::Arc::new(
-                ConnectionPool::new(
-                    config.db_path.to_str()
-                        .ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?,
-                    4,  // 2 for maintenance + 2 for metabolism workers
-                    30000,
-                )?
-            );
+            let maintenance_pool = std::sync::Arc::new(ConnectionPool::new(
+                config
+                    .db_path
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?,
+                4, // 2 for maintenance + 2 for metabolism workers
+                30000,
+            )?);
             // Configurable intervals via env vars (with sensible defaults).
             // TDG_MAINTENANCE_INTERVAL_SECS: how often to run full SelfManager
             //   (janitor + enricher + archiver + telearchy). Default: 21600 (6h)
@@ -521,16 +524,18 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or(10 * 60);
 
             // Phase 12: Graph-level mind integration interval (default 15 min).
-            let mind_integration_interval_secs = std::env::var("TDG_MIND_INTEGRATION_INTERVAL_SECS")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(15 * 60);
+            let mind_integration_interval_secs =
+                std::env::var("TDG_MIND_INTEGRATION_INTERVAL_SECS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(15 * 60);
 
             // Phase 15: Resonance graph full rebuild interval (default 4 hours).
-            let resonance_rebuild_interval_secs = std::env::var("TDG_RESONANCE_REBUILD_INTERVAL_SECS")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(4 * 60 * 60);
+            let resonance_rebuild_interval_secs =
+                std::env::var("TDG_RESONANCE_REBUILD_INTERVAL_SECS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(4 * 60 * 60);
 
             // Phase 16: Synaptic decay (LTD) interval (default 1 hour).
             let synaptic_decay_interval_secs = std::env::var("TDG_SYNAPTIC_DECAY_INTERVAL_SECS")
@@ -938,7 +943,8 @@ fn main() -> anyhow::Result<()> {
             });
             tracing::info!(
                 "Background maintenance scheduler started (self_manager={}s, health_check={}s)",
-                self_manager_interval_secs, health_check_interval_secs
+                self_manager_interval_secs,
+                health_check_interval_secs
             );
 
             // Phase 2: Spawn the metabolism worker pool.

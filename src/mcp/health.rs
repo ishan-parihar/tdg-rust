@@ -84,9 +84,10 @@ impl HealthMonitor {
 
     pub fn get_health_summary(&self) -> Result<Value, McpError> {
         // Use with_connection for panic safety.
-        if let Ok(summary) = self.pool.with_connection(|conn| {
-            crate::db::crud::get_health_summary(conn)
-        }) {
+        if let Ok(summary) = self
+            .pool
+            .with_connection(|conn| crate::db::crud::get_health_summary(conn))
+        {
             return Ok(summary);
         }
         let checks = self
@@ -114,9 +115,10 @@ impl HealthMonitor {
     #[allow(dead_code)]
     pub fn get_recent_health_checks(&self, service: Option<&str>, limit: i64) -> Value {
         // Use with_connection for panic safety.
-        match self.pool.with_connection(|conn| {
-            crate::db::crud::get_recent_health_checks(conn, service, limit)
-        }) {
+        match self
+            .pool
+            .with_connection(|conn| crate::db::crud::get_recent_health_checks(conn, service, limit))
+        {
             Ok(checks) => json!({"checks": checks, "total": checks.len()}),
             Err(_) => json!({"checks": [], "total": 0}),
         }

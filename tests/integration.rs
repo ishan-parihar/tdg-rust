@@ -2,13 +2,13 @@
 //!
 //! Tests cross-module functionality: CRUD → Query → Knowledge → Mind → Ops → MCP.
 
-use tdg_rust::db::{init_fts, init_schema, run_migrations, ConnectionPool};
-use tdg_rust::knowledge;
-use tdg_rust::models::{NewEdge, NewNode, NodeQuery};
 use serde_json::json;
+use tdg_rust::db::{init_fts, init_schema, run_migrations, ConnectionPool};
 use tdg_rust::flow::FlowDriveState;
+use tdg_rust::knowledge;
 use tdg_rust::mind::diagnostic::DiagnosticEngine;
 use tdg_rust::mind::pulse::PulseEngine;
+use tdg_rust::models::{NewEdge, NewNode, NodeQuery};
 
 /// Helper: create an in-memory pool for integration tests.
 fn make_pool() -> ConnectionPool {

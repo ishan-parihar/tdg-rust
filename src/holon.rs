@@ -83,7 +83,10 @@ impl<'a> Holon<'a> {
 
     /// The human-readable scale name (e.g. "Civilization").
     pub fn scale_name(&self) -> Option<&'static str> {
-        self.node.scale_code.as_deref().and_then(crate::scale_codes::scale_name)
+        self.node
+            .scale_code
+            .as_deref()
+            .and_then(crate::scale_codes::scale_name)
     }
 
     /// The Tetra-Axes coordinates (UL, UR, LL, LR), each 1-19.
@@ -224,7 +227,14 @@ impl<'a> Holon<'a> {
 
     /// Load sub-holons connected via DECOMPOSES_TO edges (structural decomposition).
     pub fn sub_holons(&self, conn: &Connection) -> TdgResult<Vec<Node>> {
-        let edges = crud::get_edges(conn, Some(&self.node.id), None, Some("DECOMPOSES_TO"), None, 100)?;
+        let edges = crud::get_edges(
+            conn,
+            Some(&self.node.id),
+            None,
+            Some("DECOMPOSES_TO"),
+            None,
+            100,
+        )?;
         let mut subs = Vec::new();
         for edge in edges {
             if let Some(node) = crud::get_node(conn, &edge.target_id)? {
@@ -404,7 +414,10 @@ mod tests {
         .unwrap();
 
         let holon = Holon::new(&node);
-        assert_eq!(holon.tetra_coords(), (Some(5), Some(10), Some(15), Some(19)));
+        assert_eq!(
+            holon.tetra_coords(),
+            (Some(5), Some(10), Some(15), Some(19))
+        );
     }
 
     #[test]

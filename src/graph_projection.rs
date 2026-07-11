@@ -43,5 +43,4 @@ impl GraphProjection {
 
         Ok(Self { graph, node_map })
     }
-
 }

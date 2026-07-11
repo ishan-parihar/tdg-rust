@@ -151,9 +151,7 @@ pub fn compute_live_confidence(
             )
             .ok()
         })
-        .or_else(|| {
-            chrono::NaiveDateTime::parse_from_str(created_at, "%Y-%m-%d %H:%M:%S").ok()
-        })
+        .or_else(|| chrono::NaiveDateTime::parse_from_str(created_at, "%Y-%m-%d %H:%M:%S").ok())
         .unwrap_or(now);
 
     let age_days = (now - created).num_days() as f64;
@@ -248,9 +246,10 @@ pub fn add_node(conn: &Connection, new: &NewNode) -> TdgResult<Node> {
         .synthesis_status
         .clone()
         .unwrap_or_else(|| "ai-draft".to_string());
-    let scale_code = new.scale_code.clone().or_else(|| {
-        crate::scale_codes::default_scale_for_type(&node_type).map(|s| s.to_string())
-    });
+    let scale_code = new
+        .scale_code
+        .clone()
+        .or_else(|| crate::scale_codes::default_scale_for_type(&node_type).map(|s| s.to_string()));
     let tetra_ul = new.tetra_ul;
     let tetra_ur = new.tetra_ur;
     let tetra_ll = new.tetra_ll;
@@ -530,7 +529,8 @@ pub fn update_node(
             // completely changed. The enricher's `enrich_embeddings` uses
             // `WHERE id NOT IN (SELECT node_id FROM embeddings)` so it skips
             // nodes that already have an embedding, even if stale.
-            let content_changed = updates.contains_key("name") || updates.contains_key("description");
+            let content_changed =
+                updates.contains_key("name") || updates.contains_key("description");
             if content_changed {
                 #[cfg(feature = "onnx")]
                 {
@@ -557,7 +557,8 @@ pub fn update_node(
                                 ) {
                                     tracing::warn!(
                                         "Failed to regenerate embedding for node {}: {}",
-                                        node_id, e
+                                        node_id,
+                                        e
                                     );
                                 }
                             }
@@ -625,7 +626,6 @@ pub fn delete_node(conn: &Connection, node_id: &str) -> TdgResult<bool> {
         }
     }
 }
-
 
 // ─── Edge CRUD ───────────────────────────────────────────────────────────────
 
@@ -1239,7 +1239,9 @@ pub fn query_nodes(conn: &Connection, query: &NodeQuery) -> TdgResult<Vec<Node>>
         idx += 1;
     }
     if let Some(ref q) = query.quadrant {
-        conditions.push(format!("json_extract(quadrants_json, '$.primary') = ?{idx}"));
+        conditions.push(format!(
+            "json_extract(quadrants_json, '$.primary') = ?{idx}"
+        ));
         param_values.push(Box::new(q.clone()));
         idx += 1;
     }
@@ -1378,13 +1380,13 @@ pub fn upsert_embedding(
 ) -> TdgResult<()> {
     let blob = serialize_vector(vector);
     let now = now_iso();
-    
+
     conn.execute(
         "INSERT OR REPLACE INTO embeddings (node_id, vector, model, dimension, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         rusqlite::params![node_id, blob, model, dimension, now],
     )?;
-    
+
     Ok(())
 }
 
@@ -1619,11 +1621,10 @@ fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<Edge> {
 /// Returns "gross", "subtle", or "causal", or None if no clear inference.
 fn infer_realm_placement(node_type: &str) -> Option<&'static str> {
     match node_type {
-        "observation" | "event" | "artifact" | "action" | "people" | "being" |
-        "communication" | "project" => Some("gross"),
-        "skill" | "capability" | "hypothesis" | "synthesis" | "insight" |
-        "discovery" | "question" | "constraint" | "narrative" | "bond" |
-        "trajectory" => Some("subtle"),
+        "observation" | "event" | "artifact" | "action" | "people" | "being" | "communication"
+        | "project" => Some("gross"),
+        "skill" | "capability" | "hypothesis" | "synthesis" | "insight" | "discovery"
+        | "question" | "constraint" | "narrative" | "bond" | "trajectory" => Some("subtle"),
         "telos" | "value" => Some("causal"),
         _ => None,
     }
@@ -1700,7 +1701,6 @@ fn update_parent_ids_on_decompose(conn: &Connection, target_id: &str) -> TdgResu
 
     Ok(())
 }
-
 
 /// Deserialize bytes to f32 vector.
 pub fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
@@ -1828,7 +1828,6 @@ mod tests {
             .unwrap()
             .is_some());
     }
-
 
     #[test]
     fn add_and_get_edge() {

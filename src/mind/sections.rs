@@ -216,13 +216,25 @@ pub fn generate_pulse_section(conn: &Connection) -> String {
     match pulse_engine.pulse(conn, &[]) {
         Ok(results) => {
             use crate::mind::pulse::PulseSeverity;
-            let critical: Vec<_> = results.iter().filter(|r| r.severity == PulseSeverity::Critical).collect();
-            let gaps: Vec<_> = results.iter().filter(|r| r.severity == PulseSeverity::Gap).collect();
-            let minor: Vec<_> = results.iter().filter(|r| r.severity == PulseSeverity::Minor).collect();
+            let critical: Vec<_> = results
+                .iter()
+                .filter(|r| r.severity == PulseSeverity::Critical)
+                .collect();
+            let gaps: Vec<_> = results
+                .iter()
+                .filter(|r| r.severity == PulseSeverity::Gap)
+                .collect();
+            let minor: Vec<_> = results
+                .iter()
+                .filter(|r| r.severity == PulseSeverity::Minor)
+                .collect();
 
             if !critical.is_empty() {
                 lines.push("".to_string());
-                lines.push(format!("**⚠️ Critical structural gaps ({}):**", critical.len()));
+                lines.push(format!(
+                    "**⚠️ Critical structural gaps ({}):**",
+                    critical.len()
+                ));
                 for gap in critical.iter().take(5) {
                     lines.push(format!(
                         "  - **{}** ({}): {} of {} required edges",

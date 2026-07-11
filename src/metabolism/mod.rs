@@ -42,17 +42,17 @@ pub mod lesser_cycle;
 pub mod worker;
 
 pub use attractor::{
-    compute as compute_attractor, load as load_attractor, save as save_attractor,
-    AttractorField, ArchetypalLoads, ChoiceFlag, CouplingTensor, ReservoirAttractor,
-    StabilityFilter,
+    compute as compute_attractor, load as load_attractor, save as save_attractor, ArchetypalLoads,
+    AttractorField, ChoiceFlag, CouplingTensor, ReservoirAttractor, StabilityFilter,
 };
 pub use greater_cycle::{
-    assess_readiness, load_state as load_greater_state, save_state as save_greater_state, tick as greater_tick,
-    CrucibleIntensity, GreaterCycleState, GreaterPhase, GreaterThresholds, GreaterTickResult,
-    PhaseTransitionReadiness,
+    assess_readiness, load_state as load_greater_state, save_state as save_greater_state,
+    tick as greater_tick, CrucibleIntensity, GreaterCycleState, GreaterPhase, GreaterThresholds,
+    GreaterTickResult, PhaseTransitionReadiness,
 };
 pub use health::{
-    interpret_resonance, load as load_health, resonance, resonance_with_components, save as save_health, Health, HealthState, ResonanceComponents,
+    interpret_resonance, load as load_health, resonance, resonance_with_components,
+    save as save_health, Health, HealthState, ResonanceComponents,
 };
 pub use lesser_cycle::{
     generate_catalyst, load_state, save_state, tick, CycleThresholds, LesserCycleState,

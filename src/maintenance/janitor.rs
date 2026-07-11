@@ -232,9 +232,8 @@ impl<'a> Janitor<'a> {
                             "SELECT source_id FROM edges
                              WHERE target_id = ?1 AND edge_type = 'DECOMPOSES_TO' AND valid_to IS NULL",
                         )?;
-                        let rows = stmt.query_map(rusqlite::params![nid], |row| {
-                            row.get::<_, String>(0)
-                        })?;
+                        let rows =
+                            stmt.query_map(rusqlite::params![nid], |row| row.get::<_, String>(0))?;
                         rows.filter_map(|r| r.ok()).collect()
                     };
                     if !sources.is_empty() {
@@ -263,9 +262,7 @@ impl<'a> Janitor<'a> {
                      WHERE n.valid_to IS NULL
                      AND n.id NOT IN (SELECT node_id FROM embeddings)",
                 )?;
-                let rows = stmt.query_map([], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                })?;
+                let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
                 rows.filter_map(|r| r.ok()).collect()
             };
 
@@ -291,13 +288,8 @@ impl<'a> Janitor<'a> {
                 // and the enricher. Previously used a simple format! that produced
                 // different vectors than the enricher, making cosine similarity
                 // comparisons apples-to-oranges.
-                let text = crate::mind::embedding::build_embedding_text(
-                    self.conn,
-                    id,
-                    name,
-                    desc,
-                    3,
-                );
+                let text =
+                    crate::mind::embedding::build_embedding_text(self.conn, id, name, desc, 3);
 
                 match crate::mind::embedding::embed(&text) {
                     Ok(result) => {
@@ -360,20 +352,22 @@ impl<'a> Janitor<'a> {
         // Since '.' < 'Z', a row at 12:34:56.789 sorts BEFORE 12:34:56Z and is
         // incorrectly purged — even though it's 789ms NEWER than the cutoff.
         // Using to_rfc3339() for the cutoff ensures both sides use the same format.
-        let mutation_cutoff = (chrono::Utc::now() - chrono::Duration::days(mutation_retention_days))
-            .to_rfc3339();
-        let health_cutoff = (chrono::Utc::now() - chrono::Duration::days(health_check_retention_days))
-            .to_rfc3339();
+        let mutation_cutoff =
+            (chrono::Utc::now() - chrono::Duration::days(mutation_retention_days)).to_rfc3339();
+        let health_cutoff =
+            (chrono::Utc::now() - chrono::Duration::days(health_check_retention_days)).to_rfc3339();
 
         if dry_run {
-            let mutation_count: i64 = self.conn
+            let mutation_count: i64 = self
+                .conn
                 .query_row(
                     "SELECT COUNT(*) FROM mutation_log WHERE timestamp < ?1",
                     rusqlite::params![&mutation_cutoff],
                     |r| r.get(0),
                 )
                 .unwrap_or(0);
-            let health_count: i64 = self.conn
+            let health_count: i64 = self
+                .conn
                 .query_row(
                     "SELECT COUNT(*) FROM health_checks WHERE timestamp < ?1",
                     rusqlite::params![&health_cutoff],
@@ -393,7 +387,10 @@ impl<'a> Janitor<'a> {
             Ok(count) => {
                 report.mutations_purged = count as i64;
                 if count > 0 {
-                    info!("Purged {} mutation_log rows older than {} days", count, mutation_retention_days);
+                    info!(
+                        "Purged {} mutation_log rows older than {} days",
+                        count, mutation_retention_days
+                    );
                 }
             }
             Err(e) => warn!("Failed to purge mutation_log: {}", e),
@@ -407,7 +404,10 @@ impl<'a> Janitor<'a> {
             Ok(count) => {
                 report.health_checks_purged = count as i64;
                 if count > 0 {
-                    info!("Purged {} health_checks rows older than {} days", count, health_check_retention_days);
+                    info!(
+                        "Purged {} health_checks rows older than {} days",
+                        count, health_check_retention_days
+                    );
                 }
             }
             Err(e) => warn!("Failed to purge health_checks: {}", e),
@@ -430,10 +430,7 @@ fn report_summary(report: &JanitorReport) -> String {
         parts.push(format!("Edges: {} pruned", report.edges_pruned));
     }
     if report.parents_backfilled > 0 {
-        parts.push(format!(
-            "Parents: {} backfilled",
-            report.parents_backfilled
-        ));
+        parts.push(format!("Parents: {} backfilled", report.parents_backfilled));
     }
     if report.vec_missing > 0 || report.vec_embedded > 0 {
         parts.push(format!(
@@ -450,10 +447,6 @@ fn report_summary(report: &JanitorReport) -> String {
     if parts.is_empty() {
         return "All clean — nothing to fix.".to_string();
     }
-    let mode = if report.dry_run {
-        "DRY RUN"
-    } else {
-        "APPLIED"
-    };
+    let mode = if report.dry_run { "DRY RUN" } else { "APPLIED" };
     format!("[{}] {}", mode, parts.join("; "))
 }

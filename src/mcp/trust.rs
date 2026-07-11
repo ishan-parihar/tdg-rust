@@ -94,9 +94,10 @@ impl TrustStore {
                 source: None,
                 reason: None,
             };
-            let mut entries = self.entries.lock().map_err(|e| {
-                McpError::internal_error(format!("Lock poisoned: {}", e), None)
-            })?;
+            let mut entries = self
+                .entries
+                .lock()
+                .map_err(|e| McpError::internal_error(format!("Lock poisoned: {}", e), None))?;
             entries.insert(agent_name.to_string(), entry.clone());
             return Ok(Some(entry));
         }
@@ -120,7 +121,9 @@ impl TrustStore {
             .with_connection(|conn| {
                 crate::db::crud::set_trust(conn, agent_name, new_score, reason.as_deref())
             })
-            .map_err(|e| McpError::internal_error(format!("Failed to persist trust: {}", e), None))?;
+            .map_err(|e| {
+                McpError::internal_error(format!("Failed to persist trust: {}", e), None)
+            })?;
 
         let mut entries = self
             .entries

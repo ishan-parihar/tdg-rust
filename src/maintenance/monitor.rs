@@ -45,7 +45,8 @@ impl<'a> HealthMonitor<'a> {
                 |r| r.get(0),
             )
             .unwrap_or(0);
-        let embedding_count: i64 = self.conn
+        let embedding_count: i64 = self
+            .conn
             .query_row(
                 "SELECT COUNT(*) FROM embeddings e
                  INNER JOIN nodes n ON n.id = e.node_id
@@ -59,7 +60,8 @@ impl<'a> HealthMonitor<'a> {
         // soft-deleted nodes (FTS triggers fire on every INSERT regardless of
         // lifecycle_state), causing `fts5_coverage` to exceed 1.0 (e.g. 200% when
         // half the nodes were archived).
-        let fts_count: i64 = self.conn
+        let fts_count: i64 = self
+            .conn
             .query_row(
                 "SELECT COUNT(*) FROM nodes_fts f
                  INNER JOIN nodes n ON n.rowid = f.rowid
@@ -69,8 +71,16 @@ impl<'a> HealthMonitor<'a> {
             )
             .unwrap_or(0);
 
-        let fts5 = if node_count > 0 { fts_count as f64 / node_count as f64 } else { 1.0 };
-        let embedding = if node_count > 0 { embedding_count as f64 / node_count as f64 } else { 1.0 };
+        let fts5 = if node_count > 0 {
+            fts_count as f64 / node_count as f64
+        } else {
+            1.0
+        };
+        let embedding = if node_count > 0 {
+            embedding_count as f64 / node_count as f64
+        } else {
+            1.0
+        };
         let drive = self.check_drive_coverage();
         let stage = self.check_stage_coverage();
         let noise = self.check_edge_noise();
@@ -78,7 +88,13 @@ impl<'a> HealthMonitor<'a> {
         let growth = self.check_event_growth();
         let db_size = self.check_db_size();
 
-        let health_score = calculate_health_score(node_count, edge_count, type_count, embedding_count, fts_count);
+        let health_score = calculate_health_score(
+            node_count,
+            edge_count,
+            type_count,
+            embedding_count,
+            fts_count,
+        );
         let report = HealthReport {
             fts5_coverage: fts5,
             embedding_coverage: embedding,
@@ -95,10 +111,7 @@ impl<'a> HealthMonitor<'a> {
 
         let actions = determine_actions(&report);
 
-        Ok(HealthReport {
-            actions,
-            ..report
-        })
+        Ok(HealthReport { actions, ..report })
     }
 
     fn active_node_count(&self) -> i64 {
@@ -113,9 +126,11 @@ impl<'a> HealthMonitor<'a> {
 
     fn total_edge_count(&self) -> i64 {
         self.conn
-            .query_row("SELECT COUNT(*) FROM edges WHERE valid_to IS NULL", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM edges WHERE valid_to IS NULL",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or(0)
     }
 

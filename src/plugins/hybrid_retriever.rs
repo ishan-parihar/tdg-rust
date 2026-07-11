@@ -15,10 +15,10 @@ use crate::util::stopwords::STOP_WORDS;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum QueryIntent {
-    Factual,   // Entity lookup → FTS5-first
-    Semantic,  // Concept search → Embedding-first
-    Global,    // Pattern scan → PageRank-like
-    Hybrid,    // Default balanced
+    Factual,  // Entity lookup → FTS5-first
+    Semantic, // Concept search → Embedding-first
+    Global,   // Pattern scan → PageRank-like
+    Hybrid,   // Default balanced
 }
 
 fn route_query(query: &str) -> QueryIntent {
@@ -35,7 +35,14 @@ fn route_query(query: &str) -> QueryIntent {
 
     // Global: aggregate/pattern queries
     let global_words = [
-        "all", "list", "every", "pattern", "trend", "most common", "overview", "summary",
+        "all",
+        "list",
+        "every",
+        "pattern",
+        "trend",
+        "most common",
+        "overview",
+        "summary",
     ];
     if global_words.iter().any(|w| lower.contains(w)) {
         return QueryIntent::Global;
@@ -43,7 +50,14 @@ fn route_query(query: &str) -> QueryIntent {
 
     // Semantic: abstract concepts
     let semantic_words = [
-        "how", "why", "explain", "relationship", "concept", "idea", "think", "meaning",
+        "how",
+        "why",
+        "explain",
+        "relationship",
+        "concept",
+        "idea",
+        "think",
+        "meaning",
     ];
     if semantic_words.iter().any(|w| lower.contains(w)) {
         return QueryIntent::Semantic;
@@ -122,7 +136,14 @@ impl Default for RetrievalWeights {
 
 /// High-value node types for boosting.
 /// "tool" and "product" were removed (not valid node types in the schema).
-static HIGH_VALUE_TYPES: &[&str] = &["action", "telos", "skill", "capability", "discovery", "insight"];
+static HIGH_VALUE_TYPES: &[&str] = &[
+    "action",
+    "telos",
+    "skill",
+    "capability",
+    "discovery",
+    "insight",
+];
 
 /// The Hybrid Retriever — combined FTS5 + trust + recency scoring.
 /// ponytail: weights are per-query via `weights_for_intent()`, not stored on the struct.
@@ -249,12 +270,7 @@ impl HybridRetriever {
         Ok(scored)
     }
 
-    fn graph_rerank(
-        &self,
-        conn: &Connection,
-        results: &mut Vec<SearchResult>,
-        weight: f64,
-    ) {
+    fn graph_rerank(&self, conn: &Connection, results: &mut Vec<SearchResult>, weight: f64) {
         use crate::db::crud::get_edges;
 
         for result in results.iter_mut() {
@@ -309,7 +325,9 @@ impl HybridRetriever {
             let params_refs: Vec<Box<dyn rusqlite::types::ToSql>> = ids
                 .iter()
                 .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
-                .chain(std::iter::once(Box::new(query_dim) as Box<dyn rusqlite::types::ToSql>))
+                .chain(std::iter::once(
+                    Box::new(query_dim) as Box<dyn rusqlite::types::ToSql>
+                ))
                 .collect();
             let param_refs: Vec<&dyn rusqlite::types::ToSql> =
                 params_refs.iter().map(|p| p.as_ref()).collect();
@@ -564,14 +582,9 @@ impl HybridRetriever {
             }
 
             // Outgoing edges (node is source)
-            if let Ok(out_edges) = crate::db::crud::get_edges(
-                conn,
-                Some(&parent.node.id),
-                None,
-                None,
-                None,
-                50,
-            ) {
+            if let Ok(out_edges) =
+                crate::db::crud::get_edges(conn, Some(&parent.node.id), None, None, None, 50)
+            {
                 for edge in &out_edges {
                     if added >= max_expansion {
                         break;
@@ -579,9 +592,7 @@ impl HybridRetriever {
                     if edge.weight < min_edge_weight || seen.contains(&edge.target_id) {
                         continue;
                     }
-                    if let Ok(Some(neighbor)) =
-                        crate::db::crud::get_node(conn, &edge.target_id)
-                    {
+                    if let Ok(Some(neighbor)) = crate::db::crud::get_node(conn, &edge.target_id) {
                         let score = parent.score * 0.7;
                         seen.insert(neighbor.id.clone());
                         added += 1;
@@ -595,14 +606,9 @@ impl HybridRetriever {
             }
 
             // Incoming edges (node is target)
-            if let Ok(in_edges) = crate::db::crud::get_edges(
-                conn,
-                None,
-                Some(&parent.node.id),
-                None,
-                None,
-                50,
-            ) {
+            if let Ok(in_edges) =
+                crate::db::crud::get_edges(conn, None, Some(&parent.node.id), None, None, 50)
+            {
                 for edge in &in_edges {
                     if added >= max_expansion {
                         break;
@@ -610,9 +616,7 @@ impl HybridRetriever {
                     if edge.weight < min_edge_weight || seen.contains(&edge.source_id) {
                         continue;
                     }
-                    if let Ok(Some(neighbor)) =
-                        crate::db::crud::get_node(conn, &edge.source_id)
-                    {
+                    if let Ok(Some(neighbor)) = crate::db::crud::get_node(conn, &edge.source_id) {
                         let score = parent.score * 0.7;
                         seen.insert(neighbor.id.clone());
                         added += 1;

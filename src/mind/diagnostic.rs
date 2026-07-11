@@ -450,7 +450,9 @@ impl DiagnosticEngine {
                 Err(e) => {
                     tracing::warn!(
                         "detect_phantom_nodes: corrupt drives_json for node {} ({}): {}",
-                        id, name, e
+                        id,
+                        name,
+                        e
                     );
                     continue;
                 }
@@ -464,7 +466,10 @@ impl DiagnosticEngine {
                 .and_then(|v| v.as_str())
                 .unwrap_or("LR");
 
-            let expected_drive = quadrant_drive.get(active_quadrant).copied().unwrap_or("eros");
+            let expected_drive = quadrant_drive
+                .get(active_quadrant)
+                .copied()
+                .unwrap_or("eros");
 
             for (drive_name, _drive_label) in &[
                 ("eros", "Eros"),
@@ -533,19 +538,26 @@ impl DiagnosticEngine {
             Some(timestamp_str) => {
                 // Events are written with either RFC3339 (chrono::Utc::now().to_rfc3339())
                 // or strftime('%Y-%m-%dT%H:%M:%SZ', 'now'). Try parsing both.
-                let parsed = chrono::NaiveDateTime::parse_from_str(
-                    &timestamp_str,
-                    "%Y-%m-%dT%H:%M:%S%.fZ",
-                )
-                .or_else(|_| {
-                    chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%dT%H:%M:%SZ")
-                })
-                .or_else(|_| {
-                    chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%dT%H:%M:%S%.f")
-                })
-                .or_else(|_| {
-                    chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%dT%H:%M:%S")
-                });
+                let parsed =
+                    chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y-%m-%dT%H:%M:%S%.fZ")
+                        .or_else(|_| {
+                            chrono::NaiveDateTime::parse_from_str(
+                                &timestamp_str,
+                                "%Y-%m-%dT%H:%M:%SZ",
+                            )
+                        })
+                        .or_else(|_| {
+                            chrono::NaiveDateTime::parse_from_str(
+                                &timestamp_str,
+                                "%Y-%m-%dT%H:%M:%S%.f",
+                            )
+                        })
+                        .or_else(|_| {
+                            chrono::NaiveDateTime::parse_from_str(
+                                &timestamp_str,
+                                "%Y-%m-%dT%H:%M:%S",
+                            )
+                        });
                 match parsed {
                     Ok(ts) => {
                         let now = chrono::Utc::now().naive_utc();
@@ -743,9 +755,7 @@ pub fn dominant_drive_label(report: &DiagnosticReport) -> String {
 /// Returns the quadrant with the highest percentage, or "unknown" if empty.
 pub fn dominant_quadrant(dist: &HashMap<String, f64>) -> String {
     dist.iter()
-        .max_by(|(_, a), (_, b)| {
-            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-        })
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
         .map(|(q, _)| q.clone())
         .unwrap_or_else(|| "unknown".to_string())
 }
@@ -755,17 +765,14 @@ pub fn dominant_quadrant(dist: &HashMap<String, f64>) -> String {
 /// Called after each diagnostic run so future runs can detect persistence
 /// and stuck patterns. Best-effort: logs a warning on failure but does not
 /// propagate errors (history recording is non-critical).
-pub fn record_diagnostic_snapshot(
-    conn: &Connection,
-    report: &DiagnosticReport,
-) -> TdgResult<()> {
+pub fn record_diagnostic_snapshot(conn: &Connection, report: &DiagnosticReport) -> TdgResult<()> {
     let now = crate::db::crud::now_iso();
     let dominant_drive = dominant_drive_label(report);
     let dominant_quad = dominant_quadrant(&report.quadrant_distribution);
-    let drive_dist_json = serde_json::to_string(&report.drive_distribution)
-        .unwrap_or_else(|_| "{}".to_string());
-    let quad_dist_json = serde_json::to_string(&report.quadrant_distribution)
-        .unwrap_or_else(|_| "{}".to_string());
+    let drive_dist_json =
+        serde_json::to_string(&report.drive_distribution).unwrap_or_else(|_| "{}".to_string());
+    let quad_dist_json =
+        serde_json::to_string(&report.quadrant_distribution).unwrap_or_else(|_| "{}".to_string());
     let escalation = match report.escalation_level {
         Severity::Soft => "soft",
         Severity::Strong => "strong",
@@ -989,10 +996,21 @@ mod tests {
         // After recording, history should have one entry.
         let dh = load_drive_history(&conn);
         let qh = load_quadrant_history(&conn);
-        assert_eq!(dh.len(), 1, "drive history should have 1 entry after record");
-        assert_eq!(qh.len(), 1, "quadrant history should have 1 entry after record");
+        assert_eq!(
+            dh.len(),
+            1,
+            "drive history should have 1 entry after record"
+        );
+        assert_eq!(
+            qh.len(),
+            1,
+            "quadrant history should have 1 entry after record"
+        );
         // The dominant drive should be a non-empty string.
-        assert!(!dh[0].is_empty(), "dominant drive label should not be empty");
+        assert!(
+            !dh[0].is_empty(),
+            "dominant drive label should not be empty"
+        );
     }
 
     #[test]

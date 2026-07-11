@@ -60,9 +60,9 @@ pub(crate) async fn try_llm_providers(
 
         let provider: Box<dyn crate::llm::LlmProvider> = match *provider_name {
             "openai" => Box::new(crate::llm::openai::OpenAiProvider::new(cfg.openai.clone())),
-            "anthropic" => {
-                Box::new(crate::llm::anthropic::AnthropicProvider::new(cfg.anthropic.clone()))
-            }
+            "anthropic" => Box::new(crate::llm::anthropic::AnthropicProvider::new(
+                cfg.anthropic.clone(),
+            )),
             "ollama" => Box::new(crate::llm::ollama::OllamaProvider::new(cfg.ollama.clone())),
             _ => continue,
         };
@@ -281,8 +281,8 @@ pub(crate) fn pattern_synthesis(
             let rel_query = r#"
                 SELECT e.edge_type, COUNT(*) as cnt
                 FROM edges e
-                JOIN nodes ns ON e.source_id = ns.id
-                JOIN nodes nt ON e.target_id = nt.id
+                JOIN nodes ns ON e.source_id = ns.id AND ns.valid_to IS NULL
+                JOIN nodes nt ON e.target_id = nt.id AND nt.valid_to IS NULL
                 WHERE e.valid_to IS NULL
                   AND (ns.node_type = 'people' OR nt.node_type = 'people')
                 GROUP BY e.edge_type
@@ -558,7 +558,8 @@ pub(crate) fn store_synthesis(
                     ) {
                         tracing::warn!(
                             "Failed to create SYNTHESIZES edge from {}: {}",
-                            sub_node.id, e
+                            sub_node.id,
+                            e
                         );
                     }
                 }

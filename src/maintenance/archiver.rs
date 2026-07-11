@@ -72,8 +72,10 @@ impl<'a> Archiver<'a> {
                  FROM events WHERE timestamp < ?1",
                 rusqlite::params![cutoff],
             )?;
-            self.conn
-                .execute("DELETE FROM events WHERE timestamp < ?1", rusqlite::params![cutoff])?;
+            self.conn.execute(
+                "DELETE FROM events WHERE timestamp < ?1",
+                rusqlite::params![cutoff],
+            )?;
             info!("Events: {} archived (moved to mutation_log)", count);
             Ok(count)
         })();
@@ -146,7 +148,10 @@ impl<'a> Archiver<'a> {
                     "edge",
                     eid,
                     None,
-                    Some(&format!("{{\"valid_to\": \"{}\", \"reason\": \"dead_edge_prune\"}}", now)),
+                    Some(&format!(
+                        "{{\"valid_to\": \"{}\", \"reason\": \"dead_edge_prune\"}}",
+                        now
+                    )),
                     Some("archiver"),
                 );
             }
@@ -255,18 +260,11 @@ fn report_summary(report: &ArchiverReport) -> String {
         ));
     }
     if report.vacuum_freed_bytes > 0 {
-        parts.push(format!(
-            "Vacuum: {} bytes freed",
-            report.vacuum_freed_bytes
-        ));
+        parts.push(format!("Vacuum: {} bytes freed", report.vacuum_freed_bytes));
     }
     if parts.is_empty() {
         return "All clean — nothing to compress.".to_string();
     }
-    let mode = if report.dry_run {
-        "DRY RUN"
-    } else {
-        "APPLIED"
-    };
+    let mode = if report.dry_run { "DRY RUN" } else { "APPLIED" };
     format!("[{}] {}", mode, parts.join("; "))
 }

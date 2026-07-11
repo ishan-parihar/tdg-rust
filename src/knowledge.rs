@@ -54,7 +54,7 @@ pub struct HygieneReport {
 /// Detect orphan nodes: nodes with no active edges.
 pub fn detect_orphans(conn: &Connection) -> TdgResult<serde_json::Value> {
     let mut stmt =
-        conn.prepare("SELECT id, node_type, name, created_at FROM nodes WHERE valid_to IS NULL")?;
+        conn.prepare("SELECT id, node_type, name, created_at FROM nodes WHERE valid_to IS NULL AND (lifecycle_state IS NULL OR lifecycle_state != 'archived')")?;
 
     let rows: Vec<(String, String, String, String)> = stmt
         .query_map([], |row| {
@@ -108,7 +108,7 @@ pub fn detect_orphans(conn: &Connection) -> TdgResult<serde_json::Value> {
         } else if node_type == "observation" {
             // Check for structural links
             let structural_links: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM edges e JOIN nodes n ON e.target_id = n.id
+                "SELECT COUNT(*) FROM edges e JOIN nodes n ON e.target_id = n.id AND n.valid_to IS NULL
                  WHERE e.source_id = ?1 AND e.valid_to IS NULL
                  AND n.node_type IN ('hypothesis', 'constraint', 'telos')",
                 params![id],
@@ -141,7 +141,7 @@ pub fn prune_dangling_edges(conn: &Connection) -> TdgResult<serde_json::Value> {
 
     // Find edges with dangling source_id
     let mut stmt = conn.prepare(
-        "SELECT e.id FROM edges e LEFT JOIN nodes n ON e.source_id = n.id
+        "SELECT e.id FROM edges e LEFT JOIN nodes n ON e.source_id = n.id AND n.valid_to IS NULL
          WHERE n.id IS NULL AND e.valid_to IS NULL",
     )?;
     let dangling_source: Vec<String> = stmt
@@ -161,7 +161,7 @@ pub fn prune_dangling_edges(conn: &Connection) -> TdgResult<serde_json::Value> {
 
     // Find edges with dangling target_id
     let mut stmt = conn.prepare(
-        "SELECT e.id FROM edges e LEFT JOIN nodes n ON e.target_id = n.id
+        "SELECT e.id FROM edges e LEFT JOIN nodes n ON e.target_id = n.id AND n.valid_to IS NULL
          WHERE n.id IS NULL AND e.valid_to IS NULL",
     )?;
     let dangling_target: Vec<String> = stmt
@@ -375,8 +375,8 @@ pub fn generate_hygiene_report(conn: &Connection) -> TdgResult<HygieneReport> {
     // Dangling edges
     let mut stmt = conn.prepare(
         "SELECT e.id FROM edges e
-         LEFT JOIN nodes ns ON e.source_id = ns.id
-         LEFT JOIN nodes nt ON e.target_id = nt.id
+         LEFT JOIN nodes ns ON e.source_id = ns.id AND ns.valid_to IS NULL
+         LEFT JOIN nodes nt ON e.target_id = nt.id AND nt.valid_to IS NULL
          WHERE (ns.id IS NULL OR nt.id IS NULL) AND e.valid_to IS NULL",
     )?;
     let dangling_edge_ids: Vec<String> = stmt
@@ -564,7 +564,10 @@ pub fn classify_catalyst(conn: &Connection, node_id: &str) -> TdgResult<serde_js
 }
 
 /// Link a catalyst observation to structural nodes (hypotheses, constraints, teloi).
-pub fn link_catalyst_to_structure(conn: &Connection, node_id: &str) -> TdgResult<serde_json::Value> {
+pub fn link_catalyst_to_structure(
+    conn: &Connection,
+    node_id: &str,
+) -> TdgResult<serde_json::Value> {
     let mut stmt = conn.prepare(
         "SELECT n.id, n.node_type, n.name FROM edges e
          JOIN nodes n ON e.target_id = n.id
@@ -599,7 +602,10 @@ pub fn link_catalyst_to_structure(conn: &Connection, node_id: &str) -> TdgResult
 }
 
 /// Evaluate integration quality: how well a catalyst is connected to the graph.
-pub fn evaluate_integration_quality(conn: &Connection, node_id: &str) -> TdgResult<serde_json::Value> {
+pub fn evaluate_integration_quality(
+    conn: &Connection,
+    node_id: &str,
+) -> TdgResult<serde_json::Value> {
     let edge_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM edges WHERE (source_id = ?1 OR target_id = ?1) AND valid_to IS NULL",
         params![node_id],
@@ -607,7 +613,7 @@ pub fn evaluate_integration_quality(conn: &Connection, node_id: &str) -> TdgResu
     )?;
 
     let structural_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM edges e JOIN nodes n ON e.target_id = n.id
+        "SELECT COUNT(*) FROM edges e JOIN nodes n ON e.target_id = n.id AND n.valid_to IS NULL
          WHERE e.source_id = ?1 AND e.valid_to IS NULL
          AND n.node_type IN ('hypothesis', 'constraint', 'telos')",
         params![node_id],
@@ -628,7 +634,10 @@ pub fn evaluate_integration_quality(conn: &Connection, node_id: &str) -> TdgResu
 }
 
 /// Process full catalyst lifecycle: classify → link → evaluate → mark complete.
-pub fn process_catalyst_lifecycle(conn: &Connection, node_id: &str) -> TdgResult<serde_json::Value> {
+pub fn process_catalyst_lifecycle(
+    conn: &Connection,
+    node_id: &str,
+) -> TdgResult<serde_json::Value> {
     let classified = classify_catalyst(conn, node_id)?;
     if classified["status"] != "classified" {
         return Ok(serde_json::json!({

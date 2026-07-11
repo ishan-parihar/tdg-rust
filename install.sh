@@ -286,6 +286,24 @@ for c in changes:
     ok "Configuration updated"
 }
 
+create_wrapper() {
+    local tdg_dir="${HERMES_HOME}/tdg-rust"
+    local wrapper_path="${tdg_dir}/tdg"
+
+    step "Creating wrapper script"
+
+    cat << 'EOF' > "$wrapper_path"
+#!/usr/bin/env bash
+# Wrapper to run tdg-rust with the correct LD_LIBRARY_PATH for ONNX
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export LD_LIBRARY_PATH="$DIR/lib:$LD_LIBRARY_PATH"
+exec "$DIR/tdg-rust" "$@"
+EOF
+
+    chmod +x "$wrapper_path"
+    ok "Created helper wrapper script at $wrapper_path"
+}
+
 post_install() {
     local tdg_dir="${HERMES_HOME}/tdg-rust"
 
@@ -294,9 +312,10 @@ post_install() {
     echo -e "${GREEN}${BOLD}  TDG-Rust installed successfully!${NC}"
     echo -e "${GREEN}${BOLD}═══════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo -e "  ${BOLD}Binary:${NC}      $tdg_dir/tdg-rust"
-    echo -e "  ${BOLD}Database:${NC}    $HERMES_HOME/tdg/graph.db"
-    echo -e "  ${BOLD}Adapter:${NC}     $HERMES_HOME/plugins/tdg/"
+    echo -e "  ${BOLD}Wrapper Command:${NC} $tdg_dir/tdg"
+    echo -e "  ${BOLD}Rust Binary:${NC}     $tdg_dir/tdg-rust"
+    echo -e "  ${BOLD}Database:${NC}        $HERMES_HOME/tdg/graph.db"
+    echo -e "  ${BOLD}Adapter:${NC}         $HERMES_HOME/plugins/tdg/"
     echo ""
     echo -e "  ${BOLD}What's installed:${NC}"
     echo -e "    • 33 MCP tools via Rust binary (zero Python dependency)"
@@ -309,8 +328,8 @@ post_install() {
     echo -e "       hermes gateway restart"
     echo -e ""
     echo -e "    2. ${CYAN}Verify installation${NC}:"
-    echo -e "       $tdg_dir/tdg-rust --version"
-    echo -e "       $tdg_dir/tdg-rust stats"
+    echo -e "       $tdg_dir/tdg --version"
+    echo -e "       $tdg_dir/tdg stats"
     echo -e ""
     echo -e "  ${BOLD}Uninstall:${NC}   TDG_UNINSTALL=1 bash $0"
     echo ""
@@ -357,6 +376,7 @@ main() {
 
     download_binary
     download_onnx_runtime
+    create_wrapper
     install_adapter
     init_database
     patch_config

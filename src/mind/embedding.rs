@@ -10,11 +10,11 @@
 //! and constants are available, allowing the rest of the crate to compile without
 //! ONNX Runtime.
 
+#[cfg(feature = "onnx")]
+use crate::error::{TdgError, TdgResult};
 use std::path::{Path, PathBuf};
 #[cfg(feature = "onnx")]
 use std::sync::{Arc, Mutex, OnceLock};
-#[cfg(feature = "onnx")]
-use crate::error::{TdgError, TdgResult};
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -37,9 +37,7 @@ pub const GEMMA_Q4_FILE: &str = "embeddinggemma-300m-Q4_0.onnx";
 #[cfg(feature = "onnx")]
 pub const GEMMA_Q8_FILE: &str = "embeddinggemma-300m-Q8_0.onnx";
 
-#[cfg(feature = "onnx")]
-const GEMMA_REPO_URL: &str =
-    "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/tree/main/onnx";
+
 #[cfg(feature = "onnx")]
 const MINILM_REPO_URL: &str =
     "https://huggingface.co/xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx";
@@ -181,9 +179,32 @@ mod onnx_impl {
         let mut cache = get_cache()
             .lock()
             .map_err(|e| TdgError::Custom(format!("Lock poisoned: {e}")))?;
-        let cached = cache.as_mut().ok_or_else(|| {
-            TdgError::Custom("Embedding engine not initialized. Call init() first.".into())
-        })?;
+
+        if cache.is_none() {
+            let config = crate::config::Config::from_env();
+            let emb_config = EmbeddingConfig::from_app_config(&config);
+            if let Err(e) = ensure_model_files(&config) {
+                return Err(TdgError::Custom(format!(
+                    "Embedding engine auto-init failed to ensure model files: {e}"
+                )));
+            }
+            let tokenizer = Tokenizer::from_file(&emb_config.tokenizer_path)
+                .map_err(|e| TdgError::Custom(format!("Failed to load tokenizer: {e}")))?;
+            let session = Session::builder()
+                .map_err(|e| TdgError::Custom(format!("ONNX session builder: {e}")))?
+                .with_intra_threads(4)
+                .map_err(|e| TdgError::Custom(format!("ONNX thread config: {e}")))?
+                .commit_from_file(&emb_config.model_path)
+                .map_err(|e| TdgError::Custom(format!("Failed to load ONNX model: {e}")))?;
+
+            *cache = Some(CachedModel {
+                session,
+                tokenizer,
+                config: emb_config,
+            });
+        }
+
+        let cached = cache.as_mut().unwrap();
 
         // Configure tokenizer for this encoding
         let mut tok = cached.tokenizer.clone();
@@ -191,7 +212,7 @@ mod onnx_impl {
             max_length: cached.config.max_length,
             ..Default::default()
         }))
-            .map_err(|e| TdgError::Custom(format!("Truncation config failed: {e}")))?;
+        .map_err(|e| TdgError::Custom(format!("Truncation config failed: {e}")))?;
         tok.with_padding(Some(tokenizers::PaddingParams {
             strategy: tokenizers::PaddingStrategy::Fixed(cached.config.max_length),
             pad_id: 0,
@@ -214,24 +235,35 @@ mod onnx_impl {
         let mask_for_pooling = attention_mask.clone();
 
         // Build tensors: shape [1, seq_len]
-        let input_ids_tensor =
-            Tensor::from_array(([1, seq_len], input_ids)).map_err(|e| {
-                TdgError::Custom(format!("input_ids tensor error: {e}"))
-            })?;
-        let attention_mask_tensor =
-            Tensor::from_array(([1, seq_len], attention_mask)).map_err(|e| {
-                TdgError::Custom(format!("attention_mask tensor error: {e}"))
-            })?;
+        let input_ids_tensor = Tensor::from_array(([1, seq_len], input_ids))
+            .map_err(|e| TdgError::Custom(format!("input_ids tensor error: {e}")))?;
+        let attention_mask_tensor = Tensor::from_array(([1, seq_len], attention_mask))
+            .map_err(|e| TdgError::Custom(format!("attention_mask tensor error: {e}")))?;
 
         // Run ONNX inference
-        let inputs = ort::inputs![
-            "input_ids" => input_ids_tensor,
-            "attention_mask" => attention_mask_tensor,
-        ];
-        let outputs = cached
-            .session
-            .run(inputs)
-            .map_err(|e| TdgError::Custom(format!("ONNX inference failed: {e}")))?;
+        let outputs = if cached.config.embedding_dim == 384 {
+            let token_type_ids = vec![0i64; seq_len];
+            let token_type_ids_tensor = Tensor::from_array(([1, seq_len], token_type_ids))
+                .map_err(|e| TdgError::Custom(format!("token_type_ids tensor error: {e}")))?;
+            let inputs = ort::inputs![
+                "input_ids" => input_ids_tensor,
+                "attention_mask" => attention_mask_tensor,
+                "token_type_ids" => token_type_ids_tensor,
+            ];
+            cached
+                .session
+                .run(inputs)
+                .map_err(|e| TdgError::Custom(format!("ONNX inference failed: {e}")))?
+        } else {
+            let inputs = ort::inputs![
+                "input_ids" => input_ids_tensor,
+                "attention_mask" => attention_mask_tensor,
+            ];
+            cached
+                .session
+                .run(inputs)
+                .map_err(|e| TdgError::Custom(format!("ONNX inference failed: {e}")))?
+        };
 
         // Extract token embeddings: shape [1, seq_len, hidden_dim]
         let (shape, data) = outputs["last_hidden_state"]
@@ -312,16 +344,16 @@ pub mod gguf {
     }
 
     pub fn init(model_path: Option<&str>) -> TdgResult<()> {
-        let path = model_path
-            .map(String::from)
-            .unwrap_or_else(|| {
-                std::env::var("TDG_GGUF_MODEL_PATH").unwrap_or_else(|_| {
-                    "models/embeddinggemma-300m/embeddinggemma-300m-Q4_0.gguf".into()
-                })
-            });
+        let path = model_path.map(String::from).unwrap_or_else(|| {
+            std::env::var("TDG_GGUF_MODEL_PATH").unwrap_or_else(|_| {
+                "models/embeddinggemma-300m/embeddinggemma-300m-Q4_0.gguf".into()
+            })
+        });
 
         let cache = get_model()?;
-        let mut guard = cache.lock().map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
+        let mut guard = cache
+            .lock()
+            .map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
 
         if guard.is_some() {
             return Ok(());
@@ -336,10 +368,12 @@ pub mod gguf {
 
     pub fn embed(text: &str) -> TdgResult<EmbeddingResult> {
         let cache = get_model()?;
-        let guard = cache.lock().map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
-        let model = guard.as_ref().ok_or_else(|| {
-            TdgError::Custom("GGUF model not loaded. Call init() first.".into())
-        })?;
+        let guard = cache
+            .lock()
+            .map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
+        let model = guard
+            .as_ref()
+            .ok_or_else(|| TdgError::Custom("GGUF model not loaded. Call init() first.".into()))?;
 
         let embeddings = model
             .embeddings(
@@ -364,10 +398,12 @@ pub mod gguf {
 
     pub fn embed_batch(texts: &[&str]) -> TdgResult<Vec<EmbeddingResult>> {
         let cache = get_model()?;
-        let guard = cache.lock().map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
-        let model = guard.as_ref().ok_or_else(|| {
-            TdgError::Custom("GGUF model not loaded. Call init() first.".into())
-        })?;
+        let guard = cache
+            .lock()
+            .map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
+        let model = guard
+            .as_ref()
+            .ok_or_else(|| TdgError::Custom("GGUF model not loaded. Call init() first.".into()))?;
 
         let all_embeddings = model
             .embeddings(
@@ -501,42 +537,56 @@ pub fn ensure_model_files(config: &crate::config::Config) -> TdgResult<()> {
             config.embedding.model_dir_name(),
             config.embedding.onnx_filename()
         );
-        download_file(&gemma_download_url(config), &onnx_path)?;
+        download_file(&model_download_url(config), &onnx_path)?;
     }
 
-    // Q4 ONNX external data format: weights in separate .onnx_data file
-    let onnx_filename = config.embedding.onnx_filename();
-    let data_filename = format!("{onnx_filename}_data");
-    let data_path = model_dir.join(&data_filename);
-    if config.embedding.quantization == crate::config::EmbeddingQuantization::Q4 && !data_path.exists() {
-        let data_url = format!(
-            "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/{data_filename}"
-        );
-        eprintln!("Downloading {data_filename}...");
-        download_file(&data_url, &data_path)?;
+    // Q4 ONNX external data format: weights in separate .onnx_data file (Gemma only)
+    if config.embedding.model == crate::config::EmbeddingModel::Gemma 
+        && config.embedding.quantization == crate::config::EmbeddingQuantization::Q4
+    {
+        let onnx_filename = config.embedding.onnx_filename();
+        let data_filename = format!("{onnx_filename}_data");
+        let data_path = model_dir.join(&data_filename);
+        if !data_path.exists() {
+            let data_url = format!(
+                "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/{data_filename}"
+            );
+            eprintln!("Downloading {data_filename}...");
+            download_file(&data_url, &data_path)?;
+        }
     }
 
     let tokenizer_path = model_dir.join("tokenizer.json");
     if !tokenizer_path.exists() {
         eprintln!("Downloading tokenizer.json...");
-        download_file(&gemma_tokenizer_url(config), &tokenizer_path)?;
+        download_file(&model_tokenizer_url(config), &tokenizer_path)?;
     }
 
     Ok(())
 }
 
 #[cfg(feature = "onnx")]
-fn gemma_download_url(config: &crate::config::Config) -> String {
-    match config.embedding.quantization {
-        crate::config::EmbeddingQuantization::Q4 => Q4_DOWNLOAD_URL.to_string(),
-        crate::config::EmbeddingQuantization::Q8 => Q8_DOWNLOAD_URL.to_string(),
+fn model_download_url(config: &crate::config::Config) -> String {
+    match config.embedding.model {
+        crate::config::EmbeddingModel::Minilm => MINILM_REPO_URL.to_string(),
+        crate::config::EmbeddingModel::Gemma => match config.embedding.quantization {
+            crate::config::EmbeddingQuantization::Q4 => Q4_DOWNLOAD_URL.to_string(),
+            crate::config::EmbeddingQuantization::Q8 => Q8_DOWNLOAD_URL.to_string(),
+        },
     }
 }
 
 #[cfg(feature = "onnx")]
-fn gemma_tokenizer_url(_config: &crate::config::Config) -> String {
-    "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/tokenizer.json"
-        .to_string()
+fn model_tokenizer_url(config: &crate::config::Config) -> String {
+    match config.embedding.model {
+        crate::config::EmbeddingModel::Minilm => {
+            "https://huggingface.co/xenova/all-MiniLM-L6-v2/resolve/main/tokenizer.json".to_string()
+        }
+        crate::config::EmbeddingModel::Gemma => {
+            "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/tokenizer.json"
+                .to_string()
+        }
+    }
 }
 
 #[cfg(feature = "onnx")]
@@ -556,7 +606,8 @@ fn download_file(url: &str, dest: &Path) -> TdgResult<()> {
     let mut file = std::fs::File::create(dest)
         .map_err(|e| TdgError::Custom(format!("Failed to create file: {e}")))?;
 
-    let bytes = response.bytes()
+    let bytes = response
+        .bytes()
         .map_err(|e| TdgError::Custom(format!("Failed to read response: {e}")))?;
 
     file.write_all(&bytes)

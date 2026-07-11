@@ -121,7 +121,8 @@ impl<'a> SelfManager<'a> {
                             Err(e) => {
                                 tracing::debug!(
                                     "advance_stage failed for telos {}: {}",
-                                    telos.id, e
+                                    telos.id,
+                                    e
                                 );
                             }
                         }
@@ -198,8 +199,13 @@ impl<'a> SelfManager<'a> {
                         }
                     }
                     if promoted > 0 {
-                        info!("Digestion: {} hypotheses promoted to capabilities", promoted);
-                        report.succeeded.push(format!("hypothesis_promotion({})", promoted));
+                        info!(
+                            "Digestion: {} hypotheses promoted to capabilities",
+                            promoted
+                        );
+                        report
+                            .succeeded
+                            .push(format!("hypothesis_promotion({})", promoted));
                     }
                 }
                 Err(e) => {

@@ -288,7 +288,9 @@ impl<'a> ReflectEngine<'a> {
                 ) {
                     tracing::warn!(
                         "reflect_engine: failed to create ENABLES edge {} -> {}: {}",
-                        skill_id, oid, e
+                        skill_id,
+                        oid,
+                        e
                     );
                 }
             }
@@ -342,9 +344,7 @@ impl<'a> ReflectEngine<'a> {
             std::collections::HashMap::new();
 
         for (obs_id, af_json) in &observations {
-            if let Some(af) =
-                crate::metabolism::attractor::AttractorField::from_json(af_json)
-            {
+            if let Some(af) = crate::metabolism::attractor::AttractorField::from_json(af_json) {
                 by_type_class
                     .entry(af.type_class.clone())
                     .or_default()

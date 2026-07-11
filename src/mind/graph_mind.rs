@@ -23,9 +23,7 @@
 //! | Stagnation | all holons dormant for > 3 cycles | Inject catalyst into most-recent observation (restart metabolism) |
 
 use crate::error::TdgResult;
-use crate::metabolism::worker::{
-    enqueue_job, JobType, PRIORITY_HIGH, PRIORITY_NORMAL,
-};
+use crate::metabolism::worker::{enqueue_job, JobType, PRIORITY_HIGH, PRIORITY_NORMAL};
 
 /// The result of a graph-level mind integration pass.
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -212,9 +210,7 @@ fn load_graph_health(conn: &rusqlite::Connection) -> TdgResult<Vec<HealthData>> 
     let mut results = Vec::new();
     for row in rows {
         if let Ok(json) = row {
-            if let Ok(health) =
-                serde_json::from_str::<crate::metabolism::health::Health>(&json)
-            {
+            if let Ok(health) = serde_json::from_str::<crate::metabolism::health::Health>(&json) {
                 results.push(HealthData {
                     g_z: health.g_z,
                     p_z: health.p_z,
@@ -262,7 +258,13 @@ fn inject_catalyst_for_observation_clusters(
             "catalyst_amount": 1.0,
             "source": "graph_mind_golden_allergy",
         });
-        let _ = enqueue_job(conn, obs_id, JobType::CatalystInjection, payload, PRIORITY_HIGH);
+        let _ = enqueue_job(
+            conn,
+            obs_id,
+            JobType::CatalystInjection,
+            payload,
+            PRIORITY_HIGH,
+        );
         report.injections_enqueued += 1;
     }
 
@@ -293,7 +295,13 @@ fn inject_catalyst_for_best_hypothesis(
             "catalyst_amount": 2.0,
             "source": "graph_mind_golden_hyper_ingestion",
         });
-        let _ = enqueue_job(conn, &hyp_id, JobType::CatalystInjection, payload, PRIORITY_HIGH);
+        let _ = enqueue_job(
+            conn,
+            &hyp_id,
+            JobType::CatalystInjection,
+            payload,
+            PRIORITY_HIGH,
+        );
         report.injections_enqueued += 1;
     }
 
@@ -324,7 +332,13 @@ fn inject_catalyst_for_most_connected(
             "catalyst_amount": 3.0,
             "source": "graph_mind_depolarization",
         });
-        let _ = enqueue_job(conn, &holon_id, JobType::CatalystInjection, payload, PRIORITY_HIGH);
+        let _ = enqueue_job(
+            conn,
+            &holon_id,
+            JobType::CatalystInjection,
+            payload,
+            PRIORITY_HIGH,
+        );
         report.injections_enqueued += 1;
     }
 
@@ -354,7 +368,13 @@ fn inject_catalyst_for_orphans(
             "catalyst_amount": 1.5,
             "source": "graph_mind_collapse",
         });
-        let _ = enqueue_job(conn, orphan_id, JobType::CatalystInjection, payload, PRIORITY_NORMAL);
+        let _ = enqueue_job(
+            conn,
+            orphan_id,
+            JobType::CatalystInjection,
+            payload,
+            PRIORITY_NORMAL,
+        );
         report.injections_enqueued += 1;
     }
 
@@ -379,7 +399,13 @@ fn inject_catalyst_for_most_recent(
             "catalyst_amount": 2.0,
             "source": "graph_mind_stagnation",
         });
-        let _ = enqueue_job(conn, &obs_id, JobType::CatalystInjection, payload, PRIORITY_HIGH);
+        let _ = enqueue_job(
+            conn,
+            &obs_id,
+            JobType::CatalystInjection,
+            payload,
+            PRIORITY_HIGH,
+        );
         report.injections_enqueued += 1;
     }
 
@@ -494,11 +520,9 @@ mod tests {
 
         // Verify jobs were enqueued
         let queue_depth: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pending_metabolism",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM pending_metabolism", [], |row| {
+                row.get(0)
+            })
             .unwrap_or(0);
 
         assert!(queue_depth > 0, "Should have enqueued metabolism jobs");

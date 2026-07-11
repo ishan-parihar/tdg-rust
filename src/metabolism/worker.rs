@@ -240,9 +240,7 @@ pub fn mark_failed(conn: &Connection, job: &PendingJob, error: &str) -> TdgResul
 /// retry logic.
 pub fn execute_job(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
     match job.job_type {
-        JobType::LesserTick | JobType::CatalystInjection => {
-            execute_lesser_tick(conn, job)
-        }
+        JobType::LesserTick | JobType::CatalystInjection => execute_lesser_tick(conn, job),
         JobType::RecomputeAttractor => execute_recompute_attractor(conn, job),
         JobType::RecomputeHealth => execute_recompute_health(conn, job),
         JobType::ResonanceUpdate => execute_resonance_update(conn, job),
@@ -291,12 +289,7 @@ fn execute_greater_tick(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
     // Log phase transitions
     if result.transitioned {
         if let (Some(from), Some(to)) = (result.from_phase.as_ref(), result.to_phase.as_ref()) {
-            tracing::debug!(
-                "Holon {} greater cycle: {} → {}",
-                job.holon_id,
-                from,
-                to
-            );
+            tracing::debug!("Holon {} greater cycle: {} → {}", job.holon_id, from, to);
         }
     }
 
@@ -532,7 +525,13 @@ fn execute_resonance_update(conn: &Connection, job: &PendingJob) -> TdgResult<()
             let rc = crate::metabolism::health::resonance_with_components(&af1, &af2);
 
             if rc.resonance > 0.0 {
-                results.push((partner_id, rc.resonance, rc.complementarity, rc.gamma_compat, rc.great_way_intersect));
+                results.push((
+                    partner_id,
+                    rc.resonance,
+                    rc.complementarity,
+                    rc.gamma_compat,
+                    rc.great_way_intersect,
+                ));
             }
         }
     }
@@ -612,12 +611,7 @@ fn execute_lesser_tick(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
     // Log phase transitions as events
     if result.transitioned {
         if let (Some(from), Some(to)) = (result.from_phase.as_ref(), result.to_phase.as_ref()) {
-            tracing::debug!(
-                "Holon {} lesser cycle: {} → {}",
-                job.holon_id,
-                from,
-                to
-            );
+            tracing::debug!("Holon {} lesser cycle: {} → {}", job.holon_id, from, to);
         }
     }
 
@@ -685,8 +679,14 @@ fn execute_lesser_tick(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
 
                 for (drive_name, drive_val) in drives_obj.iter() {
                     if let Some(drive_obj) = drive_val.as_object() {
-                        let pos = drive_obj.get("positive_pole").and_then(|v| v.as_f64()).unwrap_or(5.0);
-                        let neg = drive_obj.get("negative_pole").and_then(|v| v.as_f64()).unwrap_or(2.0);
+                        let pos = drive_obj
+                            .get("positive_pole")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(5.0);
+                        let neg = drive_obj
+                            .get("negative_pole")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(2.0);
 
                         // Strengthen positive pole (the drive was exercised)
                         let new_pos = (pos + learning_rate).min(10.0);
@@ -705,10 +705,13 @@ fn execute_lesser_tick(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
                     let new_drives_json = serde_json::Value::Object(new_drives);
                     // P1 fix: route through flow::store_drive_state which acquires
                     // write_guard + checks circuit_breaker, instead of raw UPDATE.
-                    let _ = crate::flow::store_drive_state_pub(conn, &job.holon_id, &new_drives_json);
+                    let _ =
+                        crate::flow::store_drive_state_pub(conn, &job.holon_id, &new_drives_json);
                     tracing::debug!(
                         "Holon {} drives adapted (learning_rate={:.3}, experience={:.3})",
-                        job.holon_id, learning_rate, state.experience_accumulated
+                        job.holon_id,
+                        learning_rate,
+                        state.experience_accumulated
                     );
                 }
             }
@@ -955,9 +958,27 @@ mod tests {
         .unwrap();
 
         // Enqueue in reverse priority order
-        enqueue_job(&conn, &node.id, JobType::LesserTick, serde_json::json!({}), PRIORITY_LOW);
-        enqueue_job(&conn, &node.id, JobType::LesserTick, serde_json::json!({}), PRIORITY_HIGH);
-        enqueue_job(&conn, &node.id, JobType::LesserTick, serde_json::json!({}), PRIORITY_NORMAL);
+        enqueue_job(
+            &conn,
+            &node.id,
+            JobType::LesserTick,
+            serde_json::json!({}),
+            PRIORITY_LOW,
+        );
+        enqueue_job(
+            &conn,
+            &node.id,
+            JobType::LesserTick,
+            serde_json::json!({}),
+            PRIORITY_HIGH,
+        );
+        enqueue_job(
+            &conn,
+            &node.id,
+            JobType::LesserTick,
+            serde_json::json!({}),
+            PRIORITY_NORMAL,
+        );
 
         // Should claim HIGH first
         let job = claim_job(&conn).unwrap().unwrap();
@@ -1060,7 +1081,7 @@ mod tests {
                 &child.id,
                 JobType::LesserTick,
                 serde_json::json!({"catalyst_amount": 0.0}),
-                PRIORITY_HIGH,  // high priority so child is always claimed first
+                PRIORITY_HIGH, // high priority so child is always claimed first
             )
             .unwrap();
             let job = claim_job(&conn).unwrap().unwrap();
@@ -1071,14 +1092,15 @@ mod tests {
             if state.phase == crate::metabolism::LesserPhase::Quiescent {
                 reached_integrating = true;
             }
-            if state.phase == crate::metabolism::LesserPhase::Dormant
-                && state.cycle_count > 0
-            {
+            if state.phase == crate::metabolism::LesserPhase::Dormant && state.cycle_count > 0 {
                 break;
             }
         }
 
-        assert!(reached_integrating, "Child should have reached Integrating/Quiescent phase");
+        assert!(
+            reached_integrating,
+            "Child should have reached Integrating/Quiescent phase"
+        );
 
         // Check if upward pressure enqueued a job for the parent.
         // The parent job is enqueued when the child transitions Integrating → Quiescent.
@@ -1158,8 +1180,20 @@ mod tests {
 
         assert_eq!(queue_depth(&conn).unwrap(), 0);
 
-        enqueue_job(&conn, &node.id, JobType::LesserTick, serde_json::json!({}), PRIORITY_LOW);
-        enqueue_job(&conn, &node.id, JobType::LesserTick, serde_json::json!({}), PRIORITY_LOW);
+        enqueue_job(
+            &conn,
+            &node.id,
+            JobType::LesserTick,
+            serde_json::json!({}),
+            PRIORITY_LOW,
+        );
+        enqueue_job(
+            &conn,
+            &node.id,
+            JobType::LesserTick,
+            serde_json::json!({}),
+            PRIORITY_LOW,
+        );
 
         assert_eq!(queue_depth(&conn).unwrap(), 2);
 

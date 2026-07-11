@@ -15,7 +15,6 @@ use crate::mind::feeling::{feeling_state_prompt, FeelingEngine};
 use crate::mind::sections::*;
 use crate::mind::terrain::{discover_skills_for_terrain, generate_terrain_context};
 
-
 pub fn generate_prompt(conn: &Connection, cfg: &Config) -> TdgResult<String> {
     let lean = cfg.lean;
     let mut sections = Vec::new();
@@ -173,7 +172,6 @@ pub fn generate_prompt(conn: &Connection, cfg: &Config) -> TdgResult<String> {
             }
             sections.push("".to_string());
         }
-
     }
 
     sections.push("## 🧩 Active Skills".to_string());
@@ -365,9 +363,7 @@ fn generate_metabolic_summary(conn: &Connection) -> TdgResult<String> {
     let mut depolarized = 0;
 
     for json in &health_jsons {
-        if let Ok(health) =
-            serde_json::from_str::<crate::metabolism::health::Health>(json)
-        {
+        if let Ok(health) = serde_json::from_str::<crate::metabolism::health::Health>(json) {
             g_z_sum += health.g_z;
             p_z_sum += health.p_z;
             count += 1;
@@ -496,12 +492,9 @@ mod tests {
     #[test]
     fn write_mind_state_file_creates_file() {
         let conn = setup();
-        let cfg = Config::with_db_path(
-            tempfile::NamedTempFile::new()
-                .unwrap()
-                .into_temp_path()
-                .to_path_buf(),
-        );
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut cfg = Config::with_db_path(temp_dir.path().join("tdg.db"));
+        cfg.state_dir = temp_dir.path().to_path_buf();
         let terrain = json!({"active_nodes_by_type": {}});
         let report = json!({"pattern_flags": []});
         write_mind_state_file(&conn, &cfg, "test prompt", &report, &terrain).unwrap();
@@ -582,12 +575,9 @@ mod tests {
     #[test]
     fn write_mind_state_file_json_valid() {
         let conn = setup();
-        let cfg = Config::with_db_path(
-            tempfile::NamedTempFile::new()
-                .unwrap()
-                .into_temp_path()
-                .to_path_buf(),
-        );
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut cfg = Config::with_db_path(temp_dir.path().join("tdg.db"));
+        cfg.state_dir = temp_dir.path().to_path_buf();
         let terrain = json!({"active_nodes_by_type": {"concept": 3}});
         let report = json!({"pattern_flags": ["flag1"]});
         write_mind_state_file(&conn, &cfg, "my prompt", &report, &terrain).unwrap();
@@ -604,8 +594,9 @@ mod tests {
     #[test]
     fn write_mind_state_file_lean_mode() {
         let conn = setup();
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let cfg = Config::with_db_path(tmp.path().to_path_buf());
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut cfg = Config::with_db_path(temp_dir.path().join("tdg.db"));
+        cfg.state_dir = temp_dir.path().to_path_buf();
         let terrain = json!({"active_nodes_by_type": {}});
         let report = json!({"pattern_flags": []});
 
@@ -700,12 +691,9 @@ mod tests {
     #[test]
     fn write_mind_state_file_includes_prompt_length() {
         let conn = setup();
-        let cfg = Config::with_db_path(
-            tempfile::NamedTempFile::new()
-                .unwrap()
-                .into_temp_path()
-                .to_path_buf(),
-        );
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut cfg = Config::with_db_path(temp_dir.path().join("tdg.db"));
+        cfg.state_dir = temp_dir.path().to_path_buf();
         let terrain = json!({});
         let report = json!({"pattern_flags": []});
         write_mind_state_file(&conn, &cfg, "short", &report, &terrain).unwrap();
@@ -719,12 +707,9 @@ mod tests {
     #[test]
     fn write_mind_state_file_includes_feeling_and_escalation() {
         let conn = setup();
-        let cfg = Config::with_db_path(
-            tempfile::NamedTempFile::new()
-                .unwrap()
-                .into_temp_path()
-                .to_path_buf(),
-        );
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut cfg = Config::with_db_path(temp_dir.path().join("tdg.db"));
+        cfg.state_dir = temp_dir.path().to_path_buf();
         let terrain = json!({"active_nodes_by_type": {}});
         let report = json!({"pattern_flags": []});
         write_mind_state_file(&conn, &cfg, "test", &report, &terrain).unwrap();

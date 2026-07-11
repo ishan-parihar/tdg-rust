@@ -43,7 +43,11 @@ impl<'a> DigestionEngine<'a> {
             self.conn,
             &NewNode {
                 node_type: "observation".to_string(),
-                name: format!("{} observation: {}", catalyst_type, description.chars().take(50).collect::<String>()),
+                name: format!(
+                    "{} observation: {}",
+                    catalyst_type,
+                    description.chars().take(50).collect::<String>()
+                ),
                 description: Some(description.to_string()),
                 properties: Some(serde_json::json!({
                     "catalyst_type": catalyst_type.to_string(),
@@ -107,17 +111,15 @@ impl<'a> DigestionEngine<'a> {
         // dedup by observation ID within each source group.
         let mut by_source: HashMap<String, Vec<&Node>> = HashMap::new();
         for obs in &observations {
-            let mut seen_sources: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut seen_sources: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             for edge_type in &["MENTIONS", "EVIDENCES"] {
                 let edges =
                     crud::get_edges(self.conn, Some(&obs.id), None, Some(edge_type), None, 100)?;
                 for e in &edges {
                     // Only push this obs once per source (dedup across edge types)
                     if seen_sources.insert(e.target_id.clone()) {
-                        by_source
-                            .entry(e.target_id.clone())
-                            .or_default()
-                            .push(obs);
+                        by_source.entry(e.target_id.clone()).or_default().push(obs);
                     }
                 }
             }
@@ -130,7 +132,8 @@ impl<'a> DigestionEngine<'a> {
                 // The previous implementation created a NEW hypothesis on every
                 // `tdg_observe` call once the threshold was met, leading to
                 // N-2 duplicate hypotheses for N observations about the same entity.
-                let existing: i64 = self.conn
+                let existing: i64 = self
+                    .conn
                     .query_row(
                         "SELECT COUNT(*) FROM nodes
                          WHERE node_type = 'hypothesis'
@@ -191,7 +194,9 @@ impl<'a> DigestionEngine<'a> {
                     ) {
                         tracing::warn!(
                             "digestion: failed to create SUPPORTS edge {} -> {}: {}",
-                            h.id, obs.id, e
+                            h.id,
+                            obs.id,
+                            e
                         );
                     }
                 }

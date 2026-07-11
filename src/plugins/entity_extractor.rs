@@ -98,8 +98,6 @@ static REDDIT_RE: LazyLock<regex::Regex> =
 static NAME_TOKEN_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"[:\s_/-]+").unwrap());
 
-
-
 /// Inverted index cache for graph node names.
 pub struct EntityNameCache {
     /// name → node_id

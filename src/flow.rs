@@ -439,7 +439,6 @@ fn intrinsic_signatures() -> HashMap<&'static str, IntrinsicSig> {
     m
 }
 
-
 // ─── Edge Contracts ──────────────────────────────────────────────────────────
 
 /// Edge type → (flow_rate, aggregation_weight).
@@ -504,7 +503,11 @@ fn store_drive_state(conn: &Connection, node_id: &str, state: &FlowDriveState) -
 
 /// P1 fix: Public wrapper for store_drive_state that accepts raw JSON.
 /// Used by the metabolism worker to adapt drives with write-guard protection.
-pub fn store_drive_state_pub(conn: &Connection, node_id: &str, drives_json: &serde_json::Value) -> TdgResult<()> {
+pub fn store_drive_state_pub(
+    conn: &Connection,
+    node_id: &str,
+    drives_json: &serde_json::Value,
+) -> TdgResult<()> {
     crate::db::crud::check_circuit_breaker_pub()?;
     let _guard = crate::db::crud::acquire_write_guard_pub(conn)?;
     let now = now_iso();
@@ -751,11 +754,13 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
         // G5 fix: only apply LTP to POSITIVE base rates. Negative rates (BLOCKS,
         // CONTRADICTS) should not strengthen with co-activation — blocking should
         // not be reinforced by use.
-        let co_activation: i64 = conn.query_row(
-            "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
-            rusqlite::params![e.id],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let co_activation: i64 = conn
+            .query_row(
+                "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
+                rusqlite::params![e.id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
         let learned_rate = if base_rate > 0.0 {
             (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5)
         } else {
@@ -768,11 +773,13 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
     let edges = get_edges(conn, Some(target_id), Some(source_id), None, None, 10)?;
     if let Some(e) = edges.first() {
         let base_rate = edge_flow_rate(&e.edge_type).0;
-        let co_activation: i64 = conn.query_row(
-            "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
-            rusqlite::params![e.id],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let co_activation: i64 = conn
+            .query_row(
+                "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
+                rusqlite::params![e.id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
         let learned_rate = if base_rate > 0.0 {
             (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5)
         } else {
@@ -1400,7 +1407,6 @@ mod tests {
             );
         }
     }
-
 
     #[test]
     fn missing_intrinsic_signatures_added() {

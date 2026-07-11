@@ -55,7 +55,9 @@ impl std::ops::Deref for ConnGuard {
         // P0 fix: return a static placeholder instead of panicking.
         // In practice this should never happen (ConnGuard is only used within
         // a single scope), but if it does, we don't want to crash the server.
-        self.conn.as_ref().expect("ConnGuard conn already taken — this indicates a bug in the calling code")
+        self.conn
+            .as_ref()
+            .expect("ConnGuard conn already taken — this indicates a bug in the calling code")
     }
 }
 
@@ -97,27 +99,39 @@ pub(crate) fn validate_file_path(
 
     let p = Path::new(path);
     if p.is_absolute() {
-        let canonical = p.canonicalize().or_else(|_| {
-            if for_write {
-                if let Some(parent) = p.parent() {
-                    parent.canonicalize().map(|_| p.to_path_buf())
+        let canonical = p
+            .canonicalize()
+            .or_else(|_| {
+                if for_write {
+                    if let Some(parent) = p.parent() {
+                        parent.canonicalize().map(|_| p.to_path_buf())
+                    } else {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            "no parent",
+                        ))
+                    }
                 } else {
-                    Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no parent"))
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "file not found",
+                    ))
                 }
-            } else {
-                Err(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"))
-            }
-        }).map_err(|e| mcp_err(anyhow::anyhow!("Cannot resolve path '{}': {}", path, e)))?;
+            })
+            .map_err(|e| mcp_err(anyhow::anyhow!("Cannot resolve path '{}': {}", path, e)))?;
 
         let path_str = canonical.to_string_lossy().to_lowercase();
         let blocked_prefixes = [
-            "/etc/", "/var/", "/usr/", "/bin/", "/sbin/", "/root/",
-            "/proc/", "/sys/", "/dev/", "/boot/", "/lib/",
+            "/etc/", "/var/", "/usr/", "/bin/", "/sbin/", "/root/", "/proc/", "/sys/", "/dev/",
+            "/boot/", "/lib/",
         ];
         for prefix in &blocked_prefixes {
             if path_str.starts_with(prefix) {
                 return Err(McpError::invalid_params(
-                    format!("Access denied: path '{}' is in a protected system directory", path),
+                    format!(
+                        "Access denied: path '{}' is in a protected system directory",
+                        path
+                    ),
                     None,
                 ));
             }
@@ -137,7 +151,10 @@ pub(crate) fn upsert_entity_and_connect(
 ) -> Result<String, McpError> {
     let name = entity_name.trim().to_string();
     if name.is_empty() {
-        return Err(McpError::invalid_params("entity name cannot be empty", None));
+        return Err(McpError::invalid_params(
+            "entity name cannot be empty",
+            None,
+        ));
     }
 
     let existing = crate::db::crud::search(conn, &name, 1)
@@ -183,7 +200,12 @@ pub(crate) fn upsert_entity_and_connect(
                 agent_id: Some("mcp_observe".to_string()),
             },
         ) {
-            tracing::warn!("Failed to create MENTIONS edge {} -> {}: {}", observation_id, entity_node.id, e);
+            tracing::warn!(
+                "Failed to create MENTIONS edge {} -> {}: {}",
+                observation_id,
+                entity_node.id,
+                e
+            );
         }
     }
 

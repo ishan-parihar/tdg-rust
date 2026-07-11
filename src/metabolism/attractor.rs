@@ -141,22 +141,24 @@ impl CouplingTensor {
 /// Loop B (Greater, discontinuous): S → T → G → Ch → S
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ArchetypalLoads {
-    pub m: f64, // Matrix
-    pub p: f64, // Potentiator
-    pub c: f64, // Catalyst
-    pub e: f64, // Experience
-    pub s: f64, // Significator
-    pub t: f64, // Transformation
-    pub g: f64, // Great Way
+    pub m: f64,  // Matrix
+    pub p: f64,  // Potentiator
+    pub c: f64,  // Catalyst
+    pub e: f64,  // Experience
+    pub s: f64,  // Significator
+    pub t: f64,  // Transformation
+    pub g: f64,  // Great Way
     pub ch: f64, // Choice
 }
 
 impl ArchetypalLoads {
     /// Check if all loads are in [0, 1].
     pub fn is_valid(&self) -> bool {
-        [self.m, self.p, self.c, self.e, self.s, self.t, self.g, self.ch]
-            .iter()
-            .all(|v| (0.0..=1.0).contains(v))
+        [
+            self.m, self.p, self.c, self.e, self.s, self.t, self.g, self.ch,
+        ]
+        .iter()
+        .all(|v| (0.0..=1.0).contains(v))
     }
 }
 
@@ -416,7 +418,11 @@ fn extract_coupling_tensor(drives: &serde_json::Value) -> CouplingTensor {
 }
 
 /// Classify the type from π, A_G polarity, and stability.
-fn classify_type(pi: &Option<f64>, a_g: &ReservoirAttractor, stability: &StabilityFilter) -> String {
+fn classify_type(
+    pi: &Option<f64>,
+    a_g: &ReservoirAttractor,
+    stability: &StabilityFilter,
+) -> String {
     // Not stable → transient
     if !stability.is_stable_type() {
         return "transient".to_string();
@@ -474,11 +480,7 @@ pub fn load(conn: &rusqlite::Connection, holon_id: &str) -> TdgResult<Option<Att
 }
 
 /// Save attractor field for a holon to the DB.
-pub fn save(
-    conn: &rusqlite::Connection,
-    holon_id: &str,
-    field: &AttractorField,
-) -> TdgResult<()> {
+pub fn save(conn: &rusqlite::Connection, holon_id: &str, field: &AttractorField) -> TdgResult<()> {
     conn.execute(
         "UPDATE nodes SET attractor_field_json = ?1, attractor_dirty = 0 WHERE id = ?2",
         rusqlite::params![field.to_json(), holon_id],

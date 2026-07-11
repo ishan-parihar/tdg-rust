@@ -92,7 +92,10 @@ impl FeelingEngine {
             .filter(|d| d.diagnose() == DriveDiagnosis::Integrated)
             .count();
         if integrated_count == 4 {
-            feelings.insert(0, "All drives integrated — metabolic equilibrium".to_string());
+            feelings.insert(
+                0,
+                "All drives integrated — metabolic equilibrium".to_string(),
+            );
         }
 
         // Energy-based feelings

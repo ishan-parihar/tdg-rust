@@ -13,15 +13,17 @@
 //! This is the "brain simulation" — it verifies the closed-loop mind works
 //! end-to-end without crashes, data corruption, or semantic jumbling.
 
+use rusqlite::Connection;
 use tdg_rust::db::{init_fts, init_schema, run_migrations};
-use tdg_rust::metabolism::worker::{enqueue_job, claim_job, execute_job, mark_done, JobType, PRIORITY_NORMAL};
-use tdg_rust::metabolism::lesser_cycle;
 use tdg_rust::metabolism::attractor;
 use tdg_rust::metabolism::health;
+use tdg_rust::metabolism::lesser_cycle;
+use tdg_rust::metabolism::worker::{
+    claim_job, enqueue_job, execute_job, mark_done, JobType, PRIORITY_NORMAL,
+};
 use tdg_rust::mind::graph_mind;
 use tdg_rust::mind::reflect_engine::ReflectEngine;
-use tdg_rust::models::{NewNode, NewEdge};
-use rusqlite::Connection;
+use tdg_rust::models::{NewEdge, NewNode};
 
 fn setup() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
@@ -37,7 +39,14 @@ fn tick_holon(conn: &Connection, holon_id: &str, catalyst: f64, source: &str) {
         "source": source,
         "source_holon": source,
     });
-    let job_id = enqueue_job(conn, holon_id, JobType::CatalystInjection, payload, PRIORITY_NORMAL).unwrap();
+    let job_id = enqueue_job(
+        conn,
+        holon_id,
+        JobType::CatalystInjection,
+        payload,
+        PRIORITY_NORMAL,
+    )
+    .unwrap();
     let job = claim_job(conn).unwrap().unwrap();
     execute_job(conn, &job).unwrap();
     mark_done(conn, job.id).unwrap();
@@ -45,7 +54,14 @@ fn tick_holon(conn: &Connection, holon_id: &str, catalyst: f64, source: &str) {
 
 fn tick_until_dormant(conn: &Connection, holon_id: &str, max_ticks: usize) {
     for _ in 0..max_ticks {
-        let job_id = enqueue_job(conn, holon_id, JobType::LesserTick, serde_json::json!({"catalyst_amount": 0.0}), PRIORITY_NORMAL).unwrap();
+        let job_id = enqueue_job(
+            conn,
+            holon_id,
+            JobType::LesserTick,
+            serde_json::json!({"catalyst_amount": 0.0}),
+            PRIORITY_NORMAL,
+        )
+        .unwrap();
         let job = claim_job(conn).unwrap().unwrap();
         execute_job(conn, &job).unwrap();
         mark_done(conn, job.id).unwrap();
@@ -73,17 +89,24 @@ fn test_full_agent_mind_flow() {
     // ═══════════════════════════════════════════════════════════════════════
 
     // Create a parent telos (the agent's mission)
-    let telos = tdg_rust::db::crud::add_node(&conn, &NewNode {
-        node_type: "telos".to_string(),
-        name: "Build a Rust web framework".to_string(),
-        teleological_level: Some("T0".to_string()),
-        ..Default::default()
-    }).unwrap();
+    let telos = tdg_rust::db::crud::add_node(
+        &conn,
+        &NewNode {
+            node_type: "telos".to_string(),
+            name: "Build a Rust web framework".to_string(),
+            teleological_level: Some("T0".to_string()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     // Agent observes 5 related observations about Rust async patterns
     let obs = vec![
         ("Tokio is the most popular async runtime", "tokio"),
-        ("async/await syntax is preferred over futures combinators", "async-await"),
+        (
+            "async/await syntax is preferred over futures combinators",
+            "async-await",
+        ),
         ("Tokio uses a work-stealing scheduler", "tokio-scheduler"),
         ("async functions return impl Future", "async-future"),
         ("Tokio channels: mpsc, oneshot, broadcast", "tokio-channels"),
@@ -91,37 +114,53 @@ fn test_full_agent_mind_flow() {
 
     let mut obs_ids = Vec::new();
     for (desc, entity) in &obs {
-        let obs_node = tdg_rust::db::crud::add_node(&conn, &NewNode {
-            node_type: "observation".to_string(),
-            name: format!("Obs: {}", desc.chars().take(40).collect::<String>()),
-            description: Some(desc.to_string()),
-            parent_ids: Some(vec![telos.id.clone()]),
-            source: Some("agent_turn".to_string()),
-            ..Default::default()
-        }).unwrap();
+        let obs_node = tdg_rust::db::crud::add_node(
+            &conn,
+            &NewNode {
+                node_type: "observation".to_string(),
+                name: format!("Obs: {}", desc.chars().take(40).collect::<String>()),
+                description: Some(desc.to_string()),
+                parent_ids: Some(vec![telos.id.clone()]),
+                source: Some("agent_turn".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         obs_ids.push(obs_node.id.clone());
 
         // Create entity nodes and MENTIONS edges
-        let entity_node = tdg_rust::db::crud::add_node(&conn, &NewNode {
-            node_type: "people".to_string(),
-            name: entity.to_string(),
-            ..Default::default()
-        }).unwrap();
+        let entity_node = tdg_rust::db::crud::add_node(
+            &conn,
+            &NewNode {
+                node_type: "people".to_string(),
+                name: entity.to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
 
-        tdg_rust::db::crud::add_edge(&conn, &NewEdge {
-            source_id: obs_node.id.clone(),
-            target_id: entity_node.id.clone(),
-            edge_type: "MENTIONS".to_string(),
-            ..Default::default()
-        }).unwrap();
+        tdg_rust::db::crud::add_edge(
+            &conn,
+            &NewEdge {
+                source_id: obs_node.id.clone(),
+                target_id: entity_node.id.clone(),
+                edge_type: "MENTIONS".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
 
         // Connect observation to telos
-        tdg_rust::db::crud::add_edge(&conn, &NewEdge {
-            source_id: telos.id.clone(),
-            target_id: obs_node.id.clone(),
-            edge_type: "DECOMPOSES_TO".to_string(),
-            ..Default::default()
-        }).unwrap();
+        tdg_rust::db::crud::add_edge(
+            &conn,
+            &NewEdge {
+                source_id: telos.id.clone(),
+                target_id: obs_node.id.clone(),
+                edge_type: "DECOMPOSES_TO".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
     }
 
     // Verify all observations were created
@@ -160,17 +199,28 @@ fn test_full_agent_mind_flow() {
         "SELECT COUNT(*) FROM nodes WHERE attractor_field_json IS NOT NULL AND attractor_field_json != ''",
         [], |r| r.get(0),
     ).unwrap_or(0);
-    assert!(af_count > 0, "Should have computed attractor fields. Got {}", af_count);
+    assert!(
+        af_count > 0,
+        "Should have computed attractor fields. Got {}",
+        af_count
+    );
 
     // ═══════════════════════════════════════════════════════════════════════
     // PHASE 4: Health metrics
     // ═══════════════════════════════════════════════════════════════════════
 
-    let health_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM nodes WHERE health_json IS NOT NULL AND health_json != ''",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
-    assert!(health_count > 0, "Should have computed health metrics. Got {}", health_count);
+    let health_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM nodes WHERE health_json IS NOT NULL AND health_json != ''",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    assert!(
+        health_count > 0,
+        "Should have computed health metrics. Got {}",
+        health_count
+    );
 
     // ═══════════════════════════════════════════════════════════════════════
     // PHASE 5: Digestion cascade (observations → hypothesis)
@@ -224,7 +274,11 @@ fn test_full_agent_mind_flow() {
     let has_diagnosis = !report.diagnoses.is_empty();
     let hyp_count = tdg_rust::db::crud::count_nodes(&conn, Some("hypothesis")).unwrap();
     if hyp_count == 0 && report.observation_count > 10 {
-        assert!(has_diagnosis, "Should diagnose GoldenAllergy with {} obs and {} hyp", report.observation_count, hyp_count);
+        assert!(
+            has_diagnosis,
+            "Should diagnose GoldenAllergy with {} obs and {} hyp",
+            report.observation_count, hyp_count
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -232,13 +286,21 @@ fn test_full_agent_mind_flow() {
     // ═══════════════════════════════════════════════════════════════════════
 
     let search_results = tdg_rust::db::crud::search(&conn, "tokio", 10).unwrap();
-    assert!(!search_results.is_empty(), "Should find observations about tokio");
+    assert!(
+        !search_results.is_empty(),
+        "Should find observations about tokio"
+    );
 
     // Verify search results contain relevant observations
     let found_tokio = search_results.iter().any(|(node, _)| {
-        node.name.contains("tokio") || node.description.contains("tokio") || node.name.contains("Tokio")
+        node.name.contains("tokio")
+            || node.description.contains("tokio")
+            || node.name.contains("Tokio")
     });
-    assert!(found_tokio, "Search for 'tokio' should find Tokio-related observations");
+    assert!(
+        found_tokio,
+        "Search for 'tokio' should find Tokio-related observations"
+    );
 
     // ═══════════════════════════════════════════════════════════════════════
     // PHASE 9: Synthesis submission (agent submits a hypothesis)
@@ -256,41 +318,59 @@ fn test_full_agent_mind_flow() {
 
     // Wire EVIDENCES edges to observations
     for obs_id in &obs_ids {
-        tdg_rust::db::crud::add_edge(&conn, &NewEdge {
-            source_id: synthesis.id.clone(),
-            target_id: obs_id.clone(),
-            edge_type: "EVIDENCES".to_string(),
-            ..Default::default()
-        }).unwrap();
+        tdg_rust::db::crud::add_edge(
+            &conn,
+            &NewEdge {
+                source_id: synthesis.id.clone(),
+                target_id: obs_id.clone(),
+                edge_type: "EVIDENCES".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
     }
 
     // Verify synthesis is ai-draft (NOT canonical — AI cannot self-elevate)
-    let synth_node = tdg_rust::db::crud::get_node(&conn, &synthesis.id).unwrap().unwrap();
-    assert_eq!(synth_node.synthesis_status, "ai-draft", "Synthesis must start at ai-draft");
+    let synth_node = tdg_rust::db::crud::get_node(&conn, &synthesis.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        synth_node.synthesis_status, "ai-draft",
+        "Synthesis must start at ai-draft"
+    );
 
     // ═══════════════════════════════════════════════════════════════════════
     // PHASE 10: Verify no orphan nodes (all observations connected)
     // ═══════════════════════════════════════════════════════════════════════
 
-    let orphan_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM nodes n
+    let orphan_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM nodes n
          WHERE n.valid_to IS NULL
            AND n.id NOT IN (SELECT source_id FROM edges WHERE valid_to IS NULL)
            AND n.id NOT IN (SELECT target_id FROM edges WHERE valid_to IS NULL)
            AND n.node_type = 'observation'",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
-    assert_eq!(orphan_count, 0, "Should have 0 orphan observations (all connected via MENTIONS or DECOMPOSES_TO)");
+    assert_eq!(
+        orphan_count, 0,
+        "Should have 0 orphan observations (all connected via MENTIONS or DECOMPOSES_TO)"
+    );
 
     // ═══════════════════════════════════════════════════════════════════════
     // PHASE 11: Verify metabolism queue is drained (no stuck jobs)
     // ═══════════════════════════════════════════════════════════════════════
 
-    let pending_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM pending_metabolism WHERE attempts < max_attempts",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
+    let pending_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pending_metabolism WHERE attempts < max_attempts",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     // Some jobs may remain if they were enqueued by the graph_mind integration
     // (catalyst injection for diagnoses). This is expected — the queue doesn't
@@ -305,21 +385,33 @@ fn test_full_agent_mind_flow() {
     // PHASE 12: Verify no data corruption (all JSON columns parseable)
     // ═══════════════════════════════════════════════════════════════════════
 
-    let bad_json_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM nodes
+    let bad_json_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM nodes
          WHERE lesser_cycle_json IS NOT NULL AND lesser_cycle_json != ''
            AND lesser_cycle_json NOT LIKE '{%' ",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
-    assert_eq!(bad_json_count, 0, "All lesser_cycle_json should be valid JSON objects");
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    assert_eq!(
+        bad_json_count, 0,
+        "All lesser_cycle_json should be valid JSON objects"
+    );
 
-    let bad_af_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM nodes
+    let bad_af_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM nodes
          WHERE attractor_field_json IS NOT NULL AND attractor_field_json != ''
            AND attractor_field_json NOT LIKE '{%' ",
-        [], |r| r.get(0),
-    ).unwrap_or(0);
-    assert_eq!(bad_af_count, 0, "All attractor_field_json should be valid JSON objects");
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    assert_eq!(
+        bad_af_count, 0,
+        "All attractor_field_json should be valid JSON objects"
+    );
 
     println!("✅ Full agent mind flow simulation passed — 12 phases verified");
 }
@@ -329,23 +421,32 @@ fn test_drive_adaptation_through_experience() {
     let conn = setup();
 
     // Create a holon
-    let holon = tdg_rust::db::crud::add_node(&conn, &NewNode {
-        node_type: "observation".to_string(),
-        name: "Test drive adaptation".to_string(),
-        drives: Some(serde_json::json!({
-            "eros": {"positive_pole": 5.0, "negative_pole": 2.0},
-            "agape": {"positive_pole": 4.0, "negative_pole": 1.0},
-            "agency": {"positive_pole": 3.0, "negative_pole": 2.0},
-            "communion": {"positive_pole": 4.0, "negative_pole": 1.0},
-        })),
-        ..Default::default()
-    }).unwrap();
+    let holon = tdg_rust::db::crud::add_node(
+        &conn,
+        &NewNode {
+            node_type: "observation".to_string(),
+            name: "Test drive adaptation".to_string(),
+            drives: Some(serde_json::json!({
+                "eros": {"positive_pole": 5.0, "negative_pole": 2.0},
+                "agape": {"positive_pole": 4.0, "negative_pole": 1.0},
+                "agency": {"positive_pole": 3.0, "negative_pole": 2.0},
+                "communion": {"positive_pole": 4.0, "negative_pole": 1.0},
+            })),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     // Get initial drive values
-    let initial_node = tdg_rust::db::crud::get_node(&conn, &holon.id).unwrap().unwrap();
+    let initial_node = tdg_rust::db::crud::get_node(&conn, &holon.id)
+        .unwrap()
+        .unwrap();
     let initial_drives = initial_node.drives.clone();
     let initial_eros_pos = initial_drives
-        .get("eros").and_then(|d| d.get("positive_pole")).and_then(|v| v.as_f64()).unwrap_or(5.0);
+        .get("eros")
+        .and_then(|d| d.get("positive_pole"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(5.0);
 
     // Process multiple cycles with catalyst
     for i in 0..5 {
@@ -355,10 +456,15 @@ fn test_drive_adaptation_through_experience() {
     }
 
     // Check if drives adapted
-    let final_node = tdg_rust::db::crud::get_node(&conn, &holon.id).unwrap().unwrap();
+    let final_node = tdg_rust::db::crud::get_node(&conn, &holon.id)
+        .unwrap()
+        .unwrap();
     let final_drives = final_node.drives.clone();
     let final_eros_pos = final_drives
-        .get("eros").and_then(|d| d.get("positive_pole")).and_then(|v| v.as_f64()).unwrap_or(5.0);
+        .get("eros")
+        .and_then(|d| d.get("positive_pole"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(5.0);
 
     // Drives should have strengthened (positive_pole increased)
     assert!(
@@ -367,7 +473,10 @@ fn test_drive_adaptation_through_experience() {
         initial_eros_pos, final_eros_pos
     );
 
-    println!("✅ Drive adaptation verified: eros.positive_pole {:.3} → {:.3}", initial_eros_pos, final_eros_pos);
+    println!(
+        "✅ Drive adaptation verified: eros.positive_pole {:.3} → {:.3}",
+        initial_eros_pos, final_eros_pos
+    );
 }
 
 #[test]
@@ -375,33 +484,47 @@ fn test_hebbian_co_activation_tracking() {
     let conn = setup();
 
     // Create two connected holons
-    let parent = tdg_rust::db::crud::add_node(&conn, &NewNode {
-        node_type: "telos".to_string(),
-        name: "Parent telos".to_string(),
-        ..Default::default()
-    }).unwrap();
+    let parent = tdg_rust::db::crud::add_node(
+        &conn,
+        &NewNode {
+            node_type: "telos".to_string(),
+            name: "Parent telos".to_string(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
-    let child = tdg_rust::db::crud::add_node(&conn, &NewNode {
-        node_type: "observation".to_string(),
-        name: "Child observation".to_string(),
-        parent_ids: Some(vec![parent.id.clone()]),
-        ..Default::default()
-    }).unwrap();
+    let child = tdg_rust::db::crud::add_node(
+        &conn,
+        &NewNode {
+            node_type: "observation".to_string(),
+            name: "Child observation".to_string(),
+            parent_ids: Some(vec![parent.id.clone()]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     // Create an edge between them
-    let edge = tdg_rust::db::crud::add_edge(&conn, &NewEdge {
-        source_id: parent.id.clone(),
-        target_id: child.id.clone(),
-        edge_type: "DECOMPOSES_TO".to_string(),
-        ..Default::default()
-    }).unwrap();
+    let edge = tdg_rust::db::crud::add_edge(
+        &conn,
+        &NewEdge {
+            source_id: parent.id.clone(),
+            target_id: child.id.clone(),
+            edge_type: "DECOMPOSES_TO".to_string(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     // Verify co_activation_count starts at 0
-    let initial_count: i64 = conn.query_row(
-        "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
-        rusqlite::params![edge.id],
-        |r| r.get(0),
-    ).unwrap_or(0);
+    let initial_count: i64 = conn
+        .query_row(
+            "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
+            rusqlite::params![edge.id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
     assert_eq!(initial_count, 0, "co_activation_count should start at 0");
 
     // Inject catalyst from parent to child (simulates co-activation)
@@ -411,11 +534,13 @@ fn test_hebbian_co_activation_tracking() {
     }
 
     // Verify co_activation_count was incremented
-    let final_count: i64 = conn.query_row(
-        "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
-        rusqlite::params![edge.id],
-        |r| r.get(0),
-    ).unwrap_or(0);
+    let final_count: i64 = conn
+        .query_row(
+            "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
+            rusqlite::params![edge.id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     assert!(
         final_count > 0,
@@ -423,7 +548,10 @@ fn test_hebbian_co_activation_tracking() {
         final_count
     );
 
-    println!("✅ Hebbian co-activation verified: count 0 → {}", final_count);
+    println!(
+        "✅ Hebbian co-activation verified: count 0 → {}",
+        final_count
+    );
 }
 
 #[test]
@@ -431,14 +559,23 @@ fn test_synthesis_status_ladder_enforcement() {
     let conn = setup();
 
     // Create an observation (should default to ai-draft)
-    let obs = tdg_rust::db::crud::add_node(&conn, &NewNode {
-        node_type: "observation".to_string(),
-        name: "Test status ladder".to_string(),
-        ..Default::default()
-    }).unwrap();
+    let obs = tdg_rust::db::crud::add_node(
+        &conn,
+        &NewNode {
+            node_type: "observation".to_string(),
+            name: "Test status ladder".to_string(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
-    let node = tdg_rust::db::crud::get_node(&conn, &obs.id).unwrap().unwrap();
-    assert_eq!(node.synthesis_status, "ai-draft", "New node must be ai-draft");
+    let node = tdg_rust::db::crud::get_node(&conn, &obs.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        node.synthesis_status, "ai-draft",
+        "New node must be ai-draft"
+    );
 
     // Verify SynthesisStatus enum enforcement
     let status = tdg_rust::models::SynthesisStatus::from_str(&node.synthesis_status).unwrap();
@@ -457,11 +594,15 @@ fn test_g_z_does_not_collapse_for_dormant_holon() {
     let conn = setup();
 
     // Create a holon (starts dormant — no catalyst processed yet)
-    let holon = tdg_rust::db::crud::add_node(&conn, &NewNode {
-        node_type: "observation".to_string(),
-        name: "Dormant holon test".to_string(),
-        ..Default::default()
-    }).unwrap();
+    let holon = tdg_rust::db::crud::add_node(
+        &conn,
+        &NewNode {
+            node_type: "observation".to_string(),
+            name: "Dormant holon test".to_string(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     // Compute attractor field (without processing any catalyst)
     let lesser = lesser_cycle::load_state(&conn, &holon.id).unwrap();
@@ -474,8 +615,13 @@ fn test_g_z_does_not_collapse_for_dormant_holon() {
     assert!(
         h.g_z > 0.0,
         "G_z should not collapse to 0 for dormant holon. Got G_z={:.2}, A_z={:.2}, C_z={:.2}",
-        h.g_z, h.a_z, h.c_z
+        h.g_z,
+        h.a_z,
+        h.c_z
     );
 
-    println!("✅ G_z dormant holon fix verified: G_z={:.2} (not collapsed)", h.g_z);
+    println!(
+        "✅ G_z dormant holon fix verified: G_z={:.2} (not collapsed)",
+        h.g_z
+    );
 }

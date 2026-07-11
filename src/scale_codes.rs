@@ -35,18 +35,58 @@ pub const SCALE_CODES: &[(&str, &str, &str)] = &[
     ("S02", "Stellar", "Stellar / solar system scale"),
     ("S03", "Planetary", "Planetary scale"),
     ("S04", "Biospheric", "Biosphere / ecosphere scale"),
-    ("S10", "Civilizational_Bloc", "Multi-civilization bloc (e.g. 'the West', 'Global South')"),
-    ("S11", "Civilization", "A single civilization (e.g. India, China, Islam)"),
-    ("S20", "Sub_Civilizational", "Sub-civilizational region (e.g. South India, Andalusia)"),
-    ("S30", "Organizational", "Formal organization (e.g. a corporation, NGO, state)"),
-    ("S31", "Network", "Informal network (e.g. a professional community)"),
+    (
+        "S10",
+        "Civilizational_Bloc",
+        "Multi-civilization bloc (e.g. 'the West', 'Global South')",
+    ),
+    (
+        "S11",
+        "Civilization",
+        "A single civilization (e.g. India, China, Islam)",
+    ),
+    (
+        "S20",
+        "Sub_Civilizational",
+        "Sub-civilizational region (e.g. South India, Andalusia)",
+    ),
+    (
+        "S30",
+        "Organizational",
+        "Formal organization (e.g. a corporation, NGO, state)",
+    ),
+    (
+        "S31",
+        "Network",
+        "Informal network (e.g. a professional community)",
+    ),
     ("S32", "Family", "Family / kinship group"),
     ("S40", "Individual", "A single person or agent"),
-    ("S41", "Sub_Individual", "Sub-individual (e.g. an organ, a personality sub-self)"),
-    ("S50", "Artifactual", "A human-made artifact (e.g. a book, a tool, a codebase)"),
-    ("S60", "Phenomenal", "A natural phenomenon (e.g. a storm, a disease, a market crash)"),
-    ("S70", "Conceptual", "A concept or abstraction (e.g. a theory, a law, a meme)"),
-    ("S80", "Linguistic", "A linguistic unit (e.g. a word, a phrase, a grammar rule)"),
+    (
+        "S41",
+        "Sub_Individual",
+        "Sub-individual (e.g. an organ, a personality sub-self)",
+    ),
+    (
+        "S50",
+        "Artifactual",
+        "A human-made artifact (e.g. a book, a tool, a codebase)",
+    ),
+    (
+        "S60",
+        "Phenomenal",
+        "A natural phenomenon (e.g. a storm, a disease, a market crash)",
+    ),
+    (
+        "S70",
+        "Conceptual",
+        "A concept or abstraction (e.g. a theory, a law, a meme)",
+    ),
+    (
+        "S80",
+        "Linguistic",
+        "A linguistic unit (e.g. a word, a phrase, a grammar rule)",
+    ),
 ];
 
 /// Default scale code for a given node type.
@@ -57,15 +97,15 @@ pub const SCALE_CODES: &[(&str, &str, &str)] = &[
 pub fn default_scale_for_type(node_type: &str) -> Option<&'static str> {
     match node_type {
         "observation" | "insight" | "question" => Some("S40"), // Individual
-        "people" | "being" => Some("S40"), // Individual
-        "skill" | "capability" | "action" => Some("S40"), // Individual
-        "project" | "trajectory" => Some("S30"), // Organizational
-        "telos" | "value" => Some("S30"), // Organizational
+        "people" | "being" => Some("S40"),                     // Individual
+        "skill" | "capability" | "action" => Some("S40"),      // Individual
+        "project" | "trajectory" => Some("S30"),               // Organizational
+        "telos" | "value" => Some("S30"),                      // Organizational
         "hypothesis" | "synthesis" | "discovery" => Some("S70"), // Conceptual
-        "constraint" | "narrative" => Some("S70"), // Conceptual
-        "artifact" => Some("S50"), // Artifactual
-        "event" | "communication" => Some("S40"), // Individual
-        "bond" => Some("S31"), // Network
+        "constraint" | "narrative" => Some("S70"),             // Conceptual
+        "artifact" => Some("S50"),                             // Artifactual
+        "event" | "communication" => Some("S40"),              // Individual
+        "bond" => Some("S31"),                                 // Network
         _ => None,
     }
 }
@@ -96,9 +136,7 @@ pub fn validate_tetra_coord(coord: Option<i32>) -> Result<Option<i32>, String> {
     match coord {
         None => Ok(None),
         Some(v) if (1..=19).contains(&v) => Ok(Some(v)),
-        Some(v) => Err(format!(
-            "Tetra-Axes coordinate must be 1-19, got {v}"
-        )),
+        Some(v) => Err(format!("Tetra-Axes coordinate must be 1-19, got {v}")),
     }
 }
 

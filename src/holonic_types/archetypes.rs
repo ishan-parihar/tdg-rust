@@ -128,7 +128,10 @@ pub fn archetype_by_number(number: u8) -> Option<&'static Archetype> {
 
 /// Get archetypes by complex.
 pub fn archetypes_by_complex(complex: &Complex) -> Vec<&'static Archetype> {
-    ARCHETYPES.iter().filter(|a| &a.complex == complex).collect()
+    ARCHETYPES
+        .iter()
+        .filter(|a| &a.complex == complex)
+        .collect()
 }
 
 /// Get archetypes by role.
@@ -318,7 +321,12 @@ mod tests {
     #[test]
     fn archetype_numbers_are_sequential() {
         for (i, archetype) in all_archetypes().iter().enumerate() {
-            assert_eq!(archetype.number, (i + 1) as u8, "Archetype {} has wrong number", i);
+            assert_eq!(
+                archetype.number,
+                (i + 1) as u8,
+                "Archetype {} has wrong number",
+                i
+            );
         }
     }
 
@@ -372,7 +380,10 @@ mod tests {
         assert_eq!(archetype_by_number(1).unwrap().name, "Matrix of the Mind");
         assert_eq!(archetype_by_number(22).unwrap().name, "Choice");
         assert_eq!(archetype_by_number(8).unwrap().name, "Matrix of the Body");
-        assert_eq!(archetype_by_number(15).unwrap().name, "Matrix of the Spirit");
+        assert_eq!(
+            archetype_by_number(15).unwrap().name,
+            "Matrix of the Spirit"
+        );
         assert!(archetype_by_number(0).is_none());
         assert!(archetype_by_number(23).is_none());
     }

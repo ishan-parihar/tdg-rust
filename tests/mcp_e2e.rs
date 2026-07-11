@@ -2178,7 +2178,11 @@ fn e2e_maintenance_tool_gc_all_implemented() {
             .await
     });
 
-    assert!(result.is_ok(), "gc_all should succeed, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "gc_all should succeed, got: {:?}",
+        result.err()
+    );
     let response = result.unwrap();
     let v: serde_json::Value = serde_json::from_str(&response).unwrap();
     // Should include at least one of the GC report keys
@@ -2214,5 +2218,7 @@ fn e2e_maintenance_tool_no_action_or_phase() {
 
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.to_string().contains("Either 'action' or 'phase' parameter is required"));
+    assert!(err
+        .to_string()
+        .contains("Either 'action' or 'phase' parameter is required"));
 }

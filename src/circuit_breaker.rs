@@ -218,5 +218,4 @@ mod tests {
         assert!(!cb.is_tripped());
         assert_eq!(cb.failure_count(), 0);
     }
-
 }

@@ -140,9 +140,7 @@ pub fn t2_excitation_invariance(
                AND new_value LIKE '%developmental_stage%'
              ORDER BY timestamp DESC",
         )?;
-        let rows = stmt.query_map(rusqlite::params![holon_id], |row| {
-            row.get::<_, String>(0)
-        })?;
+        let rows = stmt.query_map(rusqlite::params![holon_id], |row| row.get::<_, String>(0))?;
         rows.filter_map(|r| r.ok()).collect()
     };
 
@@ -249,10 +247,14 @@ pub fn validate_type(
 
     let mut details = Vec::new();
     if !t1 {
-        details.push("T1 FAILED: observed bonding does not match type_class prediction".to_string());
+        details
+            .push("T1 FAILED: observed bonding does not match type_class prediction".to_string());
     }
     if !t2 {
-        details.push("T2 FAILED: type_class changed across stage transitions (Type⊥Stage violated)".to_string());
+        details.push(
+            "T2 FAILED: type_class changed across stage transitions (Type⊥Stage violated)"
+                .to_string(),
+        );
     }
     if !t3 {
         details.push("T3 FAILED: type_class does not persist across metabolic cycles (transient, not a type)".to_string());
@@ -300,14 +302,14 @@ pub fn check_type_stage_orthogonality(
     // Heuristic: if the type is exactly what the stage would predict,
     // flag it as potentially Stage-derived (needs manual review).
     let stage_predicted_type = match stage {
-        1 => Some("strong-acceptor"),    // Survival → needs input
-        2 => Some("weak-acceptor"),      // Identity → still receiving
-        3 => Some("sharer"),             // Power → balanced exchange
-        4 => Some("weak-donor"),         // Heart → beginning to give
-        5 => Some("sharer"),             // Rational → balanced
-        6 => Some("weak-donor"),         // Pluralistic → giving
-        7 => Some("strong-donor"),       // Integral → generous
-        8 => Some("noble-graduated"),    // Harvest → completed
+        1 => Some("strong-acceptor"), // Survival → needs input
+        2 => Some("weak-acceptor"),   // Identity → still receiving
+        3 => Some("sharer"),          // Power → balanced exchange
+        4 => Some("weak-donor"),      // Heart → beginning to give
+        5 => Some("sharer"),          // Rational → balanced
+        6 => Some("weak-donor"),      // Pluralistic → giving
+        7 => Some("strong-donor"),    // Integral → generous
+        8 => Some("noble-graduated"), // Harvest → completed
         _ => None,
     };
 
