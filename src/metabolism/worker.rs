@@ -138,6 +138,40 @@ pub fn queue_depth(conn: &Connection) -> TdgResult<i64> {
     Ok(count)
 }
 
+use std::collections::HashSet;
+use std::sync::Mutex;
+use std::sync::OnceLock;
+
+static ACTIVE_HOLONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn get_active_holons() -> &'static Mutex<HashSet<String>> {
+    ACTIVE_HOLONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Release a holon from the active set.
+pub fn release_holon(holon_id: &str) {
+    if let Ok(mut active) = get_active_holons().lock() {
+        active.remove(holon_id);
+    }
+}
+
+/// Reset/clear all active holons.
+pub fn reset_active_holons() {
+    if let Ok(mut active) = get_active_holons().lock() {
+        active.clear();
+    }
+}
+
+struct HolonActiveGuard {
+    holon_id: String,
+}
+
+impl Drop for HolonActiveGuard {
+    fn drop(&mut self) {
+        release_holon(&self.holon_id);
+    }
+}
+
 /// Claim the next available job (atomic via rowid ordering).
 ///
 /// Marks the job as "in progress" by incrementing attempts. The caller
@@ -147,56 +181,70 @@ pub fn claim_job(conn: &Connection) -> Result<Option<PendingJob>, rusqlite::Erro
     // Use a transaction to atomically claim a job
     let tx = conn.unchecked_transaction()?;
 
-    // Find the highest-priority, oldest job
-    let job = tx.query_row(
+    let mut stmt = tx.prepare(
         "SELECT id, holon_id, job_type, payload, priority, attempts, max_attempts
          FROM pending_metabolism
          WHERE attempts < max_attempts
          ORDER BY priority DESC, enqueued_at ASC
-         LIMIT 1",
-        [],
-        |row| {
+         LIMIT 500",
+    )?;
+
+    let active_set = get_active_holons();
+    let mut rows = stmt.query([])?;
+    let mut selected_job = None;
+
+    while let Some(row) = rows.next()? {
+        let holon_id: String = row.get(1)?;
+        // Lock the active set and check if this holon is already active
+        let mut active = active_set.lock().unwrap();
+        if !active.contains(&holon_id) {
+            // Claim this job!
+            active.insert(holon_id.clone());
+
             let id: i64 = row.get(0)?;
-            let holon_id: String = row.get(1)?;
             let job_type_str: String = row.get(2)?;
             let payload_str: String = row.get(3)?;
             let priority: i32 = row.get(4)?;
             let attempts: i32 = row.get(5)?;
             let max_attempts: i32 = row.get(6)?;
 
-            Ok(PendingJob {
+            selected_job = Some(PendingJob {
                 id,
                 holon_id,
                 job_type: JobType::from_str(&job_type_str).unwrap_or(JobType::LesserTick),
                 payload: serde_json::from_str(&payload_str).unwrap_or(serde_json::json!({})),
                 priority,
-                attempts,
+                attempts: attempts + 1,
                 max_attempts,
-            })
-        },
-    );
-
-    let mut job = match job {
-        Ok(j) => j,
-        Err(rusqlite::Error::QueryReturnedNoRows) => {
-            return Ok(None);
+            });
+            break;
         }
-        Err(e) => return Err(e),
-    };
+    }
 
-    // Increment attempts in DB and in the returned struct
-    tx.execute(
-        "UPDATE pending_metabolism SET attempts = attempts + 1 WHERE id = ?1",
-        rusqlite::params![job.id],
-    )?;
-    job.attempts += 1;
+    drop(rows);
+    drop(stmt);
 
-    tx.commit()?;
-    Ok(Some(job))
+    if let Some(job) = selected_job {
+        tx.execute(
+            "UPDATE pending_metabolism SET attempts = ?1 WHERE id = ?2",
+            rusqlite::params![job.attempts, job.id],
+        )?;
+        tx.commit()?;
+        Ok(Some(job))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Mark a job as complete (delete it).
 pub fn mark_done(conn: &Connection, job_id: i64) -> TdgResult<()> {
+    if let Ok(holon_id) = conn.query_row(
+        "SELECT holon_id FROM pending_metabolism WHERE id = ?1",
+        rusqlite::params![job_id],
+        |row| row.get::<_, String>(0),
+    ) {
+        release_holon(&holon_id);
+    }
     conn.execute(
         "DELETE FROM pending_metabolism WHERE id = ?1",
         rusqlite::params![job_id],
@@ -207,6 +255,7 @@ pub fn mark_done(conn: &Connection, job_id: i64) -> TdgResult<()> {
 /// Mark a job as failed. If attempts < max_attempts, it stays in the queue
 /// for retry. Otherwise, move it to failed_metabolism.
 pub fn mark_failed(conn: &Connection, job: &PendingJob, error: &str) -> TdgResult<()> {
+    release_holon(&job.holon_id);
     if job.attempts >= job.max_attempts {
         // Move to failed_metabolism table
         let now = crate::db::crud::now_iso();
@@ -798,6 +847,10 @@ impl MetabolismWorker {
                     }
                 };
 
+                let _guard = HolonActiveGuard {
+                    holon_id: job.holon_id.clone(),
+                };
+
                 // Execute the job
                 match execute_job(&conn, &job) {
                     Ok(()) => {
@@ -866,6 +919,7 @@ mod tests {
     use rusqlite::Connection;
 
     fn setup_db() -> Connection {
+        reset_active_holons();
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
         init_fts(&conn).unwrap();
@@ -1205,5 +1259,54 @@ mod tests {
 
         mark_done(&conn, job.id).unwrap();
         assert_eq!(queue_depth(&conn).unwrap(), 1); // one still pending
+    }
+
+    #[test]
+    fn test_concurrent_holon_claims_prevented() {
+        let conn = setup_db();
+
+        let node = crate::db::crud::add_node(
+            &conn,
+            &NewNode {
+                node_type: "observation".to_string(),
+                name: "Test Concurrent".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // Enqueue two jobs for the same holon node
+        enqueue_job(
+            &conn,
+            &node.id,
+            JobType::LesserTick,
+            serde_json::json!({}),
+            PRIORITY_NORMAL,
+        )
+        .unwrap();
+        enqueue_job(
+            &conn,
+            &node.id,
+            JobType::RecomputeAttractor,
+            serde_json::json!({}),
+            PRIORITY_LOW,
+        )
+        .unwrap();
+
+        // First claim should succeed and lock the holon node.
+        let job1 = claim_job(&conn).unwrap().expect("should claim first job");
+        assert_eq!(job1.holon_id, node.id);
+
+        // Second claim for the same holon node should skip and return None since it is active.
+        let job2 = claim_job(&conn).unwrap();
+        assert!(job2.is_none(), "Expected second claim to be None because holon is active");
+
+        // Mark the first job done. This deletes the job from database and releases the holon.
+        mark_done(&conn, job1.id).unwrap();
+
+        // Now claim should succeed for the second job.
+        let job3 = claim_job(&conn).unwrap().expect("should claim second job after release");
+        assert_eq!(job3.holon_id, node.id);
+        assert_eq!(job3.job_type, JobType::RecomputeAttractor);
     }
 }

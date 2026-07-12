@@ -317,9 +317,23 @@ pub fn write_mind_state_file(
     let state_path = cfg.state_dir.join("tdg-mind-snapshot.json");
     std::fs::create_dir_all(&cfg.state_dir)?;
     // G31 fix: atomic write (temp file + rename) to prevent corruption on crash.
-    let tmp_path = state_path.with_extension("json.tmp");
-    std::fs::write(&tmp_path, serde_json::to_string_pretty(&state)?)?;
-    std::fs::rename(&tmp_path, &state_path)?;
+    // Use unique filename per process/thread to avoid concurrency collisions.
+    let pid = std::process::id();
+    let thread_id = format!("{:?}", std::thread::current().id())
+        .replace("ThreadId(", "")
+        .replace(")", "");
+    let tmp_path = cfg.state_dir.join(format!("tdg-mind-snapshot-{pid}-{thread_id}.tmp"));
+    
+    let res = std::fs::write(&tmp_path, serde_json::to_string_pretty(&state)?);
+    if res.is_ok() {
+        if let Err(e) = std::fs::rename(&tmp_path, &state_path) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(crate::error::TdgError::from(e));
+        }
+    } else {
+        let _ = std::fs::remove_file(&tmp_path);
+        res?;
+    }
     Ok(())
 }
 

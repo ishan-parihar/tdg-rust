@@ -621,10 +621,12 @@ fn build_contribution(parent_state: &FlowDriveState, flow_rate: f64) -> FlowDriv
 /// Traverses the graph BFS, propagating signed drive contributions.
 /// Returns the number of nodes affected.
 pub fn emit_downward(conn: &Connection, parent_id: &str, max_depth: i64) -> TdgResult<i64> {
-    let parent = get_node(conn, parent_id)?
+    let tx = conn.unchecked_transaction()?;
+
+    let parent = get_node(&tx, parent_id)?
         .ok_or_else(|| crate::error::TdgError::Custom(format!("Node {parent_id} not found")))?;
 
-    let parent_state = load_drive_state(conn, &parent);
+    let parent_state = load_drive_state(&tx, &parent);
     let mut affected: i64 = 0;
 
     let downward_types = downward_edge_types();
@@ -642,7 +644,7 @@ pub fn emit_downward(conn: &Connection, parent_id: &str, max_depth: i64) -> TdgR
     // such a node would be processed twice with different parent_drive_state
     // values, producing non-deterministic drive recomputation and duplicate
     // `drive_recomputed` events.
-    let children = get_children_for_emission(conn, parent_id, &downward_types, &reversed_types)?;
+    let children = get_children_for_emission(&tx, parent_id, &downward_types, &reversed_types)?;
     for child_id in children {
         if visited.insert(child_id.clone()) {
             queue.push_back((child_id, 1, parent_id.to_string(), parent_state.clone()));
@@ -655,14 +657,14 @@ pub fn emit_downward(conn: &Connection, parent_id: &str, max_depth: i64) -> TdgR
             continue;
         }
 
-        if let Some(child) = get_node(conn, &current_id)? {
-            let child_state = load_drive_state(conn, &child);
+        if let Some(child) = get_node(&tx, &current_id)? {
+            let child_state = load_drive_state(&tx, &child);
             let intrinsic = FlowDriveState::intrinsic(&child.node_type);
 
-            let edge_type_str = get_edge_type_for_edge(conn, &immediate_parent_id, &current_id)?;
+            let edge_type_str = get_edge_type_for_edge(&tx, &immediate_parent_id, &current_id)?;
             if !contributes_to_polarity(&edge_type_str) {
                 let grandchildren =
-                    get_children_for_emission(conn, &current_id, &downward_types, &reversed_types)?;
+                    get_children_for_emission(&tx, &current_id, &downward_types, &reversed_types)?;
                 for gc in grandchildren {
                     if !visited.contains(&gc) {
                         visited.insert(gc.clone());
@@ -677,7 +679,7 @@ pub fn emit_downward(conn: &Connection, parent_id: &str, max_depth: i64) -> TdgR
                 continue;
             }
 
-            let mut flow_rate = get_flow_rate_for_edge(conn, &immediate_parent_id, &current_id)?;
+            let mut flow_rate = get_flow_rate_for_edge(&tx, &immediate_parent_id, &current_id)?;
             if edge_type_str == "BLOCKS" {
                 flow_rate = -flow_rate.abs();
             } else if edge_type_str == "CONTRADICTS" {
@@ -687,10 +689,10 @@ pub fn emit_downward(conn: &Connection, parent_id: &str, max_depth: i64) -> TdgR
             let contribution = build_contribution(&parent_drive_state, flow_rate);
             let new_state = receive_stabilize(&child_state, &intrinsic, &contribution);
 
-            store_drive_state(conn, &current_id, &new_state)?;
+            store_drive_state(&tx, &current_id, &new_state)?;
 
             let _ = record_event(
-                conn,
+                &tx,
                 "drive_recomputed",
                 Some(&current_id),
                 None,
@@ -701,7 +703,7 @@ pub fn emit_downward(conn: &Connection, parent_id: &str, max_depth: i64) -> TdgR
             affected += 1;
 
             let grandchildren =
-                get_children_for_emission(conn, &current_id, &downward_types, &reversed_types)?;
+                get_children_for_emission(&tx, &current_id, &downward_types, &reversed_types)?;
             for gc in grandchildren {
                 if !visited.contains(&gc) {
                     visited.insert(gc.clone());
@@ -711,6 +713,7 @@ pub fn emit_downward(conn: &Connection, parent_id: &str, max_depth: i64) -> TdgR
         }
     }
 
+    tx.commit()?;
     Ok(affected)
 }
 
@@ -811,8 +814,10 @@ fn get_edge_type_for_edge(
 ///
 /// Returns the number of parents updated.
 pub fn aggregate_upward(conn: &Connection, node_id: &str) -> TdgResult<i64> {
+    let tx = conn.unchecked_transaction()?;
+
     // Find all parent edges (incoming to this node)
-    let incoming = get_edges(conn, None, Some(node_id), None, None, 500)?;
+    let incoming = get_edges(&tx, None, Some(node_id), None, None, 500)?;
     let mut parent_ids: Vec<String> = Vec::new();
 
     for e in &incoming {
@@ -828,18 +833,18 @@ pub fn aggregate_upward(conn: &Connection, node_id: &str) -> TdgResult<i64> {
     let mut updated_parents = 0;
 
     for pid in &parent_ids {
-        if let Some(parent) = get_node(conn, pid)? {
-            let parent_state = load_drive_state(conn, &parent);
+        if let Some(parent) = get_node(&tx, pid)? {
+            let parent_state = load_drive_state(&tx, &parent);
             let intrinsic = FlowDriveState::intrinsic(&parent.node_type);
 
             // Get all children of this parent
-            let child_edges = get_edges(conn, Some(pid), None, None, None, 500)?;
+            let child_edges = get_edges(&tx, Some(pid), None, None, None, 500)?;
             let mut child_states: Vec<FlowDriveState> = Vec::new();
 
             for ce in &child_edges {
                 if contributes_to_polarity(&ce.edge_type) {
-                    if let Some(child) = get_node(conn, &ce.target_id)? {
-                        let child_state = load_drive_state(conn, &child);
+                    if let Some(child) = get_node(&tx, &ce.target_id)? {
+                        let child_state = load_drive_state(&tx, &child);
                         child_states.push(child_state);
                     }
                 }
@@ -879,11 +884,12 @@ pub fn aggregate_upward(conn: &Connection, node_id: &str) -> TdgResult<i64> {
                 communion: blend_drives(&parent_state.communion, &blended.communion, 0.7),
             };
 
-            store_drive_state(conn, pid, &final_state)?;
+            store_drive_state(&tx, pid, &final_state)?;
             updated_parents += 1;
         }
     }
 
+    tx.commit()?;
     Ok(updated_parents)
 }
 

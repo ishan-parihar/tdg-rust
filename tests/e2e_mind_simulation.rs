@@ -26,6 +26,7 @@ use tdg_rust::mind::reflect_engine::ReflectEngine;
 use tdg_rust::models::{NewEdge, NewNode};
 
 fn setup() -> Connection {
+    tdg_rust::metabolism::worker::reset_active_holons();
     let conn = Connection::open_in_memory().unwrap();
     init_schema(&conn).unwrap();
     init_fts(&conn).unwrap();
@@ -39,7 +40,7 @@ fn tick_holon(conn: &Connection, holon_id: &str, catalyst: f64, source: &str) {
         "source": source,
         "source_holon": source,
     });
-    let job_id = enqueue_job(
+    let _job_id = enqueue_job(
         conn,
         holon_id,
         JobType::CatalystInjection,
@@ -54,7 +55,7 @@ fn tick_holon(conn: &Connection, holon_id: &str, catalyst: f64, source: &str) {
 
 fn tick_until_dormant(conn: &Connection, holon_id: &str, max_ticks: usize) {
     for _ in 0..max_ticks {
-        let job_id = enqueue_job(
+        let _job_id = enqueue_job(
             conn,
             holon_id,
             JobType::LesserTick,
@@ -228,7 +229,7 @@ fn test_full_agent_mind_flow() {
 
     // The digestion engine should create hypotheses from 3+ similar observations
     let digestion = tdg_rust::digestion::DigestionEngine::new(&conn);
-    let hypotheses = digestion.check_upward_cascade().unwrap();
+    let _hypotheses = digestion.check_upward_cascade().unwrap();
 
     // With 5 observations sharing entities, digestion should fire
     // (at least 3 sharing the same entity source)
@@ -251,7 +252,7 @@ fn test_full_agent_mind_flow() {
     // ═══════════════════════════════════════════════════════════════════════
 
     let reflect = ReflectEngine::new(&conn);
-    let result = reflect.run().unwrap();
+    let _result = reflect.run().unwrap();
 
     // With 5 observations mentioning entities, reflect should find clusters
     // Note: reflect requires 3+ observations sharing 2+ MENTIONS entities.
