@@ -2740,6 +2740,14 @@ impl TdgServer {
                     report.insert("edges_created".to_string(), json!(linker_report.edges_created));
                     report.insert("dry_run".to_string(), json!(linker_report.dry_run));
                 }
+                "prune_noise" => {
+                    let janitor = crate::maintenance::Janitor::new(&conn);
+                    let prune_report = janitor.prune_noise(dry_run).map_err(mcp_err)?;
+                    report.insert("weak_mentions_pruned".to_string(), json!(prune_report.weak_mentions_pruned));
+                    report.insert("duplicate_edges_pruned".to_string(), json!(prune_report.duplicate_edges_pruned));
+                    report.insert("dangling_edges_pruned".to_string(), json!(prune_report.dangling_edges_pruned));
+                    report.insert("dry_run".to_string(), json!(prune_report.dry_run));
+                }
                 "all" => {
                     // Run all maintenance actions
                     let hygiene = crate::knowledge::generate_hygiene_report(&conn).map_err(mcp_err)?;
@@ -2854,7 +2862,7 @@ impl TdgServer {
                 _ => {
                     return Err(McpError::invalid_params(
                         format!(
-                            "Unknown action '{}'. Valid actions: rebuild_fts, rebuild_embeddings, health, archive, enrich, align_data, link_orphans, gc_nodes, gc_edges, gc_all, all",
+                            "Unknown action '{}'. Valid actions: rebuild_fts, rebuild_embeddings, health, archive, enrich, align_data, link_orphans, prune_noise, gc_nodes, gc_edges, gc_all, all",
                             action_str
                         ),
                         None,

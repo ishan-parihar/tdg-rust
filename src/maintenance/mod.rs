@@ -8,12 +8,14 @@
 pub mod archiver;
 pub mod enricher;
 pub mod janitor;
+pub mod linker;
 pub mod monitor;
 pub mod orchestrator;
 
 pub use archiver::{Archiver, ArchiverReport};
 pub use enricher::{Enricher, EnricherReport};
-pub use janitor::{Janitor, JanitorReport};
+pub use janitor::{Janitor, JanitorReport, PruneNoiseReport};
+pub use linker::{link_orphans, LinkerReport};
 pub use monitor::{HealthMonitor, HealthReport};
 pub use orchestrator::{SelfManager, SelfManagerReport};
 

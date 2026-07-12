@@ -2229,6 +2229,44 @@ fn e2e_maintenance_tool_link_orphans() {
 }
 
 #[test]
+fn e2e_maintenance_tool_prune_noise() {
+    let pool = make_pool();
+    let n1 = add_node(&pool, "observation", "Node One");
+    let n2 = add_node(&pool, "observation", "Node Two");
+    
+    // Create weak mentions edge with no evidence
+    pool.with_connection(|conn| {
+        conn.execute(
+            "INSERT INTO edges (id, source_id, target_id, edge_type, weight, co_activation_count, created_at, updated_at)
+             VALUES ('e_weak', ?1, ?2, 'MENTIONS', 0.2, 0, datetime('now'), datetime('now'))",
+            rusqlite::params![n1, n2],
+        )?;
+        Ok(())
+    }).unwrap();
+
+    let server = tdg_rust::mcp::tools::TdgServer::new(pool);
+    let params = tdg_rust::mcp::params::MaintenanceParams {
+        action: Some("prune_noise".to_string()),
+        batch_size: None,
+        phase: None,
+        dry_run: Some(false),
+    };
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(async {
+        server
+            .tdg_maintenance(rmcp::handler::server::wrapper::Parameters(params))
+            .await
+    });
+
+    assert!(result.is_ok());
+    let response: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+    assert_eq!(response["weak_mentions_pruned"].as_i64().unwrap(), 1);
+    assert_eq!(response["duplicate_edges_pruned"].as_i64().unwrap(), 0);
+    assert_eq!(response["dangling_edges_pruned"].as_i64().unwrap(), 0);
+}
+
+#[test]
 fn e2e_maintenance_tool_no_action_or_phase() {
     let pool = make_pool();
     add_node(&pool, "observation", "Test Node");

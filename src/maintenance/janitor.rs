@@ -413,7 +413,132 @@ impl<'a> Janitor<'a> {
             Err(e) => warn!("Failed to purge health_checks: {}", e),
         }
     }
+
+    /// Prune noise edges: weak MENTIONS edges (weight < 0.3) with no supporting
+    /// evidence, duplicate active edges (same src, tgt, type), and dangling edges
+    /// pointing to archived/missing nodes.
+    pub fn prune_noise(&self, dry_run: bool) -> Result<PruneNoiseReport> {
+        crate::db::crud::check_circuit_breaker_pub()?;
+        let _guard = crate::db::crud::acquire_write_guard_pub(self.conn)?;
+
+        let mut report = PruneNoiseReport {
+            weak_mentions_pruned: 0,
+            duplicate_edges_pruned: 0,
+            dangling_edges_pruned: 0,
+            dry_run,
+            timestamp: Utc::now().to_rfc3339(),
+        };
+
+        info!("Janitor: starting prune_noise (dry_run={})", dry_run);
+
+        // 1. Dangling Edges
+        let dangling_ids: Vec<String> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT e.id FROM edges e
+                 WHERE e.valid_to IS NULL
+                   AND (
+                       NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = e.source_id AND n.valid_to IS NULL AND n.lifecycle_state != 'archived')
+                       OR NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = e.target_id AND n.valid_to IS NULL AND n.lifecycle_state != 'archived')
+                   )",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        report.dangling_edges_pruned = dangling_ids.len() as i64;
+
+        // 2. Duplicate Edges
+        let duplicate_ids: Vec<String> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT e1.id FROM edges e1
+                 WHERE e1.valid_to IS NULL
+                   AND EXISTS (
+                       SELECT 1 FROM edges e2
+                       WHERE e1.source_id = e2.source_id
+                         AND e1.target_id = e2.target_id
+                         AND e1.edge_type = e2.edge_type
+                         AND e2.valid_to IS NULL
+                         AND (e1.created_at < e2.created_at OR (e1.created_at = e2.created_at AND e1.rowid < e2.rowid))
+                   )",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        report.duplicate_edges_pruned = duplicate_ids.len() as i64;
+
+        // 3. Weak MENTIONS Edges
+        let weak_ids: Vec<String> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT e1.id FROM edges e1
+                 WHERE e1.valid_to IS NULL
+                   AND e1.edge_type = 'MENTIONS'
+                   AND e1.weight < 0.3
+                   AND COALESCE(e1.co_activation_count, 0) = 0
+                   AND NOT EXISTS (
+                       SELECT 1 FROM edges e2
+                       WHERE e2.valid_to IS NULL
+                         AND e2.edge_type != 'MENTIONS'
+                         AND (
+                             (e2.source_id = e1.source_id AND e2.target_id = e1.target_id)
+                             OR (e2.source_id = e1.target_id AND e2.target_id = e1.source_id)
+                         )
+                   )",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        report.weak_mentions_pruned = weak_ids.len() as i64;
+
+        if !dry_run {
+            let now = Utc::now().to_rfc3339();
+            
+            // Soft-delete dangling
+            for id in &dangling_ids {
+                let _ = self.conn.execute(
+                    "UPDATE edges SET valid_to = ?1 WHERE id = ?2",
+                    rusqlite::params![&now, id],
+                );
+            }
+
+            // Soft-delete duplicates
+            for id in &duplicate_ids {
+                let _ = self.conn.execute(
+                    "UPDATE edges SET valid_to = ?1 WHERE id = ?2",
+                    rusqlite::params![&now, id],
+                );
+            }
+
+            // Soft-delete weak mentions
+            for id in &weak_ids {
+                let _ = self.conn.execute(
+                    "UPDATE edges SET valid_to = ?1 WHERE id = ?2",
+                    rusqlite::params![&now, id],
+                );
+            }
+
+            info!(
+                "Janitor: prune_noise completed. Pruned: {} dangling, {} duplicates, {} weak mentions",
+                report.dangling_edges_pruned, report.duplicate_edges_pruned, report.weak_mentions_pruned
+            );
+        } else {
+            info!(
+                "Janitor [dry-run]: prune_noise would prune: {} dangling, {} duplicates, {} weak mentions",
+                report.dangling_edges_pruned, report.duplicate_edges_pruned, report.weak_mentions_pruned
+            );
+        }
+
+        Ok(report)
+    }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneNoiseReport {
+    pub weak_mentions_pruned: i64,
+    pub duplicate_edges_pruned: i64,
+    pub dangling_edges_pruned: i64,
+    pub dry_run: bool,
+    pub timestamp: String,
+}
+
 
 fn report_summary(report: &JanitorReport) -> String {
     let mut parts = Vec::new();
@@ -449,4 +574,123 @@ fn report_summary(report: &JanitorReport) -> String {
     }
     let mode = if report.dry_run { "DRY RUN" } else { "APPLIED" };
     format!("[{}] {}", mode, parts.join("; "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn setup_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::init_schema(&conn).unwrap();
+        crate::db::init_fts(&conn).unwrap();
+        crate::db::run_migrations(&conn).unwrap();
+        conn
+    }
+
+    fn insert_node(conn: &Connection, id: &str, name: &str) {
+        conn.execute(
+            "INSERT INTO nodes (id, node_type, name, lifecycle_state, created_at, updated_at)
+             VALUES (?1, 'observation', ?2, 'active', datetime('now'), datetime('now'))",
+            rusqlite::params![id, name],
+        )
+        .unwrap();
+    }
+
+    fn insert_edge(conn: &Connection, id: &str, src: &str, tgt: &str, edge_type: &str, weight: f64, co_activation: i64) {
+        conn.execute(
+            "INSERT INTO edges (id, source_id, target_id, edge_type, weight, co_activation_count, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'), datetime('now'))",
+            rusqlite::params![id, src, tgt, edge_type, weight, co_activation],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_prune_noise_dangling() {
+        let conn = setup_db();
+        insert_node(&conn, "n1", "Node 1");
+        insert_node(&conn, "n2", "Node 2");
+        insert_edge(&conn, "e1", "n1", "n2", "MENTIONS", 0.5, 0);
+
+        // Archive n2 to make the edge e1 dangling
+        conn.execute(
+            "UPDATE nodes SET lifecycle_state = 'archived' WHERE id = 'n2'",
+            [],
+        ).unwrap();
+
+        let janitor = Janitor::new(&conn);
+        let report = janitor.prune_noise(false).unwrap();
+        assert_eq!(report.dangling_edges_pruned, 1);
+        assert_eq!(report.weak_mentions_pruned, 0);
+        assert_eq!(report.duplicate_edges_pruned, 0);
+
+        // Verify soft-deleted
+        let valid_to: Option<String> = conn
+            .query_row("SELECT valid_to FROM edges WHERE id = 'e1'", [], |r| r.get(0))
+            .unwrap();
+        assert!(valid_to.is_some());
+    }
+
+    #[test]
+    fn test_prune_noise_duplicates() {
+        let conn = setup_db();
+        insert_node(&conn, "n1", "Node 1");
+        insert_node(&conn, "n2", "Node 2");
+
+        // Insert duplicate edges (same src, tgt, type).
+        conn.execute(
+            "INSERT INTO edges (id, source_id, target_id, edge_type, created_at)
+             VALUES ('e1', 'n1', 'n2', 'MENTIONS', '2025-01-15T10:00:00Z')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO edges (id, source_id, target_id, edge_type, created_at)
+             VALUES ('e2', 'n1', 'n2', 'MENTIONS', '2025-01-15T11:00:00Z')",
+            [],
+        ).unwrap();
+
+        let janitor = Janitor::new(&conn);
+        let report = janitor.prune_noise(false).unwrap();
+        // e1 should be pruned as it's older than e2
+        assert_eq!(report.duplicate_edges_pruned, 1);
+
+        let e1_valid: Option<String> = conn
+            .query_row("SELECT valid_to FROM edges WHERE id = 'e1'", [], |r| r.get(0))
+            .unwrap();
+        let e2_valid: Option<String> = conn
+            .query_row("SELECT valid_to FROM edges WHERE id = 'e2'", [], |r| r.get(0))
+            .unwrap();
+        assert!(e1_valid.is_some(), "older duplicate should be soft-deleted");
+        assert!(e2_valid.is_none(), "newer duplicate should remain active");
+    }
+
+    #[test]
+    fn test_prune_noise_weak_mentions() {
+        let conn = setup_db();
+        insert_node(&conn, "n1", "Node 1");
+        insert_node(&conn, "n2", "Node 2");
+        insert_node(&conn, "n3", "Node 3");
+
+        // e1: weak MENTIONS with no supporting evidence
+        insert_edge(&conn, "e1", "n1", "n2", "MENTIONS", 0.25, 0);
+
+        // e2: weak MENTIONS but with supporting RELATES_TO edge e3
+        insert_edge(&conn, "e2", "n1", "n3", "MENTIONS", 0.25, 0);
+        insert_edge(&conn, "e3", "n1", "n3", "RELATES_TO", 0.8, 0);
+
+        let janitor = Janitor::new(&conn);
+        let report = janitor.prune_noise(false).unwrap();
+        assert_eq!(report.weak_mentions_pruned, 1);
+
+        let e1_valid: Option<String> = conn
+            .query_row("SELECT valid_to FROM edges WHERE id = 'e1'", [], |r| r.get(0))
+            .unwrap();
+        let e2_valid: Option<String> = conn
+            .query_row("SELECT valid_to FROM edges WHERE id = 'e2'", [], |r| r.get(0))
+            .unwrap();
+        assert!(e1_valid.is_some(), "unsupported weak mention should be pruned");
+        assert!(e2_valid.is_none(), "supported weak mention should not be pruned");
+    }
 }

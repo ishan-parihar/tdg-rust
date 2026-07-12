@@ -84,6 +84,18 @@ enum Commands {
     MaintenanceCheck,
     /// Repair orphan nodes (link or archive)
     RepairOrphans,
+    /// Semantically link orphan nodes back into the graph
+    LinkOrphans {
+        /// Dry-run mode: report links without creating them
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Prune weak mentions, duplicate edges, and dangling edges
+    PruneNoise {
+        /// Dry-run mode: report noise without pruning
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Embed nodes using ONNX model
     Embed {
         /// Rebuild all embeddings from scratch
@@ -336,6 +348,41 @@ fn main() -> anyhow::Result<()> {
             )?;
             let result = pool.with_connection(scripts::repair_orphans)?;
             println!("{}", serde_json::to_string_pretty(&result)?);
+            pool.close();
+        }
+        Commands::LinkOrphans { dry_run } => {
+            let pool = ConnectionPool::new(
+                config
+                    .db_path
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?,
+                5,
+                30000,
+            )?;
+            let report = pool.with_connection(|conn| {
+                tdg_rust::maintenance::link_orphans(conn, dry_run).map_err(|e| {
+                    tdg_rust::error::TdgError::Custom(e.to_string())
+                })
+            })?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            pool.close();
+        }
+        Commands::PruneNoise { dry_run } => {
+            let pool = ConnectionPool::new(
+                config
+                    .db_path
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?,
+                5,
+                30000,
+            )?;
+            let report = pool.with_connection(|conn| {
+                let janitor = tdg_rust::maintenance::Janitor::new(conn);
+                janitor.prune_noise(dry_run).map_err(|e| {
+                    tdg_rust::error::TdgError::Custom(e.to_string())
+                })
+            })?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
             pool.close();
         }
         #[cfg(feature = "onnx")]

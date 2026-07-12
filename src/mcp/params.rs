@@ -218,7 +218,7 @@ pub struct GetRelatedParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MaintenanceParams {
     #[schemars(
-        description = "Action: rebuild_fts, rebuild_embeddings, gc_nodes, gc_edges, gc_all, health, enrich, align_data, link_orphans"
+        description = "Action: rebuild_fts, rebuild_embeddings, gc_nodes, gc_edges, gc_all, health, enrich, align_data, link_orphans, prune_noise"
     )]
     pub action: Option<String>,
     #[schemars(description = "Batch size for operations (default 500)")]
