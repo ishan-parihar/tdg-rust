@@ -343,6 +343,20 @@ pub mod gguf {
             .clone())
     }
 
+    /// Ensure the GGUF model is loaded, auto-initializing from the default path
+    /// if the cache is empty. Mirrors the ONNX lazy-init pattern.
+    fn ensure_gguf_initialized() -> TdgResult<()> {
+        let cache = get_model()?;
+        let guard = cache
+            .lock()
+            .map_err(|e| TdgError::Custom(format!("GGUF lock poisoned: {e}")))?;
+        if guard.is_none() {
+            drop(guard);
+            init(None)?;
+        }
+        Ok(())
+    }
+
     pub fn init(model_path: Option<&str>) -> TdgResult<()> {
         let path = model_path.map(String::from).unwrap_or_else(|| {
             std::env::var("TDG_GGUF_MODEL_PATH").unwrap_or_else(|_| {
@@ -369,16 +383,7 @@ pub mod gguf {
     pub fn embed(text: &str) -> TdgResult<EmbeddingResult> {
         // Auto-initialize if the model cache is empty, mirroring the ONNX
         // lazy-init pattern (onnx_impl::embed, line ~183).
-        {
-            let cache = get_model()?;
-            let guard = cache
-                .lock()
-                .map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
-            if guard.is_none() {
-                drop(guard);
-                init(None)?;
-            }
-        }
+        ensure_gguf_initialized()?;
 
         let cache = get_model()?;
         let guard = cache
@@ -412,16 +417,7 @@ pub mod gguf {
     pub fn embed_batch(texts: &[&str]) -> TdgResult<Vec<EmbeddingResult>> {
         // Auto-initialize if the model cache is empty, mirroring the ONNX
         // lazy-init pattern (onnx_impl::embed, line ~183).
-        {
-            let cache = get_model()?;
-            let guard = cache
-                .lock()
-                .map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
-            if guard.is_none() {
-                drop(guard);
-                init(None)?;
-            }
-        }
+        ensure_gguf_initialized()?;
 
         let cache = get_model()?;
         let guard = cache
