@@ -32,6 +32,14 @@ pub fn rebuild_fts(conn: &Connection) -> TdgResult<()> {
 /// Mirrors `migrate()`, `migrate_v3()`, `migrate_v4()` from `core/graph_db.py`.
 /// Uses `ALTER TABLE ... ADD COLUMN` wrapped in try-continue for safety.
 pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
+    // Drop the legacy unique index if it exists and recreate it limited to active entity nodes
+    // to bypass unique constraint failures on duplicate events or legacy skill nodes in existing DBs.
+    conn.execute_batch("DROP INDEX IF EXISTS idx_nodes_name_type_active").ok();
+    conn.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_name_type_active \
+         ON nodes(name, node_type) WHERE valid_to IS NULL AND node_type = 'entity'",
+    )?;
+
     // Phase 1: Add missing columns to nodes
     let migrate_columns = [
         ("nodes", "parent_ids", "TEXT DEFAULT '[]'"),
@@ -362,7 +370,7 @@ CREATE INDEX IF NOT EXISTS idx_nodes_agent_id ON nodes(agent_id);
 -- The partial index (WHERE valid_to IS NULL) allows archived/deleted nodes
 -- to share names with active ones.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_name_type_active
-    ON nodes(name, node_type) WHERE valid_to IS NULL;
+    ON nodes(name, node_type) WHERE valid_to IS NULL AND node_type = 'entity';
 
 -- Indexes for edges
 CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
