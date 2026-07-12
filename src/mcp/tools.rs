@@ -2696,6 +2696,7 @@ impl TdgServer {
         };
 
         let action_str = normalized_action.to_string();
+        let dry_run = params.dry_run.unwrap_or(false);
         run_blocking(move || {
             let conn = get_conn(&pool)?;
             let mut report = serde_json::Map::new();
@@ -2732,6 +2733,12 @@ impl TdgServer {
                     report.insert("parents_enriched".to_string(), json!(enricher_report.parents_enriched));
                     report.insert("embeddings_enriched".to_string(), json!(enricher_report.embeddings_enriched));
                     report.insert("embeddings_failed".to_string(), json!(enricher_report.embeddings_failed));
+                }
+                "link_orphans" => {
+                    let linker_report = crate::maintenance::link_orphans(&conn, dry_run).map_err(mcp_err)?;
+                    report.insert("orphans_found".to_string(), json!(linker_report.orphans_found));
+                    report.insert("edges_created".to_string(), json!(linker_report.edges_created));
+                    report.insert("dry_run".to_string(), json!(linker_report.dry_run));
                 }
                 "all" => {
                     // Run all maintenance actions
@@ -2847,7 +2854,7 @@ impl TdgServer {
                 _ => {
                     return Err(McpError::invalid_params(
                         format!(
-                            "Unknown action '{}'. Valid actions: rebuild_fts, rebuild_embeddings, health, archive, enrich, align_data, gc_nodes, gc_edges, gc_all, all",
+                            "Unknown action '{}'. Valid actions: rebuild_fts, rebuild_embeddings, health, archive, enrich, align_data, link_orphans, gc_nodes, gc_edges, gc_all, all",
                             action_str
                         ),
                         None,

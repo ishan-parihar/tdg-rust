@@ -218,13 +218,15 @@ pub struct GetRelatedParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MaintenanceParams {
     #[schemars(
-        description = "Action: rebuild_fts, rebuild_embeddings, gc_nodes, gc_edges, gc_all, health, enrich, align_data"
+        description = "Action: rebuild_fts, rebuild_embeddings, gc_nodes, gc_edges, gc_all, health, enrich, align_data, link_orphans"
     )]
     pub action: Option<String>,
     #[schemars(description = "Batch size for operations (default 500)")]
     pub batch_size: Option<i64>,
     #[schemars(description = "Deprecated: use 'action' instead")]
     pub phase: Option<String>,
+    #[schemars(description = "Dry run mode (default: false)")]
+    pub dry_run: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

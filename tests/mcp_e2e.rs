@@ -2089,6 +2089,7 @@ fn e2e_maintenance_tool_rebuild_fts() {
         action: Some("rebuild_fts".to_string()),
         batch_size: None,
         phase: None,
+        dry_run: None,
     };
 
     // Use tokio runtime for async test
@@ -2115,6 +2116,7 @@ fn e2e_maintenance_tool_health() {
         action: Some("health".to_string()),
         batch_size: None,
         phase: None,
+        dry_run: None,
     };
 
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -2142,6 +2144,7 @@ fn e2e_maintenance_tool_phase_fallback() {
         action: None,
         batch_size: None,
         phase: Some("health".to_string()),
+        dry_run: None,
     };
 
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -2169,6 +2172,7 @@ fn e2e_maintenance_tool_gc_all_implemented() {
         action: Some("gc_all".to_string()),
         batch_size: None,
         phase: None,
+        dry_run: None,
     };
 
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -2197,6 +2201,34 @@ fn e2e_maintenance_tool_gc_all_implemented() {
 }
 
 #[test]
+fn e2e_maintenance_tool_link_orphans() {
+    let pool = make_pool();
+    // Insert two nodes that should link semantically/temporally
+    add_node_with_desc(&pool, "observation", "Test Node", "This is about data processing");
+    add_node_with_desc(&pool, "action", "Test Node", "This is about data processing");
+
+    let server = tdg_rust::mcp::tools::TdgServer::new(pool);
+    let params = tdg_rust::mcp::params::MaintenanceParams {
+        action: Some("link_orphans".to_string()),
+        batch_size: None,
+        phase: None,
+        dry_run: Some(false),
+    };
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(async {
+        server
+            .tdg_maintenance(rmcp::handler::server::wrapper::Parameters(params))
+            .await
+    });
+
+    assert!(result.is_ok());
+    let response: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+    assert!(response["orphans_found"].as_i64().unwrap() >= 2);
+    assert!(response["edges_created"].as_i64().unwrap() >= 2);
+}
+
+#[test]
 fn e2e_maintenance_tool_no_action_or_phase() {
     let pool = make_pool();
     add_node(&pool, "observation", "Test Node");
@@ -2207,6 +2239,7 @@ fn e2e_maintenance_tool_no_action_or_phase() {
         action: None,
         batch_size: None,
         phase: None,
+        dry_run: None,
     };
 
     let rt = tokio::runtime::Runtime::new().unwrap();
