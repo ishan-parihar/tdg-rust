@@ -225,12 +225,18 @@ pub fn claim_job(conn: &Connection) -> Result<Option<PendingJob>, rusqlite::Erro
     drop(stmt);
 
     if let Some(job) = selected_job {
-        tx.execute(
+        let res = tx.execute(
             "UPDATE pending_metabolism SET attempts = ?1 WHERE id = ?2",
             rusqlite::params![job.attempts, job.id],
-        )?;
-        tx.commit()?;
-        Ok(Some(job))
+        ).and_then(|_| tx.commit());
+
+        match res {
+            Ok(()) => Ok(Some(job)),
+            Err(e) => {
+                release_holon(&job.holon_id);
+                Err(e)
+            }
+        }
     } else {
         Ok(None)
     }

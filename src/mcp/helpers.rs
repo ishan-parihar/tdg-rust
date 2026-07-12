@@ -49,25 +49,12 @@ pub(crate) struct ConnGuard {
     conn: Option<rusqlite::Connection>,
 }
 
-struct UnsafeSyncConnection(rusqlite::Connection);
-unsafe impl Sync for UnsafeSyncConnection {}
-unsafe impl Send for UnsafeSyncConnection {}
-
 impl std::ops::Deref for ConnGuard {
     type Target = rusqlite::Connection;
     fn deref(&self) -> &Self::Target {
-        if let Some(ref conn) = self.conn {
-            conn
-        } else {
-            tracing::warn!("ConnGuard conn already taken — this indicates a bug in the calling code. Returning fallback in-memory connection.");
-            static FALLBACK_CONN: std::sync::OnceLock<UnsafeSyncConnection> = std::sync::OnceLock::new();
-            let wrapper = FALLBACK_CONN.get_or_init(|| {
-                let conn = rusqlite::Connection::open_in_memory()
-                    .expect("Failed to open fallback in-memory sqlite connection");
-                UnsafeSyncConnection(conn)
-            });
-            &wrapper.0
-        }
+        self.conn
+            .as_ref()
+            .expect("ConnGuard connection already taken — this indicates a bug in the calling code")
     }
 }
 
