@@ -482,6 +482,33 @@ fn main() -> anyhow::Result<()> {
                 Ok(())
             })?;
 
+            // Eagerly initialize the embedding engine so the server fails fast
+            // at startup if model files are missing, rather than failing
+            // mid-request on the first embed() call.
+            #[cfg(feature = "onnx")]
+            {
+                use tdg_rust::mind::embedding::{self, EmbeddingConfig};
+                if let Err(e) = embedding::ensure_model_files(&config) {
+                    tracing::warn!("Embedding model files unavailable (embeddings disabled): {}", e);
+                } else {
+                    let emb_config = EmbeddingConfig::from_app_config(&config);
+                    if let Err(e) = embedding::init(emb_config) {
+                        tracing::warn!("Embedding engine init failed (embeddings disabled): {}", e);
+                    } else {
+                        tracing::info!("Embedding engine initialized (ONNX)");
+                    }
+                }
+            }
+            #[cfg(all(feature = "gguf", not(feature = "onnx")))]
+            {
+                use tdg_rust::mind::embedding::gguf;
+                if let Err(e) = gguf::init(None) {
+                    tracing::warn!("GGUF embedding engine init failed (embeddings disabled): {}", e);
+                } else {
+                    tracing::info!("Embedding engine initialized (GGUF)");
+                }
+            }
+
             // Spawn a background maintenance scheduler.
             //
             // Previously, NO automatic maintenance ever ran — the agent had to

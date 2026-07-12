@@ -367,13 +367,26 @@ pub mod gguf {
     }
 
     pub fn embed(text: &str) -> TdgResult<EmbeddingResult> {
+        // Auto-initialize if the model cache is empty, mirroring the ONNX
+        // lazy-init pattern (onnx_impl::embed, line ~183).
+        {
+            let cache = get_model()?;
+            let guard = cache
+                .lock()
+                .map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
+            if guard.is_none() {
+                drop(guard);
+                init(None)?;
+            }
+        }
+
         let cache = get_model()?;
         let guard = cache
             .lock()
             .map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
         let model = guard
             .as_ref()
-            .ok_or_else(|| TdgError::Custom("GGUF model not loaded. Call init() first.".into()))?;
+            .ok_or_else(|| TdgError::Custom("GGUF model not loaded after auto-init.".into()))?;
 
         let embeddings = model
             .embeddings(
@@ -397,13 +410,26 @@ pub mod gguf {
     }
 
     pub fn embed_batch(texts: &[&str]) -> TdgResult<Vec<EmbeddingResult>> {
+        // Auto-initialize if the model cache is empty, mirroring the ONNX
+        // lazy-init pattern (onnx_impl::embed, line ~183).
+        {
+            let cache = get_model()?;
+            let guard = cache
+                .lock()
+                .map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
+            if guard.is_none() {
+                drop(guard);
+                init(None)?;
+            }
+        }
+
         let cache = get_model()?;
         let guard = cache
             .lock()
             .map_err(|e| TdgError::Custom(format!("Lock: {e}")))?;
         let model = guard
             .as_ref()
-            .ok_or_else(|| TdgError::Custom("GGUF model not loaded. Call init() first.".into()))?;
+            .ok_or_else(|| TdgError::Custom("GGUF model not loaded after auto-init.".into()))?;
 
         let all_embeddings = model
             .embeddings(
