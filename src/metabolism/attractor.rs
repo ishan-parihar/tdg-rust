@@ -311,7 +311,7 @@ pub fn compute(
     // ─── A_G: Great-Way attractor ───────────────────────────────────────────
     // Magnitude from edge count (coupling breadth): more edges = more environmental coupling.
     // Capped at 1.0 (10+ edges = full coupling).
-    let a_g_magnitude = (edge_count as f64 / 10.0).min(1.0);
+    let a_g_magnitude = ((edge_count as f64).max(0.0) / 10.0).min(1.0);
     // Polarity from transformation_pressure sign: positive → STO, negative → STS.
     let a_g_polarity = if transformation_pressure > 0.1 {
         "STO"

@@ -139,27 +139,30 @@ pub fn run_integration(conn: &rusqlite::Connection) -> TdgResult<MindIntegration
     }
 
     // Pattern 5: Stagnation — all holons dormant
-    let dormant_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM nodes
-             WHERE valid_to IS NULL
-               AND lesser_cycle_json IS NOT NULL
-               AND lesser_cycle_json LIKE '%dormant%'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
+    let mut dormant_count = 0;
+    let mut active_count = 0;
+    let mut stmt = conn.prepare(
+        "SELECT lesser_cycle_json FROM nodes
+         WHERE valid_to IS NULL AND lesser_cycle_json IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let s: String = row.get(0)?;
+        Ok(s)
+    })?;
 
-    let active_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM nodes
-             WHERE valid_to IS NULL
-               AND lesser_cycle_json IS NOT NULL
-               AND lesser_cycle_json NOT LIKE '%dormant%'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
+    for r in rows {
+        if let Ok(json_str) = r {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                if let Some(phase_str) = val.get("phase").and_then(|p| p.as_str()) {
+                    if phase_str == "dormant" {
+                        dormant_count += 1;
+                    } else {
+                        active_count += 1;
+                    }
+                }
+            }
+        }
+    }
 
     if dormant_count > 5 && active_count == 0 {
         report.diagnoses.push(format!(

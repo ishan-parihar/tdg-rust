@@ -379,9 +379,7 @@ pub fn tick(
             state.significator = (state.significator + shift).min(1.0);
 
             // Phase 15: dissolution_ratio = how much the Significator changed
-            state.dissolution_ratio = ((state.significator - old_significator).abs()
-                / (old_significator + 0.01))
-                .min(1.0);
+            state.dissolution_ratio = (shift / 0.3).min(1.0);
 
             // Move to reintegration
             transition(

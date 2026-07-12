@@ -234,6 +234,10 @@ pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
         }
     }
 
+    // Phase 23: Soft-delete support for events table.
+    conn.execute_batch("ALTER TABLE events ADD COLUMN archived_at TEXT")
+        .ok();
+
     Ok(())
 }
 pub fn backup_database(conn: &Connection, backup_path: &std::path::Path) -> TdgResult<()> {
@@ -338,7 +342,8 @@ CREATE TABLE IF NOT EXISTS events (
     source_id TEXT,
     target_id TEXT,
     payload TEXT,
-    agent_id TEXT
+    agent_id TEXT,
+    archived_at TEXT
 );
 
 -- Indexes for nodes
@@ -502,7 +507,8 @@ CREATE TABLE IF NOT EXISTS events (
     source_id TEXT,
     target_id TEXT,
     payload TEXT,
-    agent_id TEXT
+    agent_id TEXT,
+    archived_at TEXT
 );
 "#;
 

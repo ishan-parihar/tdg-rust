@@ -570,7 +570,9 @@ fn receive_stabilize(
         result
     };
 
-    let influence = contribution.eros.positive_pole.abs() / MAX_DRIVE_VALUE;
+    let net_vec = contribution.net_vector();
+    let net_mag = (net_vec[0].powi(2) + net_vec[1].powi(2) + net_vec[2].powi(2) + net_vec[3].powi(2)).sqrt();
+    let influence = net_mag / 20.0;
 
     FlowDriveState {
         eros: clamp_drive(
@@ -762,12 +764,12 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
                 "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
                 rusqlite::params![e.id],
                 |row| row.get(0),
-            )
-            .unwrap_or(0);
+            )?;
         let learned_rate = if base_rate > 0.0 {
             (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5)
         } else {
-            base_rate // negative rates don't get Hebbian strengthening
+            let raw_learned = (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5);
+            base_rate.max(raw_learned)
         };
         return Ok(learned_rate);
     }
@@ -781,12 +783,12 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
                 "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
                 rusqlite::params![e.id],
                 |row| row.get(0),
-            )
-            .unwrap_or(0);
+            )?;
         let learned_rate = if base_rate > 0.0 {
             (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5)
         } else {
-            base_rate
+            let raw_learned = (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5);
+            base_rate.max(raw_learned)
         };
         return Ok(learned_rate);
     }
@@ -1508,5 +1510,65 @@ mod tests {
         );
         // CONTRADICTS should be 1.5x stronger than BLOCKS
         assert!(contradicts_rate.abs() > blocks_rate.abs());
+    }
+
+    #[test]
+    fn test_hebbian_negative_edge_clamping_and_net_drive_influence() {
+        let conn = setup_db();
+
+        // 1. Verify clamping for negative rate edges in get_flow_rate_for_edge
+        let src = add_test_node(&conn, "Source", "telos");
+        let dst = add_test_node(&conn, "Target", "action");
+
+        // Create a BLOCKS edge
+        let edge = crate::db::crud::add_edge(
+            &conn,
+            &crate::models::NewEdge {
+                source_id: src.id.clone(),
+                target_id: dst.id.clone(),
+                edge_type: "BLOCKS".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // Manually increment co_activation_count to high value to test LTP
+        let now_iso = crate::db::crud::now_iso();
+        conn.execute(
+            "UPDATE edges SET co_activation_count = 100, last_co_activation = ?1 WHERE id = ?2",
+            rusqlite::params![now_iso, edge.id],
+        )
+        .unwrap();
+
+        // The flow rate should be base_rate.max(raw_learned)
+        let flow_rate = get_flow_rate_for_edge(&conn, &src.id, &dst.id).unwrap();
+        let expected = (-0.5f64).max(-0.5f64 + 0.1 * 101.0f64.ln());
+        println!("DEBUG FLOW RATE: flow_rate = {}, expected = {}", flow_rate, expected);
+        assert!((flow_rate - expected).abs() < 1e-9);
+
+        // 2. Verify that receive_stabilize uses net drive magnitude
+        let child = FlowDriveState {
+            eros: DualPoleDrive::new(1.0, 1.0),
+            agape: DualPoleDrive::new(1.0, 1.0),
+            agency: DualPoleDrive::new(1.0, 1.0),
+            communion: DualPoleDrive::new(1.0, 1.0),
+        };
+        let intrinsic = FlowDriveState {
+            eros: DualPoleDrive::new(1.0, 1.0),
+            agape: DualPoleDrive::new(1.0, 1.0),
+            agency: DualPoleDrive::new(1.0, 1.0),
+            communion: DualPoleDrive::new(1.0, 1.0),
+        };
+        let contribution = FlowDriveState {
+            eros: DualPoleDrive::new(0.0, 0.0),
+            agape: DualPoleDrive::new(0.0, 0.0),
+            agency: DualPoleDrive::new(8.0, 0.0),
+            communion: DualPoleDrive::new(8.0, 0.0),
+        };
+
+        let result = receive_stabilize(&child, &intrinsic, &contribution);
+        // The child's agency and communion should have updated since influence > 0.0!
+        assert!(result.agency.positive_pole > child.agency.positive_pole);
+        assert!(result.communion.positive_pole > child.communion.positive_pole);
     }
 }

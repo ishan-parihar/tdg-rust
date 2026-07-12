@@ -206,6 +206,9 @@ pub struct LesserCycleState {
     pub cycle_count: u64,
     /// Timestamp of last phase transition (RFC3339).
     pub last_transition_at: Option<String>,
+    /// Visited list for preventing circular parent loops during catalyst propagation.
+    #[serde(default)]
+    pub visited: Vec<String>,
 }
 
 impl LesserCycleState {
@@ -220,6 +223,7 @@ impl LesserCycleState {
             transformation_pressure: 0.0,
             cycle_count: 0,
             last_transition_at: None,
+            visited: Vec::new(),
         }
     }
 
@@ -385,7 +389,7 @@ pub fn tick(
             let latent = state.experience_accumulated * state.potentiator.eta * 0.1;
             state.experience_accumulated -= latent;
             // latent feeds back as future catalyst potential (stored in potentiator magnitude)
-            state.potentiator.magnitude = (state.potentiator.magnitude + latent * 0.01).min(1.0);
+            state.potentiator.magnitude = (state.potentiator.magnitude + latent * 0.1).min(1.0);
 
             // Accumulate transformation pressure (feeds greater cycle in Phase 4)
             state.transformation_pressure += experience_gained * 0.1;
@@ -420,6 +424,7 @@ pub fn tick(
         LesserPhase::Quiescent => {
             // Cycle complete — reset and return to Dormant
             state.cycle_count += 1;
+            state.visited.clear();
             result.cycle_completed = true;
             transition(state, LesserPhase::Dormant, &mut result, &now);
         }
@@ -886,6 +891,7 @@ mod tests {
             transformation_pressure: 0.3,
             cycle_count: 3,
             last_transition_at: Some("2026-07-03T12:00:00Z".to_string()),
+            visited: Vec::new(),
         };
 
         let json = state.to_json();

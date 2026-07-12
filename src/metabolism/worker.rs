@@ -635,6 +635,23 @@ fn execute_resonance_update(conn: &Connection, job: &PendingJob) -> TdgResult<()
 fn execute_lesser_tick(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
     let mut state = lesser_cycle::load_state(conn, &job.holon_id)?;
 
+    // Merge visited list from payload into state.visited
+    if let Some(arr) = job.payload.get("visited").and_then(|v| v.as_array()) {
+        for val in arr {
+            if let Some(s) = val.as_str() {
+                if !state.visited.contains(&s.to_string()) {
+                    state.visited.push(s.to_string());
+                }
+            }
+        }
+    }
+
+    if state.visited.contains(&job.holon_id) {
+        tracing::warn!("Circular parent reference detected for holon_id: {}, halting propagation", job.holon_id);
+        return Ok(());
+    }
+
+
     // Extract catalyst amount from payload (for catalyst injection jobs)
     let incoming_catalyst = job
         .payload
@@ -684,11 +701,18 @@ fn execute_lesser_tick(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
     if result.upward_pressure && result.upward_experience > 0.0 {
         // Load the node to get parent_ids
         if let Some(node) = crate::db::crud::get_node(conn, &job.holon_id)? {
+            let mut next_visited = state.visited.clone();
+            next_visited.push(job.holon_id.clone());
             for parent_id in &node.parent_ids {
+                if next_visited.contains(parent_id) {
+                    tracing::warn!("Circular parent reference detected: parent {} already in visited chain, skipping upward pressure propagation", parent_id);
+                    continue;
+                }
                 let payload = serde_json::json!({
                     "catalyst_amount": result.upward_experience,
                     "source": "upward_pressure",
                     "source_holon": job.holon_id,
+                    "visited": next_visited,
                 });
                 let _ = enqueue_job(
                     conn,
@@ -1314,5 +1338,129 @@ mod tests {
         let job3 = claim_job(&conn).unwrap().expect("should claim second job after release");
         assert_eq!(job3.holon_id, node.id);
         assert_eq!(job3.job_type, JobType::RecomputeAttractor);
+    }
+
+    #[test]
+    fn test_circular_parent_pressure_prevention() {
+        let conn = setup_db();
+
+        // Create node A
+        let node_a = crate::db::crud::add_node(
+            &conn,
+            &NewNode {
+                node_type: "telos".to_string(),
+                name: "Node A".to_string(),
+                ..NewNode::default()
+            },
+        )
+        .unwrap();
+
+        // Create node B
+        let node_b = crate::db::crud::add_node(
+            &conn,
+            &NewNode {
+                node_type: "telos".to_string(),
+                name: "Node B".to_string(),
+                ..NewNode::default()
+            },
+        )
+        .unwrap();
+
+        // Link them in a loop: A parent is B, B parent is A
+        let now = crate::db::crud::now_iso();
+        conn.execute(
+            "UPDATE nodes SET parent_ids = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![serde_json::to_string(&vec![node_b.id.clone()]).unwrap(), now, node_a.id],
+        )
+        .unwrap();
+
+        conn.execute(
+            "UPDATE nodes SET parent_ids = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![serde_json::to_string(&vec![node_a.id.clone()]).unwrap(), now, node_b.id],
+        )
+        .unwrap();
+
+        // Inject catalyst into A to trigger upward pressure cycle
+        let _ = enqueue_job(
+            &conn,
+            &node_a.id,
+            JobType::CatalystInjection,
+            serde_json::json!({"catalyst_amount": 20.0}),
+            PRIORITY_NORMAL,
+        )
+        .unwrap();
+
+        // Run the tick loop for A to process the catalyst and transition to Quiescent/Dormant
+        let mut job = claim_job(&conn).unwrap().unwrap();
+        execute_job(&conn, &job).unwrap();
+        mark_done(&conn, job.id).unwrap();
+
+        for _ in 0..160 {
+            let _ = enqueue_job(
+                &conn,
+                &node_a.id,
+                JobType::LesserTick,
+                serde_json::json!({"catalyst_amount": 0.0}),
+                PRIORITY_HIGH,
+            )
+            .unwrap();
+            job = claim_job(&conn).unwrap().unwrap();
+            execute_job(&conn, &job).unwrap();
+            mark_done(&conn, job.id).unwrap();
+
+            let state = lesser_cycle::load_state(&conn, &node_a.id).unwrap();
+            if state.phase == LesserPhase::Dormant && state.cycle_count > 0 {
+                break;
+            }
+        }
+
+        // Verify that B has a pending job enqueued via upward pressure
+        let b_jobs: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pending_metabolism WHERE holon_id = ?1",
+                rusqlite::params![node_b.id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        assert!(b_jobs > 0, "Expected B to have a pending job enqueued from A's upward pressure");
+
+        // B's job payload should contain A in the visited list
+        let job_b = claim_job(&conn).unwrap().unwrap();
+        let payload_visited = job_b.payload.get("visited").and_then(|v| v.as_array()).unwrap();
+        assert!(payload_visited.iter().any(|v| v.as_str() == Some(&node_a.id)));
+
+        // Run the tick loop for B
+        for i in 0..160 {
+            let job = if i == 0 {
+                job_b.clone()
+            } else {
+                let _ = enqueue_job(
+                    &conn,
+                    &node_b.id,
+                    JobType::LesserTick,
+                    serde_json::json!({"catalyst_amount": 0.0}),
+                    PRIORITY_HIGH,
+                )
+                .unwrap();
+                claim_job(&conn).unwrap().unwrap()
+            };
+            execute_job(&conn, &job).unwrap();
+            mark_done(&conn, job.id).unwrap();
+
+            let state = lesser_cycle::load_state(&conn, &node_b.id).unwrap();
+            if state.phase == LesserPhase::Dormant && state.cycle_count > 0 {
+                break;
+            }
+        }
+
+        // Verify that A was NOT enqueued again for catalyst injection (which would cause infinite loops)
+        let a_jobs: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pending_metabolism WHERE holon_id = ?1 AND job_type = 'catalyst_injection'",
+                rusqlite::params![node_a.id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        assert_eq!(a_jobs, 0, "A should not have been enqueued again because of the circular visited check");
     }
 }

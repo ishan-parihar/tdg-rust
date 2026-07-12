@@ -48,35 +48,27 @@ impl<'a> Archiver<'a> {
         let result = (|| -> Result<i64> {
             let cutoff = (Utc::now() - Duration::days(keep_days)).to_rfc3339();
             let count: i64 = self.conn.query_row(
-                "SELECT COUNT(*) FROM events WHERE timestamp < ?1",
+                "SELECT COUNT(*) FROM events WHERE timestamp < ?1 AND archived_at IS NULL",
                 rusqlite::params![cutoff],
                 |r| r.get(0),
             )?;
 
             if count == 0 {
-                info!("Events: nothing older than {} days", keep_days);
+                info!("Events: nothing older than {} days to archive", keep_days);
                 return Ok(0);
             }
 
             if dry_run {
-                info!("Events: {} would be archived (dry run)", count);
+                info!("Events: {} would be soft-archived (dry run)", count);
                 return Ok(count);
             }
 
-            // G25 fix: instead of hard DELETE, move old events to mutation_log
-            // (which has its own purge cycle). This preserves the audit trail
-            // for forensic analysis while keeping the events table lean.
+            let now = crate::db::crud::now_iso();
             self.conn.execute(
-                "INSERT OR IGNORE INTO mutation_log (timestamp, session_id, mutation_type, target_type, target_id, old_value, new_value, agent_id)
-                 SELECT timestamp, '', 'archive', 'event', event_id, payload, NULL, agent_id
-                 FROM events WHERE timestamp < ?1",
-                rusqlite::params![cutoff],
+                "UPDATE events SET archived_at = ?1 WHERE timestamp < ?2 AND archived_at IS NULL",
+                rusqlite::params![now, cutoff],
             )?;
-            self.conn.execute(
-                "DELETE FROM events WHERE timestamp < ?1",
-                rusqlite::params![cutoff],
-            )?;
-            info!("Events: {} archived (moved to mutation_log)", count);
+            info!("Events: {} soft-archived (set archived_at)", count);
             Ok(count)
         })();
 
