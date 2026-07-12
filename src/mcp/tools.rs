@@ -301,7 +301,7 @@ impl TdgServer {
                 "SELECT COUNT(*) FROM edges e WHERE e.valid_to IS NULL AND (e.source_id NOT IN (SELECT id FROM nodes WHERE valid_to IS NULL AND lifecycle_state != 'archived') OR e.target_id NOT IN (SELECT id FROM nodes WHERE valid_to IS NULL AND lifecycle_state != 'archived'))",
                 [], |r| r.get(0),
             ).unwrap_or(0);
-            let event_count: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap_or(0);
+            let event_count: i64 = conn.query_row("SELECT COUNT(*) FROM events WHERE archived_at IS NULL", [], |r| r.get(0)).unwrap_or(0);
 
             let fts_coverage = if node_count > 0 { (fts_count as f64 / node_count as f64).min(1.0) } else { 1.0 };
             let emb_coverage = if node_count > 0 { (emb_count as f64 / node_count as f64).min(1.0) } else { 1.0 };
@@ -384,7 +384,7 @@ impl TdgServer {
         run_blocking(move || {
             let conn = get_conn(&pool)?;
             let mut sql = String::from(
-                "SELECT event_id, event_action, node_id, payload, timestamp FROM events WHERE 1=1",
+                "SELECT event_id, event_action, node_id, payload, timestamp FROM events WHERE archived_at IS NULL",
             );
             let mut pv: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
             if let Some(ref a) = action {

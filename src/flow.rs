@@ -756,9 +756,8 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
     if let Some(e) = edges.first() {
         let base_rate = edge_flow_rate(&e.edge_type).0;
         // Phase 16: Hebbian learned rate — LTP strengthens frequently co-activated edges
-        // G5 fix: only apply LTP to POSITIVE base rates. Negative rates (BLOCKS,
-        // CONTRADICTS) should not strengthen with co-activation — blocking should
-        // not be reinforced by use.
+        // G5 fix: negative base rates (BLOCKS, CONTRADICTS) skip LTP entirely —
+        // inhibitory edges must not be strengthened by co-activation.
         let co_activation: i64 = conn
             .query_row(
                 "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
@@ -768,8 +767,7 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
         let learned_rate = if base_rate > 0.0 {
             (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5)
         } else {
-            let raw_learned = (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5);
-            base_rate.max(raw_learned)
+            base_rate
         };
         return Ok(learned_rate);
     }
@@ -787,8 +785,7 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
         let learned_rate = if base_rate > 0.0 {
             (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5)
         } else {
-            let raw_learned = (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5);
-            base_rate.max(raw_learned)
+            base_rate
         };
         return Ok(learned_rate);
     }
@@ -1540,10 +1537,9 @@ mod tests {
         )
         .unwrap();
 
-        // The flow rate should be base_rate.max(raw_learned)
+        // The flow rate should be base_rate directly
         let flow_rate = get_flow_rate_for_edge(&conn, &src.id, &dst.id).unwrap();
-        let expected = (-0.5f64).max(-0.5f64 + 0.1 * 101.0f64.ln());
-        println!("DEBUG FLOW RATE: flow_rate = {}, expected = {}", flow_rate, expected);
+        let expected = -0.5f64;
         assert!((flow_rate - expected).abs() < 1e-9);
 
         // 2. Verify that receive_stabilize uses net drive magnitude

@@ -139,30 +139,16 @@ pub fn run_integration(conn: &rusqlite::Connection) -> TdgResult<MindIntegration
     }
 
     // Pattern 5: Stagnation — all holons dormant
-    let mut dormant_count = 0;
-    let mut active_count = 0;
-    let mut stmt = conn.prepare(
-        "SELECT lesser_cycle_json FROM nodes
+    // Use native SQLite json_extract to count in-DB rather than deserializing all cycle states in Rust.
+    let (dormant_count, active_count): (i64, i64) = conn.query_row(
+        "SELECT
+            COALESCE(SUM(CASE WHEN json_extract(lesser_cycle_json, '$.phase') = 'dormant' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN json_extract(lesser_cycle_json, '$.phase') != 'dormant' THEN 1 ELSE 0 END), 0)
+         FROM nodes
          WHERE valid_to IS NULL AND lesser_cycle_json IS NOT NULL",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    let rows = stmt.query_map([], |row| {
-        let s: String = row.get(0)?;
-        Ok(s)
-    })?;
-
-    for r in rows {
-        if let Ok(json_str) = r {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                if let Some(phase_str) = val.get("phase").and_then(|p| p.as_str()) {
-                    if phase_str == "dormant" {
-                        dormant_count += 1;
-                    } else {
-                        active_count += 1;
-                    }
-                }
-            }
-        }
-    }
 
     if dormant_count > 5 && active_count == 0 {
         report.diagnoses.push(format!(

@@ -165,7 +165,7 @@ pub fn stats(conn: &Connection) -> TdgResult<serde_json::Value> {
         [],
         |r| r.get(0),
     )?;
-    let total_events: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))?;
+    let total_events: i64 = conn.query_row("SELECT COUNT(*) FROM events WHERE archived_at IS NULL", [], |r| r.get(0))?;
 
     // Count by type
     let mut stmt = conn.prepare(
