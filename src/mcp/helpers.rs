@@ -175,11 +175,19 @@ pub(crate) fn upsert_entity_and_connect(
         .map_err(mcp_err)?
     };
 
+    let source_type: String = conn.query_row(
+        "SELECT node_type FROM nodes WHERE id = ?1 AND valid_to IS NULL",
+        rusqlite::params![observation_id],
+        |row| row.get(0),
+    ).unwrap_or_else(|_| "observation".to_string());
+
+    let edge_type = crate::mcp::synthesis_helpers::auto_detect_edge_type(&source_type, entity_type);
+
     let existing_edges = crate::db::crud::get_edges(
         conn,
         Some(observation_id),
         Some(&entity_node.id),
-        Some("MENTIONS"),
+        Some(&edge_type),
         None,
         1,
     )
@@ -191,14 +199,15 @@ pub(crate) fn upsert_entity_and_connect(
             &NewEdge {
                 source_id: observation_id.to_string(),
                 target_id: entity_node.id.clone(),
-                edge_type: "MENTIONS".to_string(),
+                edge_type: edge_type.clone(),
                 weight: Some(1.0),
                 properties: None,
                 agent_id: Some("mcp_observe".to_string()),
             },
         ) {
             tracing::warn!(
-                "Failed to create MENTIONS edge {} -> {}: {}",
+                "Failed to create {} edge {} -> {}: {}",
+                edge_type,
                 observation_id,
                 entity_node.id,
                 e

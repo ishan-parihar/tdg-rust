@@ -471,15 +471,15 @@ mod tool_tests {
                     .unwrap_or(false);
                 assert!(docker_exists, "docker entity should exist (node_type='tool')");
 
-                // Check for MENTIONS edges from observation to entities
+                // Check for USES edges from observation to entities
                 let mentions_count: i64 = conn
                     .query_row(
-                        "SELECT COUNT(*) FROM edges WHERE source_id = ?1 AND edge_type = 'MENTIONS' AND valid_to IS NULL",
+                        "SELECT COUNT(*) FROM edges WHERE source_id = ?1 AND edge_type = 'USES' AND valid_to IS NULL",
                         [obs_id],
                         |row| row.get(0),
                     )
                     .unwrap_or(0);
-                assert!(mentions_count >= 2, "Should have at least 2 MENTIONS edges, got {}", mentions_count);
+                assert!(mentions_count >= 2, "Should have at least 2 USES edges, got {}", mentions_count);
 
                 Ok(())
             })
@@ -546,6 +546,7 @@ mod tool_tests {
             action: Some("hygiene".into()),
             batch_size: None,
             phase: None,
+            dry_run: None,
         };
         let result = rt()
             .block_on(server.tdg_maintenance(Parameters(params)))
