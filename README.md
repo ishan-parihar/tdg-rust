@@ -1,5 +1,7 @@
 # TDG-Rust
 
+<!-- T2I HERO SPEC — Subject: a neural graph growing like a brain — nodes carrying content (text), embedding vectors (glow halos), and a telos (a directional arrow inside each node), connected by edges that reorganize from a small seed into a crystallized, scale-free structure. Composition: seed → crystallization arc, upward growth, subtle timeline. Palette: deep violet #1e1b4b → neural teal #2dd4bf edges → gold #f59e0b telos arrows. Style: dark abstract network visualization, volumetric glow, no text. 16:9. -->
+
 ![Rust](https://img.shields.io/badge/Rust-1.78+-orange?logo=rust)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![MCP](https://img.shields.io/badge/MCP-1.0-orange?logo=modelcontextprotocol)
@@ -24,6 +26,19 @@
 | **Developmental** | Structure evolves through interaction, not schema migration |
 | **Neural-symbolic** | Vector embeddings + symbolic edges = queryable, explainable memory |
 | **Agent-native** | Built for LLM agents: MCP server, tool interface, streaming updates |
+
+## How it compares
+
+| Capability | **TDG-Rust** | Vector DB (pgvector/Qdrant) | mem0 / Zep | Letta (MemGPT) |
+|---|---|---|---|---|
+| **Structure evolves** | ✅ graph reorganizes by interaction (links, hierarchies, clusters) | ❌ fixed collection | ⚠️ flat memory | ⚠️ blocks only |
+| **Purpose per node** | ✅ every node carries a *telos* (drive/goal/function) | ❌ | ❌ | ❌ |
+| **Explainable recall** | ✅ symbolic edges + embeddings, agent-queryable | ❌ black-box similarity | ⚠️ | ⚠️ |
+| **Agent-native surface** | ✅ MCP server (`tdg.remember/recall/link/evolve`) | ❌ | ✅ MCP | ✅ |
+| **Self-hosted / embeddable** | ✅ single Rust binary, MIT | ✅ | ✅ | ⚠️ heavy |
+| **Neural-symbolic** | ✅ vectors + symbolic edges in one graph | ❌ vectors only | ⚠️ | ⚠️ |
+
+A vector DB stores *what you saw*. TDG-Rust stores *what it meant, why it matters, and how it connects* — and lets the structure develop like a mind, not a table.
 
 ---
 
