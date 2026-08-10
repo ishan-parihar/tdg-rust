@@ -34,7 +34,8 @@ pub fn rebuild_fts(conn: &Connection) -> TdgResult<()> {
 pub fn run_migrations(conn: &Connection) -> TdgResult<()> {
     // Drop the legacy unique index if it exists and recreate it limited to active entity nodes
     // to bypass unique constraint failures on duplicate events or legacy skill nodes in existing DBs.
-    conn.execute_batch("DROP INDEX IF EXISTS idx_nodes_name_type_active").ok();
+    conn.execute_batch("DROP INDEX IF EXISTS idx_nodes_name_type_active")
+        .ok();
     conn.execute_batch(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_name_type_active \
          ON nodes(name, node_type) WHERE valid_to IS NULL AND node_type = 'entity'",

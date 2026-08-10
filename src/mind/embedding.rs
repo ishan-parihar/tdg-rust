@@ -37,7 +37,6 @@ pub const GEMMA_Q4_FILE: &str = "embeddinggemma-300m-Q4_0.onnx";
 #[cfg(feature = "onnx")]
 pub const GEMMA_Q8_FILE: &str = "embeddinggemma-300m-Q8_0.onnx";
 
-
 #[cfg(feature = "onnx")]
 const MINILM_REPO_URL: &str =
     "https://huggingface.co/xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx";
@@ -563,7 +562,7 @@ pub fn ensure_model_files(config: &crate::config::Config) -> TdgResult<()> {
     }
 
     // Q4 ONNX external data format: weights in separate .onnx_data file (Gemma only)
-    if config.embedding.model == crate::config::EmbeddingModel::Gemma 
+    if config.embedding.model == crate::config::EmbeddingModel::Gemma
         && config.embedding.quantization == crate::config::EmbeddingQuantization::Q4
     {
         let onnx_filename = config.embedding.onnx_filename();

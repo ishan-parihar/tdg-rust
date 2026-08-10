@@ -281,7 +281,11 @@ pub fn link_orphans(conn: &Connection, dry_run: bool) -> Result<LinkerReport> {
             .collect();
 
         // Sort descending by confidence, keep top-N
-        scored.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        scored.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         scored.truncate(MAX_LINKS_PER_ORPHAN);
 
         for candidate in &scored {
@@ -327,7 +331,11 @@ pub fn link_orphans(conn: &Connection, dry_run: bool) -> Result<LinkerReport> {
         "Linker finished: {} orphans found, {} edges {}",
         report.orphans_found,
         report.edges_created,
-        if dry_run { "would be created (dry run)" } else { "created" }
+        if dry_run {
+            "would be created (dry run)"
+        } else {
+            "created"
+        }
     );
 
     Ok(report)
@@ -361,7 +369,12 @@ mod tests {
 
     #[test]
     fn keyword_overlap_identical_text() {
-        let score = keyword_overlap("memory graph", "neural storage", "memory graph", "neural storage");
+        let score = keyword_overlap(
+            "memory graph",
+            "neural storage",
+            "memory graph",
+            "neural storage",
+        );
         // identical → union == intersection → Jaccard = 1.0
         assert!((score - 1.0).abs() < 1e-9, "expected 1.0, got {score}");
     }
@@ -377,7 +390,10 @@ mod tests {
         let score = keyword_overlap("neural memory", "", "memory storage", "");
         // tokens a: {neural, memory}, tokens b: {memory, storage}
         // intersection: {memory} = 1, union = 3 → Jaccard = 1/3
-        assert!(score > 0.0 && score < 1.0, "expected partial score, got {score}");
+        assert!(
+            score > 0.0 && score < 1.0,
+            "expected partial score, got {score}"
+        );
     }
 
     #[test]
@@ -432,14 +448,20 @@ mod tests {
         let ts = "2025-01-15T10:00:00+00:00";
         let result = suggest_links(
             &conn,
-            "n001", "neural memory", "processing",
+            "n001",
+            "neural memory",
+            "processing",
             ts,
-            "n002", "memory storage", "data",
+            "n002",
+            "memory storage",
+            "data",
             ts,
         );
         // temporal adds 0.2, kw adds ~0.167 → ~0.367, still below 0.65
-        assert!(result.is_none() || result.as_ref().unwrap().confidence < 0.65,
-            "should be None or below threshold");
+        assert!(
+            result.is_none() || result.as_ref().unwrap().confidence < 0.65,
+            "should be None or below threshold"
+        );
     }
 
     #[test]
@@ -450,9 +472,13 @@ mod tests {
         let ts = "2025-01-15T10:00:00+00:00";
         let result = suggest_links(
             &conn,
-            "n001", "neural memory graph", "store and recall",
+            "n001",
+            "neural memory graph",
+            "store and recall",
             ts,
-            "n002", "neural memory graph", "store and recall",
+            "n002",
+            "neural memory graph",
+            "store and recall",
             ts,
         );
         assert!(result.is_some(), "expected a candidate link");
@@ -468,8 +494,14 @@ mod tests {
         let ts = "2025-01-15T10:00:00+00:00";
         let result = suggest_links(
             &conn,
-            "n001", "some node", "desc", ts,
-            "n001", "some node", "desc", ts,
+            "n001",
+            "some node",
+            "desc",
+            ts,
+            "n001",
+            "some node",
+            "desc",
+            ts,
         );
         assert!(result.is_none(), "orphan should not link to itself");
     }
@@ -491,8 +523,20 @@ mod tests {
     fn link_orphans_dry_run_counts_without_creating() {
         let conn = setup_db();
         let ts = "2025-01-15T10:00:00+00:00";
-        insert_node(&conn, "n001", "neural memory graph", "store recall embeddings", ts);
-        insert_node(&conn, "n002", "neural storage graph", "store recall embeddings", ts);
+        insert_node(
+            &conn,
+            "n001",
+            "neural memory graph",
+            "store recall embeddings",
+            ts,
+        );
+        insert_node(
+            &conn,
+            "n002",
+            "neural storage graph",
+            "store recall embeddings",
+            ts,
+        );
 
         let report = link_orphans(&conn, true).unwrap();
         assert_eq!(report.orphans_found, 2);
@@ -500,7 +544,11 @@ mod tests {
 
         // Verify no edges were actually inserted
         let edge_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM edges WHERE valid_to IS NULL", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM edges WHERE valid_to IS NULL",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(edge_count, 0, "dry run must not create edges");
     }

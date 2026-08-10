@@ -7,6 +7,27 @@ use tdg_rust::db::{init_fts, init_schema, run_migrations, ConnectionPool};
 use tdg_rust::mcp::server;
 use tdg_rust::scripts;
 
+// ── AXI output helpers ─────────────────────────────────────────────
+
+/// Output format selector (AXI §1: TOON default, --json for raw)
+fn output_format(cli: &Cli) -> &'static str {
+    if cli.json {
+        "json"
+    } else {
+        "toon"
+    }
+}
+
+/// Print a serializable value in the chosen format (AXI §1)
+fn output_value<T: serde::Serialize>(format: &str, value: &T) {
+    toon_helper::print_output(format, value);
+}
+
+/// Truncate a JSON value's string fields for list views (AXI §3)
+fn truncate_ref(value: &serde_json::Value, max: usize) -> serde_json::Value {
+    toon_helper::truncate_json_strings(value, max)
+}
+
 #[derive(Parser)]
 #[command(
     name = "tdg-rust",
@@ -14,8 +35,12 @@ use tdg_rust::scripts;
     version
 )]
 struct Cli {
+    /// Output in raw JSON instead of TOON (default: TOON)
+    #[arg(long, global = true)]
+    json: bool,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -122,8 +147,66 @@ fn main() -> anyhow::Result<()> {
     // Ensure directories exist
     config.ensure_dirs()?;
 
+    let fmt = output_format(&cli);
+
     match cli.command {
-        Commands::Init => {
+        None => {
+            // AXI §8: Content-first home — show live stats, not clap help
+            let pool = ConnectionPool::new(
+                config
+                    .db_path
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("Database path is not valid UTF-8"))?,
+                5,
+                30000,
+            )?;
+            let home = pool.with_connection(|conn| {
+                let node_count: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                let edge_count: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM edges WHERE valid_to IS NULL",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                let event_count: i64 = conn
+                    .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
+                    .unwrap_or(0);
+                let job_count: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM pending_metabolism WHERE status = 'pending'",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+
+                Ok(serde_json::json!({
+                    "name": "tdg-rust",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "description": "Teleological Developmental Graph",
+                    "stats": {
+                        "nodes": node_count,
+                        "edges": edge_count,
+                        "events": event_count,
+                        "pending_jobs": job_count,
+                    },
+                    "help": [
+                        "Run `tdg-rust stats` for detailed statistics",
+                        "Run `tdg-rust serve` to start the MCP server",
+                        "Run `tdg-rust --help` to see all commands",
+                    ]
+                }))
+            })?;
+            pool.close();
+            output_value(fmt, &home);
+        }
+        Some(Commands::Init) => {
             tracing::info!("Initializing database at {}", config.db_path.display());
             let pool = ConnectionPool::new(
                 config
@@ -142,7 +225,7 @@ fn main() -> anyhow::Result<()> {
             })?;
             pool.close();
         }
-        Commands::Migrate => {
+        Some(Commands::Migrate) => {
             tracing::info!("Running migrations on {}", config.db_path.display());
             let pool = ConnectionPool::new(
                 config
@@ -161,7 +244,7 @@ fn main() -> anyhow::Result<()> {
             })?;
             pool.close();
         }
-        Commands::Backup { output } => {
+        Some(Commands::Backup { output }) => {
             tracing::info!("Backing up {} to {}", config.db_path.display(), output);
             let pool = ConnectionPool::new(
                 config
@@ -175,7 +258,7 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("Backup completed");
             pool.close();
         }
-        Commands::Stats => {
+        Some(Commands::Stats) => {
             let pool = ConnectionPool::new(
                 config
                     .db_path
@@ -184,7 +267,7 @@ fn main() -> anyhow::Result<()> {
                 5,
                 30000,
             )?;
-            pool.with_connection(|conn| {
+            let result = pool.with_connection(|conn| {
                 let node_count: i64 = conn
                     .query_row("SELECT COUNT(*) FROM nodes WHERE valid_to IS NULL", [], |r| r.get(0))
                     .unwrap_or(0);
@@ -195,30 +278,25 @@ fn main() -> anyhow::Result<()> {
                     .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
                     .unwrap_or(0);
 
-                println!("TDG Database Statistics");
-                println!("=======================");
-                println!("Nodes:   {node_count}");
-                println!("Edges:   {edge_count}");
-                println!("Events:  {event_count}");
-
-                // Count by type
                 let mut stmt = conn
                     .prepare("SELECT node_type, COUNT(*) FROM nodes WHERE valid_to IS NULL GROUP BY node_type ORDER BY COUNT(*) DESC")?;
-                let rows = stmt.query_map([], |row| {
+                let by_type: Vec<serde_json::Value> = stmt.query_map([], |row| {
                     let t: String = row.get(0)?;
                     let c: i64 = row.get(1)?;
-                    Ok((t, c))
-                })?;
-                println!("\nNodes by type:");
-                for (t, c) in rows.flatten() {
-                    println!("  {t}: {c}");
-                }
-                Ok(())
+                    Ok(serde_json::json!({"type": t, "count": c}))
+                })?.flatten().collect();
+
+                Ok(serde_json::json!({
+                    "nodes": node_count,
+                    "edges": edge_count,
+                    "events": event_count,
+                    "by_type": by_type,
+                }))
             })?;
             pool.close();
+            output_value(fmt, &result);
         }
-        // ── Phase 12: Scripts & Utilities ─────────────────────────────
-        Commands::Audit => {
+        Some(Commands::Audit) => {
             let pool = ConnectionPool::new(
                 config
                     .db_path
@@ -228,10 +306,10 @@ fn main() -> anyhow::Result<()> {
                 30000,
             )?;
             let result = pool.with_connection(scripts::audit)?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            output_value(fmt, &truncate_ref(&result, 500));
             pool.close();
         }
-        Commands::Check => {
+        Some(Commands::Check) => {
             let pool = ConnectionPool::new(
                 config
                     .db_path
@@ -241,10 +319,10 @@ fn main() -> anyhow::Result<()> {
                 30000,
             )?;
             let result = pool.with_connection(scripts::check)?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            output_value(fmt, &truncate_ref(&result, 500));
             pool.close();
         }
-        Commands::Unify => {
+        Some(Commands::Unify) => {
             let pool = ConnectionPool::new(
                 config
                     .db_path
@@ -254,10 +332,10 @@ fn main() -> anyhow::Result<()> {
                 30000,
             )?;
             let result = pool.with_connection(scripts::unify)?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            output_value(fmt, &truncate_ref(&result, 500));
             pool.close();
         }
-        Commands::ReconcileConstraints => {
+        Some(Commands::ReconcileConstraints) => {
             let pool = ConnectionPool::new(
                 config
                     .db_path
@@ -267,10 +345,10 @@ fn main() -> anyhow::Result<()> {
                 30000,
             )?;
             let result = pool.with_connection(scripts::reconcile_constraints)?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            output_value(fmt, &truncate_ref(&result, 500));
             pool.close();
         }
-        Commands::SyncSkills { dir } => {
+        Some(Commands::SyncSkills { dir }) => {
             let pool = ConnectionPool::new(
                 config
                     .db_path
@@ -282,15 +360,15 @@ fn main() -> anyhow::Result<()> {
             let skills_dir =
                 dir.unwrap_or_else(|| config.skills_dir.to_str().unwrap_or("./skills").to_string());
             let result = pool.with_connection(|conn| scripts::sync_skills(conn, &skills_dir))?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            output_value(fmt, &truncate_ref(&result, 500));
             pool.close();
         }
-        Commands::AutoCapture {
+        Some(Commands::AutoCapture {
             description,
             quadrant,
             trust,
             entities,
-        } => {
+        }) => {
             let pool = ConnectionPool::new(
                 config
                     .db_path
@@ -302,14 +380,14 @@ fn main() -> anyhow::Result<()> {
             let result = pool.with_connection(|conn| {
                 scripts::auto_capture(conn, &description, &quadrant, trust, entities.as_deref())
             })?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            output_value(fmt, &result);
             pool.close();
         }
-        Commands::Create {
+        Some(Commands::Create {
             node_type,
             name,
             description,
-        } => {
+        }) => {
             let pool = ConnectionPool::new(
                 config
                     .db_path
@@ -321,10 +399,10 @@ fn main() -> anyhow::Result<()> {
             let result = pool.with_connection(|conn| {
                 scripts::create_node(conn, &node_type, &name, description.as_deref())
             })?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            output_value(fmt, &result);
             pool.close();
         }
-        Commands::MaintenanceCheck => {
+        Some(Commands::MaintenanceCheck) => {
             let pool = ConnectionPool::new(
                 config
                     .db_path
@@ -334,10 +412,10 @@ fn main() -> anyhow::Result<()> {
                 30000,
             )?;
             let result = pool.with_connection(scripts::maintenance_check)?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            output_value(fmt, &truncate_ref(&result, 500));
             pool.close();
         }
-        Commands::RepairOrphans => {
+        Some(Commands::RepairOrphans) => {
             let pool = ConnectionPool::new(
                 config
                     .db_path
@@ -347,10 +425,10 @@ fn main() -> anyhow::Result<()> {
                 30000,
             )?;
             let result = pool.with_connection(scripts::repair_orphans)?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            output_value(fmt, &result);
             pool.close();
         }
-        Commands::LinkOrphans { dry_run } => {
+        Some(Commands::LinkOrphans { dry_run }) => {
             let pool = ConnectionPool::new(
                 config
                     .db_path
@@ -360,14 +438,13 @@ fn main() -> anyhow::Result<()> {
                 30000,
             )?;
             let report = pool.with_connection(|conn| {
-                tdg_rust::maintenance::link_orphans(conn, dry_run).map_err(|e| {
-                    tdg_rust::error::TdgError::Custom(e.to_string())
-                })
+                tdg_rust::maintenance::link_orphans(conn, dry_run)
+                    .map_err(|e| tdg_rust::error::TdgError::Custom(e.to_string()))
             })?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
+            output_value(fmt, &report);
             pool.close();
         }
-        Commands::PruneNoise { dry_run } => {
+        Some(Commands::PruneNoise { dry_run }) => {
             let pool = ConnectionPool::new(
                 config
                     .db_path
@@ -378,15 +455,15 @@ fn main() -> anyhow::Result<()> {
             )?;
             let report = pool.with_connection(|conn| {
                 let janitor = tdg_rust::maintenance::Janitor::new(conn);
-                janitor.prune_noise(dry_run).map_err(|e| {
-                    tdg_rust::error::TdgError::Custom(e.to_string())
-                })
+                janitor
+                    .prune_noise(dry_run)
+                    .map_err(|e| tdg_rust::error::TdgError::Custom(e.to_string()))
             })?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
+            output_value(fmt, &report);
             pool.close();
         }
         #[cfg(feature = "onnx")]
-        Commands::Embed { rebuild } => {
+        Some(Commands::Embed { rebuild }) => {
             use tdg_rust::mind::embedding::{self, EmbeddingConfig};
 
             let pool = ConnectionPool::new(
@@ -482,12 +559,12 @@ fn main() -> anyhow::Result<()> {
             pool.close();
         }
         #[cfg(not(feature = "onnx"))]
-        Commands::Embed { .. } => {
+        Some(Commands::Embed { .. }) => {
             eprintln!("Error: Embed command requires the 'onnx' feature. Rebuild with:");
             eprintln!("  cargo build --features onnx");
             std::process::exit(1);
         }
-        Commands::Serve { port } => {
+        Some(Commands::Serve { port }) => {
             // Pre-flight check: verify libonnxruntime.so.1 is loadable.
             // The dynamic linker kills the process with exit 127 before any
             // Rust code runs if the library is missing. This check runs
@@ -536,7 +613,10 @@ fn main() -> anyhow::Result<()> {
             {
                 use tdg_rust::mind::embedding::{self, EmbeddingConfig};
                 if let Err(e) = embedding::ensure_model_files(&config) {
-                    tracing::warn!("Embedding model files unavailable (embeddings disabled): {}", e);
+                    tracing::warn!(
+                        "Embedding model files unavailable (embeddings disabled): {}",
+                        e
+                    );
                 } else {
                     let emb_config = EmbeddingConfig::from_app_config(&config);
                     if let Err(e) = embedding::init(emb_config) {
@@ -550,7 +630,10 @@ fn main() -> anyhow::Result<()> {
             {
                 use tdg_rust::mind::embedding::gguf;
                 if let Err(e) = gguf::init(None) {
-                    tracing::warn!("GGUF embedding engine init failed (embeddings disabled): {}", e);
+                    tracing::warn!(
+                        "GGUF embedding engine init failed (embeddings disabled): {}",
+                        e
+                    );
                 } else {
                     tracing::info!("Embedding engine initialized (GGUF)");
                 }

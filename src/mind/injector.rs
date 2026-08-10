@@ -322,8 +322,10 @@ pub fn write_mind_state_file(
     let thread_id = format!("{:?}", std::thread::current().id())
         .replace("ThreadId(", "")
         .replace(")", "");
-    let tmp_path = cfg.state_dir.join(format!("tdg-mind-snapshot-{pid}-{thread_id}.tmp"));
-    
+    let tmp_path = cfg
+        .state_dir
+        .join(format!("tdg-mind-snapshot-{pid}-{thread_id}.tmp"));
+
     let res = std::fs::write(&tmp_path, serde_json::to_string_pretty(&state)?);
     if res.is_ok() {
         if let Err(e) = std::fs::rename(&tmp_path, &state_path) {

@@ -571,7 +571,8 @@ fn receive_stabilize(
     };
 
     let net_vec = contribution.net_vector();
-    let net_mag = (net_vec[0].powi(2) + net_vec[1].powi(2) + net_vec[2].powi(2) + net_vec[3].powi(2)).sqrt();
+    let net_mag =
+        (net_vec[0].powi(2) + net_vec[1].powi(2) + net_vec[2].powi(2) + net_vec[3].powi(2)).sqrt();
     let influence = net_mag / 20.0;
 
     FlowDriveState {
@@ -758,12 +759,11 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
         // Phase 16: Hebbian learned rate — LTP strengthens frequently co-activated edges
         // G5 fix: negative base rates (BLOCKS, CONTRADICTS) skip LTP entirely —
         // inhibitory edges must not be strengthened by co-activation.
-        let co_activation: i64 = conn
-            .query_row(
-                "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
-                rusqlite::params![e.id],
-                |row| row.get(0),
-            )?;
+        let co_activation: i64 = conn.query_row(
+            "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
+            rusqlite::params![e.id],
+            |row| row.get(0),
+        )?;
         let learned_rate = if base_rate > 0.0 {
             (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5)
         } else {
@@ -776,12 +776,11 @@ fn get_flow_rate_for_edge(conn: &Connection, source_id: &str, target_id: &str) -
     let edges = get_edges(conn, Some(target_id), Some(source_id), None, None, 10)?;
     if let Some(e) = edges.first() {
         let base_rate = edge_flow_rate(&e.edge_type).0;
-        let co_activation: i64 = conn
-            .query_row(
-                "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
-                rusqlite::params![e.id],
-                |row| row.get(0),
-            )?;
+        let co_activation: i64 = conn.query_row(
+            "SELECT COALESCE(co_activation_count, 0) FROM edges WHERE id = ?1",
+            rusqlite::params![e.id],
+            |row| row.get(0),
+        )?;
         let learned_rate = if base_rate > 0.0 {
             (base_rate + 0.1 * (1.0 + co_activation as f64).ln()).min(1.5)
         } else {

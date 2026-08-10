@@ -38,6 +38,9 @@ clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
 shellexpand = "3"
 
+# TOON output (AXI §1)
+toon-helper = { path = "../MCP-AND-CLIS/toon-helper" }
+
 # Configuration (YAML + JSON + env vars)
 figment = { version = "0.10", features = ["yaml", "json", "env"] }
 

@@ -175,11 +175,13 @@ pub(crate) fn upsert_entity_and_connect(
         .map_err(mcp_err)?
     };
 
-    let source_type: String = conn.query_row(
-        "SELECT node_type FROM nodes WHERE id = ?1 AND valid_to IS NULL",
-        rusqlite::params![observation_id],
-        |row| row.get(0),
-    ).unwrap_or_else(|_| "observation".to_string());
+    let source_type: String = conn
+        .query_row(
+            "SELECT node_type FROM nodes WHERE id = ?1 AND valid_to IS NULL",
+            rusqlite::params![observation_id],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "observation".to_string());
 
     let edge_type = crate::mcp::synthesis_helpers::auto_detect_edge_type(&source_type, entity_type);
 

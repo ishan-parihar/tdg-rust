@@ -490,7 +490,7 @@ impl<'a> Janitor<'a> {
 
         if !dry_run {
             let now = Utc::now().to_rfc3339();
-            
+
             // Soft-delete dangling
             for id in &dangling_ids {
                 let _ = self.conn.execute(
@@ -538,7 +538,6 @@ pub struct PruneNoiseReport {
     pub dry_run: bool,
     pub timestamp: String,
 }
-
 
 fn report_summary(report: &JanitorReport) -> String {
     let mut parts = Vec::new();
@@ -598,7 +597,15 @@ mod tests {
         .unwrap();
     }
 
-    fn insert_edge(conn: &Connection, id: &str, src: &str, tgt: &str, edge_type: &str, weight: f64, co_activation: i64) {
+    fn insert_edge(
+        conn: &Connection,
+        id: &str,
+        src: &str,
+        tgt: &str,
+        edge_type: &str,
+        weight: f64,
+        co_activation: i64,
+    ) {
         conn.execute(
             "INSERT INTO edges (id, source_id, target_id, edge_type, weight, co_activation_count, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'), datetime('now'))",
@@ -618,7 +625,8 @@ mod tests {
         conn.execute(
             "UPDATE nodes SET lifecycle_state = 'archived' WHERE id = 'n2'",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let janitor = Janitor::new(&conn);
         let report = janitor.prune_noise(false).unwrap();
@@ -628,7 +636,9 @@ mod tests {
 
         // Verify soft-deleted
         let valid_to: Option<String> = conn
-            .query_row("SELECT valid_to FROM edges WHERE id = 'e1'", [], |r| r.get(0))
+            .query_row("SELECT valid_to FROM edges WHERE id = 'e1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert!(valid_to.is_some());
     }
@@ -644,12 +654,14 @@ mod tests {
             "INSERT INTO edges (id, source_id, target_id, edge_type, created_at)
              VALUES ('e1', 'n1', 'n2', 'MENTIONS', '2025-01-15T10:00:00Z')",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO edges (id, source_id, target_id, edge_type, created_at)
              VALUES ('e2', 'n1', 'n2', 'MENTIONS', '2025-01-15T11:00:00Z')",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let janitor = Janitor::new(&conn);
         let report = janitor.prune_noise(false).unwrap();
@@ -657,10 +669,14 @@ mod tests {
         assert_eq!(report.duplicate_edges_pruned, 1);
 
         let e1_valid: Option<String> = conn
-            .query_row("SELECT valid_to FROM edges WHERE id = 'e1'", [], |r| r.get(0))
+            .query_row("SELECT valid_to FROM edges WHERE id = 'e1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         let e2_valid: Option<String> = conn
-            .query_row("SELECT valid_to FROM edges WHERE id = 'e2'", [], |r| r.get(0))
+            .query_row("SELECT valid_to FROM edges WHERE id = 'e2'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert!(e1_valid.is_some(), "older duplicate should be soft-deleted");
         assert!(e2_valid.is_none(), "newer duplicate should remain active");
@@ -685,12 +701,22 @@ mod tests {
         assert_eq!(report.weak_mentions_pruned, 1);
 
         let e1_valid: Option<String> = conn
-            .query_row("SELECT valid_to FROM edges WHERE id = 'e1'", [], |r| r.get(0))
+            .query_row("SELECT valid_to FROM edges WHERE id = 'e1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         let e2_valid: Option<String> = conn
-            .query_row("SELECT valid_to FROM edges WHERE id = 'e2'", [], |r| r.get(0))
+            .query_row("SELECT valid_to FROM edges WHERE id = 'e2'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
-        assert!(e1_valid.is_some(), "unsupported weak mention should be pruned");
-        assert!(e2_valid.is_none(), "supported weak mention should not be pruned");
+        assert!(
+            e1_valid.is_some(),
+            "unsupported weak mention should be pruned"
+        );
+        assert!(
+            e2_valid.is_none(),
+            "supported weak mention should not be pruned"
+        );
     }
 }

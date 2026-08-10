@@ -2204,8 +2204,18 @@ fn e2e_maintenance_tool_gc_all_implemented() {
 fn e2e_maintenance_tool_link_orphans() {
     let pool = make_pool();
     // Insert two nodes that should link semantically/temporally
-    add_node_with_desc(&pool, "observation", "Test Node", "This is about data processing");
-    add_node_with_desc(&pool, "action", "Test Node", "This is about data processing");
+    add_node_with_desc(
+        &pool,
+        "observation",
+        "Test Node",
+        "This is about data processing",
+    );
+    add_node_with_desc(
+        &pool,
+        "action",
+        "Test Node",
+        "This is about data processing",
+    );
 
     let server = tdg_rust::mcp::tools::TdgServer::new(pool);
     let params = tdg_rust::mcp::params::MaintenanceParams {
@@ -2233,7 +2243,7 @@ fn e2e_maintenance_tool_prune_noise() {
     let pool = make_pool();
     let n1 = add_node(&pool, "observation", "Node One");
     let n2 = add_node(&pool, "observation", "Node Two");
-    
+
     // Create weak mentions edge with no evidence
     pool.with_connection(|conn| {
         conn.execute(

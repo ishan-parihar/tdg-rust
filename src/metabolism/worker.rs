@@ -225,10 +225,12 @@ pub fn claim_job(conn: &Connection) -> Result<Option<PendingJob>, rusqlite::Erro
     drop(stmt);
 
     if let Some(job) = selected_job {
-        let res = tx.execute(
-            "UPDATE pending_metabolism SET attempts = ?1 WHERE id = ?2",
-            rusqlite::params![job.attempts, job.id],
-        ).and_then(|_| tx.commit());
+        let res = tx
+            .execute(
+                "UPDATE pending_metabolism SET attempts = ?1 WHERE id = ?2",
+                rusqlite::params![job.attempts, job.id],
+            )
+            .and_then(|_| tx.commit());
 
         match res {
             Ok(()) => Ok(Some(job)),
@@ -647,10 +649,12 @@ fn execute_lesser_tick(conn: &Connection, job: &PendingJob) -> TdgResult<()> {
     }
 
     if state.visited.contains(&job.holon_id) {
-        tracing::warn!("Circular parent reference detected for holon_id: {}, halting propagation", job.holon_id);
+        tracing::warn!(
+            "Circular parent reference detected for holon_id: {}, halting propagation",
+            job.holon_id
+        );
         return Ok(());
     }
-
 
     // Extract catalyst amount from payload (for catalyst injection jobs)
     let incoming_catalyst = job
@@ -1329,13 +1333,18 @@ mod tests {
 
         // Second claim for the same holon node should skip and return None since it is active.
         let job2 = claim_job(&conn).unwrap();
-        assert!(job2.is_none(), "Expected second claim to be None because holon is active");
+        assert!(
+            job2.is_none(),
+            "Expected second claim to be None because holon is active"
+        );
 
         // Mark the first job done. This deletes the job from database and releases the holon.
         mark_done(&conn, job1.id).unwrap();
 
         // Now claim should succeed for the second job.
-        let job3 = claim_job(&conn).unwrap().expect("should claim second job after release");
+        let job3 = claim_job(&conn)
+            .unwrap()
+            .expect("should claim second job after release");
         assert_eq!(job3.holon_id, node.id);
         assert_eq!(job3.job_type, JobType::RecomputeAttractor);
     }
@@ -1370,13 +1379,21 @@ mod tests {
         let now = crate::db::crud::now_iso();
         conn.execute(
             "UPDATE nodes SET parent_ids = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![serde_json::to_string(&vec![node_b.id.clone()]).unwrap(), now, node_a.id],
+            rusqlite::params![
+                serde_json::to_string(&vec![node_b.id.clone()]).unwrap(),
+                now,
+                node_a.id
+            ],
         )
         .unwrap();
 
         conn.execute(
             "UPDATE nodes SET parent_ids = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![serde_json::to_string(&vec![node_a.id.clone()]).unwrap(), now, node_b.id],
+            rusqlite::params![
+                serde_json::to_string(&vec![node_a.id.clone()]).unwrap(),
+                now,
+                node_b.id
+            ],
         )
         .unwrap();
 
@@ -1422,12 +1439,21 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap_or(0);
-        assert!(b_jobs > 0, "Expected B to have a pending job enqueued from A's upward pressure");
+        assert!(
+            b_jobs > 0,
+            "Expected B to have a pending job enqueued from A's upward pressure"
+        );
 
         // B's job payload should contain A in the visited list
         let job_b = claim_job(&conn).unwrap().unwrap();
-        let payload_visited = job_b.payload.get("visited").and_then(|v| v.as_array()).unwrap();
-        assert!(payload_visited.iter().any(|v| v.as_str() == Some(&node_a.id)));
+        let payload_visited = job_b
+            .payload
+            .get("visited")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert!(payload_visited
+            .iter()
+            .any(|v| v.as_str() == Some(&node_a.id)));
 
         // Run the tick loop for B
         for i in 0..160 {
@@ -1461,6 +1487,9 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap_or(0);
-        assert_eq!(a_jobs, 0, "A should not have been enqueued again because of the circular visited check");
+        assert_eq!(
+            a_jobs, 0,
+            "A should not have been enqueued again because of the circular visited check"
+        );
     }
 }
