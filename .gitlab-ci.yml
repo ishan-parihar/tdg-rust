@@ -1,0 +1,18 @@
+# TDG-Rust CI — build + test + clippy + fmt gate, enforced on every push/merge.
+# Run locally with: `cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check`
+image: rust:1.78
+
+stages:
+  - check
+
+check:
+  stage: check
+  script:
+    - rustc --version && cargo --version
+    - cargo build --release
+    - cargo test
+    - cargo clippy --all-targets -- -D warnings
+    - cargo fmt --all -- --check
+  cache:
+    paths:
+      - target/

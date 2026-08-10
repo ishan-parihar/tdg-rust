@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="360" viewBox="0 0 1200 360"
+     role="img" aria-labelledby="title desc">
+  <title id="title">TDG-Rust — Teleological Developmental Graph</title>
+  <desc id="desc">A self-structuring neural memory infrastructure: nodes carry content, an embedding vector, and a telos (purpose); edges form sequences and hierarchies; nodes develop from seed through sprout, growth, maturation to crystallization.</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0A0D14"/>
+      <stop offset="1" stop-color="#07090E"/>
+    </linearGradient>
+    <linearGradient id="dev" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2E4B8F"/>
+      <stop offset="0.5" stop-color="#4F8F2E"/>
+      <stop offset="1" stop-color="#B8860B"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#45D6C8" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#45D6C8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="360" rx="24" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1198" height="358" rx="23" fill="none" stroke="#1C2434" stroke-width="2"/>
+
+  <!-- ══════════ LEFT: IDENTITY ══════════ -->
+  <g transform="translate(56 40)">
+    <text x="0" y="0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="19" letter-spacing="4" fill="#45D6C8">NEURAL MEMORY INFRASTRUCTURE</text>
+
+    <text x="0" y="70" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+          font-size="62" font-weight="800" fill="#ECF0F7" letter-spacing="-1.5">TDG-Rust</text>
+
+    <text x="0" y="122" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+          font-size="24" font-weight="600" fill="#A8B2C4">A self-structuring memory that</text>
+    <text x="0" y="156" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+          font-size="24" font-weight="600" fill="#A8B2C4">evolves with every interaction.</text>
+
+    <text x="0" y="206" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="16" fill="#667088">Not a database. A brain.</text>
+    <text x="0" y="232" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="16" fill="#667088">Rust · MCP 1.0 · 626 tests · embed-any-model</text>
+
+    <!-- developmental bar -->
+    <text x="0" y="278" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="14" letter-spacing="2" fill="#667088">DEVELOPMENTAL ARC</text>
+    <rect x="0" y="290" width="420" height="10" rx="5" fill="url(#dev)"/>
+    <text x="0" y="324" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="13" fill="#667088">SEED → SPROUT → GROWTH → MATURATION → CRYSTALLIZED</text>
+  </g>
+
+  <!-- ══════════ RIGHT: GRAPH MOTIF ══════════ -->
+  <g transform="translate(620 46)">
+    <circle cx="250" cy="128" r="120" fill="url(#glow)"/>
+
+    <!-- edges -->
+    <g stroke="#2E4B8F" stroke-width="2" opacity="0.7">
+      <path d="M 150 60 L 250 44 L 340 58" fill="none"/>
+      <path d="M 150 60 L 110 128 L 150 196 L 240 206" fill="none"/>
+      <path d="M 340 58 L 396 128 L 340 198 L 250 206" fill="none"/>
+      <path d="M 240 206 L 250 226" fill="none"/>
+      <path d="M 110 128 L 396 128" fill="none" stroke-dasharray="4 6" opacity="0.5"/>
+    </g>
+
+    <!-- sequence arrow -->
+    <path d="M 260 226 L 290 226" stroke="#45D6C8" stroke-width="3" marker-end="url(#arr)" fill="none"/>
+
+    <!-- nodes: seed → crystallized -->
+    <g>
+      <circle cx="150" cy="60" r="14" fill="#1C2434" stroke="#4F8F2E" stroke-width="2"/>
+      <circle cx="250" cy="44" r="14" fill="#1C2434" stroke="#45D6C8" stroke-width="2"/>
+      <circle cx="340" cy="58" r="14" fill="#1C2434" stroke="#B8860B" stroke-width="2"/>
+      <circle cx="110" cy="128" r="16" fill="#1C2434" stroke="#4F8F2E" stroke-width="2.5"/>
+      <circle cx="396" cy="128" r="16" fill="#1C2434" stroke="#B8860B" stroke-width="2.5"/>
+      <circle cx="150" cy="196" r="18" fill="#1C2434" stroke="#4F8F2E" stroke-width="3"/>
+      <circle cx="240" cy="206" r="18" fill="#1C2434" stroke="#45D6C8" stroke-width="3"/>
+      <circle cx="340" cy="198" r="18" fill="#1C2434" stroke="#B8860B" stroke-width="3"/>
+      <circle cx="250" cy="226" r="22" fill="#B8860B"/>
+      <text x="250" y="232" text-anchor="middle" font-family="ui-monospace, Menlo, monospace"
+            font-size="13" font-weight="700" fill="#140F04">T</text>
+    </g>
+
+    <!-- telos callout -->
+    <g transform="translate(250 272)">
+      <rect x="-120" y="0" width="240" height="34" rx="8" fill="#1C2434" stroke="#2E4B8F"/>
+      <text x="0" y="21" text-anchor="middle" font-family="ui-monospace, Menlo, monospace"
+            font-size="14" fill="#A8B2C4">Node = Content · Embedding · <tspan fill="#B8860B" font-weight="700">Telos</tspan></text>
+    </g>
+  </g>
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#45D6C8"/>
+    </marker>
+  </defs>
+</svg>

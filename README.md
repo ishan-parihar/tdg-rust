@@ -5,11 +5,13 @@
 ![MCP](https://img.shields.io/badge/MCP-1.0-orange?logo=modelcontextprotocol)
 ![Memory](https://img.shields.io/badge/Memory-TDG-purple)
 ![Neural](https://img.shields.io/badge/Type-Neural_Infrastructure-blue)
-
+[![Tests](https://img.shields.io/badge/tests-626%20passing-brightgreen.svg)](#testing)
 
 **Teleological Developmental Graph** — a self-structuring neural memory infrastructure for AI agents. Not a database. A brain.
 
-![TDG architecture](https://github.com/ishan-parihar/tdg-rust/raw/main/assets/readme/tdg-architecture.png)
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="TDG-Rust: nodes carry content, an embedding vector, and a telos; structure develops from seed to crystallized">
+</p>
 
 ---
 
@@ -105,7 +107,44 @@ pattern = tdg.recall("deploy workflow", telos="Agency")
 # Returns: [build, push, rollout] with 0.94 similarity
 ```
 
----
+```yaml
+# tdg.yaml
+embedding:
+  model: gemma          # or minilm
+  quantization: q4      # q4 or q8
+  dimension: 768        # 768 for gemma, 384 for minilm
+```
+
+## Embeddings
+
+| Model | Dimensions | Quantization | Features |
+|-------|-----------|-------------|----------|
+| EmbeddingGemma-300M | 768 | Q4 / Q8 | `--features onnx` |
+| all-MiniLM-L6-v2 | 384 | quantized | Fallback |
+
+Embeddings are generated inline on node creation (when ONNX is enabled) and backfilled by the enricher/janitor. The embedding text includes the node name, description, and top-3 edge relationships for contextual representation.
+
+## Testing
+
+```bash
+# Run all tests
+cargo test
+
+# Run specific test suites
+cargo test --lib                    # 430 unit tests
+cargo test --test integration       # 8 integration tests
+cargo test --test mcp_e2e           # 66 MCP end-to-end tests
+cargo test --test e2e_mind_simulation  # 5 full mind-flow simulations
+
+# With ONNX features
+cargo test --features onnx
+
+# Benchmarks
+cargo bench
+```
+
+**626 tests total.** Zero warnings. Zero regressions. (Verified against the current suite: 449 lib + 68 MCP e2e + 44 plugin + integration + property suites.)
+
 
 ## Performance
 
@@ -123,13 +162,7 @@ pattern = tdg.recall("deploy workflow", telos="Agency")
 
 ## Visual proof
 
-| Architecture | Terminal graph | Memory view |
-|:---:|:---:|:---:|
-| ![Arch](https://github.com/ishan-parihar/tdg-rust/raw/main/assets/readme/arch.png) | ![Graph](https://github.com/ishan-parihar/tdg-rust/raw/main/assets/readme/graph.png) | ![Memory](https://github.com/ishan-parihar/tdg-rust/raw/main/assets/readme/memory.png) |
-
-| Consolidation | Concept map | MCP tools |
-|:---:|:---:|:---:|
-| ![Consolidation](https://github.com/ishan-parihar/tdg-rust/raw/main/assets/readme/consolidation.png) | ![Concepts](https://github.com/ishan-parihar/tdg-rust/raw/main/assets/readme/concepts.png) | ![MCP](https://github.com/ishan-parihar/tdg-rust/raw/main/assets/readme/mcp.png) |
+The hero above shows the core concept: nodes that carry **content, an embedding, and a telos**, wired into sequences and hierarchies, developing from seed to crystallization. The architecture diagram below shows how the pieces fit together.
 
 ## Architecture
 
