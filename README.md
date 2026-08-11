@@ -4,6 +4,8 @@
 
 ![Rust](https://img.shields.io/badge/Rust-1.78+-orange?logo=rust)
 ![LOC](https://img.shields.io/badge/LOC-47.4K-informational?style=flat-square)
+[![CI](https://github.com/ishan-parihar/tdg-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/ishan-parihar/tdg-rust/actions/workflows/ci.yml)
+![Status](https://img.shields.io/badge/Status-Active-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![MCP](https://img.shields.io/badge/MCP-1.0-orange?logo=modelcontextprotocol)
 ![Memory](https://img.shields.io/badge/Memory-TDG-purple)
