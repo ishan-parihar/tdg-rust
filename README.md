@@ -3,6 +3,7 @@
 <!-- T2I HERO SPEC — Subject: a neural graph growing like a brain — nodes carrying content (text), embedding vectors (glow halos), and a telos (a directional arrow inside each node), connected by edges that reorganize from a small seed into a crystallized, scale-free structure. Composition: seed → crystallization arc, upward growth, subtle timeline. Palette: deep violet #1e1b4b → neural teal #2dd4bf edges → gold #f59e0b telos arrows. Style: dark abstract network visualization, volumetric glow, no text. 16:9. -->
 
 ![Rust](https://img.shields.io/badge/Rust-1.78+-orange?logo=rust)
+![LOC](https://img.shields.io/badge/LOC-47.4K-informational?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![MCP](https://img.shields.io/badge/MCP-1.0-orange?logo=modelcontextprotocol)
 ![Memory](https://img.shields.io/badge/Memory-TDG-purple)
@@ -211,3 +212,14 @@ The hero above shows the core concept: nodes that carry **content, an embedding,
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+## ☕ Support & Sponsorship
+
+If you find this project useful, consider supporting ongoing development:
+
+[![Sponsor](https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-ea4aaa?style=flat-square&logo=github)](https://github.com/sponsors/ishan-parihar)
+[![Donate](https://img.shields.io/badge/Donate-Razorpay-3395FF?style=flat-square)](https://rzp.io/rzp/ishan-parihar)
+
+Your support funds new features, releases, and infrastructure for the whole ecosystem.
