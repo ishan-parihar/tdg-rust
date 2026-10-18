@@ -216,7 +216,7 @@ The hero above shows the core concept: nodes that carry **content, an embedding,
 
 ## Documentation
 
-Every doc in `docs/` is listed with the question it answers in [docs/INDEX.md](docs/INDEX.md).
+Every doc in `docs/` is listed with the question it answers in [docs/PAGE-INDEX.md](docs/PAGE-INDEX.md).
 
 ---
 
