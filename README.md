@@ -3,9 +3,7 @@
 <!-- T2I HERO SPEC — Subject: a neural graph growing like a brain — nodes carrying content (text), embedding vectors (glow halos), and a telos (a directional arrow inside each node), connected by edges that reorganize from a small seed into a crystallized, scale-free structure. Composition: seed → crystallization arc, upward growth, subtle timeline. Palette: deep violet #1e1b4b → neural teal #2dd4bf edges → gold #f59e0b telos arrows. Style: dark abstract network visualization, volumetric glow, no text. 16:9. -->
 
 ![Rust](https://img.shields.io/badge/Rust-1.78+-orange?logo=rust)
-![LOC](https://img.shields.io/badge/LOC-47.4K-informational?style=flat-square)
 [![CI](https://github.com/ishan-parihar/tdg-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/ishan-parihar/tdg-rust/actions/workflows/ci.yml)
-![Status](https://img.shields.io/badge/Status-Active-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![MCP](https://img.shields.io/badge/MCP-1.0-orange?logo=modelcontextprotocol)
 ![Memory](https://img.shields.io/badge/Memory-TDG-purple)
@@ -47,6 +45,12 @@ A vector DB stores *what you saw*. TDG-Rust stores *what it meant, why it matter
 
 ## Quick start
 
+### Install (prebuilt binary)
+```bash
+curl -fsSL https://raw.githubusercontent.com/ishan-parihar/tdg-rust/main/install.sh | bash
+```
+
+### Build from source
 ```bash
 # Build
 cargo build --release
