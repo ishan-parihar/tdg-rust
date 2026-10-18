@@ -2,7 +2,6 @@
 
 <!-- T2I HERO SPEC — Subject: a neural graph growing like a brain — nodes carrying content (text), embedding vectors (glow halos), and a telos (a directional arrow inside each node), connected by edges that reorganize from a small seed into a crystallized, scale-free structure. Composition: seed → crystallization arc, upward growth, subtle timeline. Palette: deep violet #1e1b4b → neural teal #2dd4bf edges → gold #f59e0b telos arrows. Style: dark abstract network visualization, volumetric glow, no text. 16:9. -->
 
-![Rust](https://img.shields.io/badge/Rust-1.78+-orange?logo=rust)
 [![CI](https://github.com/ishan-parihar/tdg-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/ishan-parihar/tdg-rust/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![MCP](https://img.shields.io/badge/MCP-1.0-orange?logo=modelcontextprotocol)
@@ -212,6 +211,12 @@ The hero above shows the core concept: nodes that carry **content, an embedding,
 - Rust 1.78+
 - 512 MB RAM minimum
 - Linux/macOS (Windows WSL2)
+
+---
+
+## Documentation
+
+Every doc in `docs/` is listed with the question it answers in [docs/INDEX.md](docs/INDEX.md).
 
 ---
 
