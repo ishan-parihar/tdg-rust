@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+IFS=$'\n\t'
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -14,6 +15,33 @@ ok()    { echo -e "${GREEN}✓${NC}  $*"; }
 warn()  { echo -e "${YELLOW}⚠${NC}  $*"; }
 err()   { echo -e "${RED}✗${NC}  $*" >&2; }
 step()  { echo -e "\n${CYAN}${BOLD}── $* ──${NC}"; }
+die()   { err "$*"; exit 1; }
+generated() { printf '>>> generated: %s <<<\n' "$*"; }
+
+# ── Idempotent PATH injection for the wrapper directory ───────────────────────
+ensure_path() {
+    local dir="$1"; mkdir -p "$dir"
+    case ":$PATH:" in *":$dir:"*) return 0 ;; esac
+    local rc="$HOME/.bashrc"
+    if [ -f "$HOME/.zshrc" ] || [ -n "${ZSH_VERSION:-}" ]; then rc="$HOME/.zshrc"; fi
+    if ! grep -qs "export PATH=\"${dir}:\$PATH\"" "$rc"; then
+        printf '\n# added by tdg-rust installer\nexport PATH="%s:$PATH"\n' "$dir" >> "$rc"
+        generated "$rc"
+    fi
+    export PATH="$dir:$PATH"
+}
+
+# ── CTA epilogue ───────────────────────────────────────────────────────────────
+print_cta() {
+    [ "${SKIP_CTA:-0}" = "1" ] && return 0
+    printf '\n%s\n' "──────────────────────────────────────────────────────"
+    printf ' ⭐  Found tdg-rust useful? Star it:  https://github.com/ishan-parihar/tdg-rust\n'
+    printf ' 💜  Support development:\n'
+    printf '     GitHub Sponsors : https://github.com/sponsors/ishan-parihar\n'
+    printf '     Razorpay (UPI)  : https://rzp.io/rzp/ishan-parihar\n'
+    printf '     Or run `tdg-rust donate` anytime.\n'
+    printf '%s\n' "──────────────────────────────────────────────────────"
+}
 
 REPO="ishan-parihar/tdg-rust"
 GITHUB_URL="https://github.com/${REPO}/releases/latest/download/tdg-rust"
@@ -76,28 +104,65 @@ download_binary() {
         local current_version
         current_version=$("$bin_path" --version 2>/dev/null | awk '{print $2}' || echo "unknown")
         ok "tdg-rust $current_version already installed at $bin_path"
-        read -rp "$(echo -e "${YELLOW}?${NC}  Re-download latest? [y/N]: ")" answer
-        if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-            return
+        if [ "${TDG_SKIP_REDOWNLOAD:-0}" = "1" ]; then
+            info "Re-downloading (--yes / TDG_SKIP_REDOWNLOAD=1)"
+        elif [ -t 0 ]; then
+            read -rp "$(echo -e "${YELLOW}?${NC}  Re-download latest? [y/N]: ")" answer
+            if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+                return
+            fi
+        else
+            info "Re-downloading (non-interactive)"
         fi
     fi
 
     mkdir -p "$tdg_dir"
 
+    local tmp_bin="${tdg_dir}/.tdg-rust.new"
     info "Downloading from $GITHUB_URL..."
     if command -v curl &>/dev/null; then
-        curl -fsSL "$GITHUB_URL" -o "$bin_path"
+        curl -fsSL "$GITHUB_URL" -o "$tmp_bin"
     elif command -v wget &>/dev/null; then
-        wget -q "$GITHUB_URL" -O "$bin_path"
+        wget -q "$GITHUB_URL" -O "$tmp_bin"
     else
-        err "curl or wget required"
-        exit 1
+        die "curl or wget required"
     fi
 
-    chmod +x "$bin_path"
+    # Verify checksum before the binary is executable — fetched from the release's
+    # SHA256SUMS (same origin as the payload, so it catches corruption, not compromise;
+    # GPG signatures are the upgrade path for high-stakes tools).
+    local sha_url="https://github.com/${REPO}/releases/latest/download/SHA256SUMS"
+    local expected="" actual=""
+    if curl -fsSL "$sha_url" -o "${tdg_dir}/.tdg-rust.sha256" 2>/dev/null; then
+        if command -v sha256sum >/dev/null 2>&1; then
+            expected="$(grep ' tdg-rust$' "${tdg_dir}/.tdg-rust.sha256" | awk '{print $1}' || true)"
+            actual="$(sha256sum "$tmp_bin" | awk '{print $1}')"
+        elif command -v shasum >/dev/null 2>&1; then
+            expected="$(grep ' tdg-rust$' "${tdg_dir}/.tdg-rust.sha256" | awk '{print $1}' || true)"
+            actual="$(shasum -a 256 "$tmp_bin" | awk '{print $1}')"
+        else
+            warn "No sha256sum/shasum found — cannot verify checksum"
+        fi
+        if [ -n "$expected" ] && [ "$expected" = "$actual" ]; then
+            ok "Checksum verified"
+        elif [ -n "$expected" ]; then
+            rm -f "$tmp_bin"
+            die "checksum mismatch for tdg-rust — report at github.com/${REPO}/issues"
+        elif [ -n "$actual" ]; then
+            rm -f "$tmp_bin"
+            die "SHA256SUMS lists no tdg-rust entry — refusing an unverified binary"
+        fi
+        rm -f "${tdg_dir}/.tdg-rust.sha256"
+    else
+        warn "No SHA256SUMS published for this release — cannot verify checksum"
+    fi
+
+    chmod +x "$tmp_bin"
+    mv -f "$tmp_bin" "$bin_path"
     local version
     version=$("$bin_path" --version 2>/dev/null || echo "unknown")
     ok "Downloaded tdg-rust $version"
+    generated "$bin_path"
 }
 
 download_onnx_runtime() {
@@ -345,21 +410,43 @@ main() {
 
     for arg in "$@"; do
         case "$arg" in
-            --uninstall) TDG_UNINSTALL=1 ;;
-            --skip-config) TDG_SKIP_CONFIG=1 ;;
+            --uninstall)       TDG_UNINSTALL=1 ;;
+            --skip-config)     TDG_SKIP_CONFIG=1 ;;
+            --force-root)      FORCE_ROOT=1 ;;
+            --yes)             TDG_SKIP_REDOWNLOAD=1 ;;
+            --no-cta)          SKIP_CTA=1 ;;
             --help|-h)
-                echo "Usage: bash install.sh [--uninstall] [--skip-config]"
+                echo "Usage: bash install.sh [--uninstall] [--skip-config] [--force-root] [--yes] [--no-cta]"
                 echo ""
                 echo "Options:"
                 echo "  --uninstall     Remove TDG-Rust from this system"
                 echo "  --skip-config   Don't modify config.yaml"
+                echo "  --force-root    Allow running as root (installs to \$HOME anyway)"
+                echo "  --yes           Skip re-download prompt (auto-confirm)"
+                echo "  --no-cta        Suppress the star/donate CTA at the end"
                 echo ""
                 echo "Environment:"
-                echo "  HERMES_HOME     Override Hermes home directory"
+                echo "  HERMES_HOME          Override Hermes home directory"
+                echo "  TDG_SKIP_REDOWNLOAD  1 = skip re-download prompt"
+                echo "  SKIP_CTA             1 = suppress CTA"
+                echo "  FORCE_ROOT           1 = allow root (override root guard)"
                 exit 0
                 ;;
         esac
     done
+
+    # ── Root guard ───────────────────────────────────────────────────────────────
+    if [ "${EUID:-$(id -u)}" -eq 0 ] && [ "${FORCE_ROOT:-0}" != "1" ]; then
+        die "Don't run as root — installs to \$HOME. Re-run as your user (override: --force-root)."
+    fi
+
+    # ── OS detection ─────────────────────────────────────────────────────────────
+    OS="$(uname -s)"
+    case "$OS" in
+        Linux*)   DISTRO="$(. /etc/os-release 2>/dev/null && echo "${ID:-unknown}")" ;;
+        Darwin*)  DISTRO="macos" ;;
+        *)        die "Unsupported OS: $OS (this installer covers Linux and macOS)" ;;
+    esac
 
     detect_hermes_home
     detect_arch
@@ -377,10 +464,12 @@ main() {
     download_binary
     download_onnx_runtime
     create_wrapper
+    ensure_path "${HERMES_HOME}/tdg-rust"
     install_adapter
     init_database
     patch_config
     post_install
+    print_cta
 }
 
 main "$@"
