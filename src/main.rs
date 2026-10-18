@@ -127,6 +127,8 @@ enum Commands {
         #[arg(long)]
         rebuild: bool,
     },
+    /// Support development 💜
+    Donate,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -1141,6 +1143,11 @@ fn main() -> anyhow::Result<()> {
             // When the server shuts down, cancel the background tasks.
             maintenance_handle.abort();
             metabolism_handle.abort();
+        }
+        Some(Commands::Donate) => {
+            println!("Star the repo  : https://github.com/ishan-parihar/tdg-rust");
+            println!("GitHub Sponsors: https://github.com/sponsors/ishan-parihar");
+            println!("Razorpay (UPI) : https://rzp.io/rzp/ishan-parihar");
         }
     }
 
