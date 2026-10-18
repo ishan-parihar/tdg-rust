@@ -385,7 +385,7 @@ mod tests {
     use crate::metabolism::attractor::{
         ArchetypalLoads, CouplingTensor, ReservoirAttractor, StabilityFilter,
     };
-    use crate::metabolism::lesser_cycle::{LesserCycleState, ReservoirState, Shadow};
+    use crate::metabolism::lesser_cycle::{LesserCycleState, ReservoirState};
 
     fn make_balanced_lesser() -> LesserCycleState {
         let mut s = LesserCycleState::dormant();

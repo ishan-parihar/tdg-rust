@@ -512,7 +512,7 @@ pub fn mark_dirty(conn: &rusqlite::Connection, holon_id: &str) -> TdgResult<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metabolism::lesser_cycle::{LesserCycleState, ReservoirState, Shadow};
+    use crate::metabolism::lesser_cycle::{LesserCycleState, Shadow};
 
     #[test]
     fn dormant_attractor_field() {

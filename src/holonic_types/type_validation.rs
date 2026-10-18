@@ -336,7 +336,6 @@ mod tests {
     use crate::metabolism::attractor::{
         ArchetypalLoads, CouplingTensor, ReservoirAttractor, StabilityFilter,
     };
-    use crate::metabolism::lesser_cycle::LesserCycleState;
     use crate::models::NewNode;
     use rusqlite::Connection;
 

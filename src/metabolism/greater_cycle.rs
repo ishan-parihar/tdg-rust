@@ -683,7 +683,7 @@ mod tests {
         // Feed high pressure to trigger the full cycle
         let lesser = make_lesser_with_pressure(5.0);
 
-        for i in 0..100 {
+        for _i in 0..100 {
             let result = tick(&mut state, &lesser, &thresholds);
 
             if result.octave_ascended {

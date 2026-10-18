@@ -721,7 +721,7 @@ mod tests {
         let thresholds = CycleThresholds::default();
 
         // 1. Inject catalyst → Ingesting
-        let r = tick(&mut state, 1.0, &thresholds);
+        let _r = tick(&mut state, 1.0, &thresholds);
         assert_eq!(state.phase, LesserPhase::Ingesting);
 
         // 2. Tick again → Processing (catalyst >= eta * process_threshold)
@@ -736,7 +736,7 @@ mod tests {
         // The processing rate is eta * 0.3 = 0.5 * 0.3 = 0.15 per tick
         // Starting catalyst ~1.0, need to get below 0.05
         for _ in 0..20 {
-            let r = tick(&mut state, 0.0, &thresholds);
+            let _r = tick(&mut state, 0.0, &thresholds);
             if state.phase == LesserPhase::Integrating {
                 break;
             }
@@ -744,7 +744,7 @@ mod tests {
         assert_eq!(state.phase, LesserPhase::Integrating);
 
         // 4. Tick → Quiescent (after shadow diagnosis)
-        let r = tick(&mut state, 0.0, &thresholds);
+        let _r = tick(&mut state, 0.0, &thresholds);
         assert_eq!(state.phase, LesserPhase::Quiescent);
 
         // 5. Tick → Dormant (cycle complete)
@@ -828,7 +828,7 @@ mod tests {
         state.matrix.eta = 0.5;
         state.phase = LesserPhase::Integrating;
 
-        let r = tick(&mut state, 0.0, &thresholds);
+        let _r = tick(&mut state, 0.0, &thresholds);
 
         // catalyst_ratio = 10.0 / 0.5 = 20.0 > dark_addiction_ratio (2.0)
         assert_eq!(state.matrix.shadow, Some(Shadow::MatrixHyperIngestion));
@@ -846,7 +846,7 @@ mod tests {
         state.phase = LesserPhase::Integrating;
         state.cycle_count = 1; // need cycle_count > 0 for allergy
 
-        let r = tick(&mut state, 0.0, &thresholds);
+        let _r = tick(&mut state, 0.0, &thresholds);
 
         // catalyst_ratio = 0.02 / 0.5 = 0.04 < dark_allergy_ratio (0.1)
         assert_eq!(state.matrix.shadow, Some(Shadow::MatrixHypoIngestion));

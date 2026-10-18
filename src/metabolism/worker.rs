@@ -1052,21 +1052,21 @@ mod tests {
             JobType::LesserTick,
             serde_json::json!({}),
             PRIORITY_LOW,
-        );
+        ).unwrap();
         enqueue_job(
             &conn,
             &node.id,
             JobType::LesserTick,
             serde_json::json!({}),
             PRIORITY_HIGH,
-        );
+        ).unwrap();
         enqueue_job(
             &conn,
             &node.id,
             JobType::LesserTick,
             serde_json::json!({}),
             PRIORITY_NORMAL,
-        );
+        ).unwrap();
 
         // Should claim HIGH first
         let job = claim_job(&conn).unwrap().unwrap();
@@ -1098,7 +1098,7 @@ mod tests {
         .unwrap();
 
         // Enqueue a catalyst injection job
-        let job_id = enqueue_job(
+        let _job_id = enqueue_job(
             &conn,
             &node.id,
             JobType::CatalystInjection,
@@ -1163,7 +1163,7 @@ mod tests {
         // Use HIGH priority for child ticks so they're always claimed before
         // any parent jobs that get enqueued via upward pressure.
         let mut reached_integrating = false;
-        for i in 0..160 {
+        for _i in 0..160 {
             let _ = enqueue_job(
                 &conn,
                 &child.id,
@@ -1274,14 +1274,14 @@ mod tests {
             JobType::LesserTick,
             serde_json::json!({}),
             PRIORITY_LOW,
-        );
+        ).unwrap();
         enqueue_job(
             &conn,
             &node.id,
             JobType::LesserTick,
             serde_json::json!({}),
             PRIORITY_LOW,
-        );
+        ).unwrap();
 
         assert_eq!(queue_depth(&conn).unwrap(), 2);
 

@@ -533,7 +533,7 @@ mod tests {
         )
         .unwrap();
 
-        let obs2 = crate::db::crud::add_node(
+        let _obs2 = crate::db::crud::add_node(
             &conn,
             &NewNode {
                 node_type: "observation".to_string(),
@@ -543,7 +543,7 @@ mod tests {
         )
         .unwrap();
 
-        let obs3 = crate::db::crud::add_node(
+        let _obs3 = crate::db::crud::add_node(
             &conn,
             &NewNode {
                 node_type: "observation".to_string(),
