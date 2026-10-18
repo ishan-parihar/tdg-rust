@@ -366,9 +366,6 @@ pub fn tick(
             let consumed = state.transformation_pressure * 0.5; // consume 50%
             state.transformation_pressure -= consumed;
 
-            // Phase 15: Track dissolution ratio — how much of the old Significator dissolved
-            let old_significator = state.significator;
-
             // Significator is restructured (magnitude shifts)
             // Acute crucibles cause larger shifts
             let shift = match state.crucible_intensity {
