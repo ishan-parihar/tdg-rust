@@ -233,13 +233,13 @@ The `Shadow` enum variants use universal names (`MatrixHyperIngestion` etc.) wit
 ### 6. Test everything
 
 ```bash
-cargo test --lib                    # 430 unit tests
+cargo test --lib                    # 449 unit tests
 cargo test --test integration       # 8 integration tests
-cargo test --test mcp_e2e           # 66 MCP E2E tests
+cargo test --test mcp_e2e           # 68 MCP E2E tests
 cargo test --test e2e_mind_simulation  # 5 full mind-flow tests
 ```
 
-**509 tests. Zero warnings. Zero regressions.** Don't break this.
+**530 tests. Zero warnings. Zero regressions.** Don't break this.
 
 ### 7. Push after each phase
 
@@ -384,4 +384,4 @@ If you're a new AI agent reading this to do work on TDG-rust:
 
 ---
 
-*Last updated 2026-07-04. This document is the operational guide for AI agents working on TDG-rust.*
+*Last updated 2026-10-19 (test counts re-measured). This document is the operational guide for AI agents working on TDG-rust.*
