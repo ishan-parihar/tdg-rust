@@ -12,7 +12,7 @@ Status: LIVE (current truth) · EVIDENCE (dated measured verdict) · PLAN-ACTIVE
 | [`ONTOLOGICAL-ALIGNMENT-AUDIT.md`](ONTOLOGICAL-ALIGNMENT-AUDIT.md) | EVIDENCE | Is tdg-rust ontologically aligned, and is its memory operationally effective? First pass. | — |
 | [`ONTOLOGICAL-ALIGNMENT-AUDIT-V2.md`](ONTOLOGICAL-ALIGNMENT-AUDIT-V2.md) | EVIDENCE | Second pass: which ontological-alignment and memory-efficacy gaps remain? | — |
 | [`ONTOLOGICAL-ALIGNMENT-AUDIT-V3.md`](ONTOLOGICAL-ALIGNMENT-AUDIT-V3.md) | EVIDENCE | Third pass: ontological alignment and memory operational efficacy. | — |
-| [`SESSION_HOOKS.md`](SESSION_HOOKS.md) | Session Hooks — Ambient Context at Session Start — AXI §7: Register your tool into the agent's session lifecycle so every conversation starts with relevant state… |
+| [`SESSION_HOOKS.md`](SESSION_HOOKS.md) | Session Hooks — Ambient Context at Session Start — AXI §7: Register your tool into the agent's session lifecycle so every conversation starts with relevant state… | Session Hooks — Ambient Context at Session Start — AXI §7: Register your tool into the agent's session lifecycle so every conversation starts with rele… | — |
 | [`AUDIT-2026-06-18.md`](archive/pre-refactor/AUDIT-2026-06-18.md) | LIVE | Python vs Rust TDG Audit — 2026-06-18 (Post-P2 Enhancements) | — |
 | [`AUDIT_REPORT_2026-07.md`](archive/pre-refactor/AUDIT_REPORT_2026-07.md) | LIVE | TDG-Rust Audit Report — July 2026 — This audit verifies the operational state of the TDG-Rust system (v0.4.3) against the detailed proce… | — |
 | [`BUG-FIX-PLAN.md`](archive/pre-refactor/BUG-FIX-PLAN.md) | LIVE | TDG-Rust Bug Fix Plan — 1. C1+C2 (data corruption — reads wrong data) 2. C3 (data corruption — writes wrong type) 3. H3 (que… | — |
