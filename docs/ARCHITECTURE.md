@@ -1,4 +1,4 @@
-# Architecture
+# Why every memory carries a purpose
 
 **What this document is.** The shape of the whole system on one page, written
 for someone who will not read the code. If you want the full API surface,

@@ -218,6 +218,8 @@ The hero above shows the core concept: nodes that carry **content, an embedding,
 
 Every doc in `docs/` is listed with the question it answers in [docs/PAGE-INDEX.md](docs/PAGE-INDEX.md).
 
+The shape of the system, written for a reader who will not read the code, is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ---
 
 ## License
