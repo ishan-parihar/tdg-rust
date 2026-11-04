@@ -35,19 +35,30 @@ migrated by hand.
 
 ## The parts
 
-One Rust binary, with four engines underneath a single service. The executed
+One Rust binary, with five parts underneath a single service. The executed
 gate is 626 tests across every test binary — 449 in the library, the rest in the
 MCP end-to-end, plugin, integration and smaller binaries.
 
-- **Store** (Sled) — the durable base, the source of truth.
-- **Index** (HNSW) — approximate nearest-neighbour search over embeddings.
-- **Graph** (Petgraph) — the symbolic structure: links, hierarchies, clusters,
+- **Store** (SQLite, via `rusqlite`) — the durable base and the source of truth.
+  Both the symbolic graph and the vectors live in the same database.
+- **Index** (SQLite FTS5) — full-text search over node content, ranked.
+- **Similarity** (cosine, in Rust) — the vector arm is computed in-process rather
+  than served by a separate approximate-nearest-neighbour index.
+- **Graph** (`petgraph`) — the symbolic structure: links, hierarchies, clusters,
   developmental stages.
 - **Evolution** (scheduler) — what reorganises the graph over time.
 
 Above them sits the MCP surface an agent actually talks to: `remember`,
 `recall`, `link`, `evolve`, `inspect`. Those five verbs are the whole interface,
 and everything the system does is reachable through them.
+
+> **Correction, 2026-11-03.** The first version of this document named a Sled
+> store and an HNSW index. Neither exists here: the repository declares
+> `rusqlite` and `petgraph`, and a grep of `src/` finds no mention of either
+> `sled` or `hnsw`. Retrieval is FTS5 ranking plus a cosine pass computed in
+> Rust. The document was written from the README's diagram, which is looser
+> than the dependency list, and the diagram should be read as an overview
+> rather than as the implementation.
 
 ---
 
@@ -70,7 +81,9 @@ and everything the system does is reachable through them.
 ```
  an agent calls tdg.recall with a query
         |
- the index finds candidates by similarity
+ FTS5 ranks candidates by the query's terms
+        |
+ a cosine pass re-ranks them by embedding distance
         |
  the graph contributes what those nodes are connected to
         |
